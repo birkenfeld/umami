@@ -5,14 +5,15 @@ mod ge;
 
 use crate::event::{Event, ModuleId};
 use crate::error::UResult;
-use crate::config::InputConfig;
+use crate::config::ModuleConfig;
 
 pub trait Input : Send {
+    // TODO: instead possibly return list/vector of events?
     fn read_event(&mut self) -> UResult<Event>;
 }
 
-pub fn create_input(module: ModuleId, config: InputConfig) -> UResult<Box<dyn Input>> {
+pub fn create_input(module: ModuleId, config: ModuleConfig) -> UResult<Box<dyn Input>> {
     Ok(match config {
-        InputConfig::GE { addr, ts } => Box::new(ge::GeInput::new(module, addr, ts)?)
+        ModuleConfig::GE { addr, ts } => Box::new(ge::GeInput::new(module, addr, ts)?)
     })
 }

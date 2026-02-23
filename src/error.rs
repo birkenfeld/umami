@@ -5,6 +5,8 @@ use thiserror::Error;
 
 pub type UResult<T> = Result<T, UError>;
 
+// TODO: decide if we need specific error types
+// Which errors need to be handled specially?
 #[derive(Debug, Error)]
 pub enum UError {
     #[error("Failed to initialize event source: {0}")]

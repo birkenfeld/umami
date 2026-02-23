@@ -19,6 +19,23 @@ pub struct Options {
     config: PathBuf,
 }
 
+// TODO Pipeline draft
+//
+//   - input: read raw events, translate to internal event format
+//
+// / - raw: write raw data to disk (TODO use original or internal format?)
+// | - signals: assign meaning to additional events
+// | - translate: apply actual setup from instrument to calculate pixel
+// \   x,y from amplitudes, calibration, mapping tables, offsets
+//
+//   - filter: remove unneeded events?
+//   - tof: calculate time-of-flight from chopper/t0 events
+//
+//   - histogram: accumulate events into histograms
+//
+// / - output: write to disk in some format (e.g. NeXus)
+// \ - live: provide live view for Tango server
+
 fn main() {
     let args = Options::parse();
     let config: config::Config = match std::fs::read_to_string(&args.config) {
@@ -34,24 +51,25 @@ fn main() {
         }
     };
 
-    let mut inputs = Vec::new();
+    let mut modules = Vec::new();
     let mut module_id = 0;
-    for (input_name, input_config) in config.inputs {
-        println!("Input {}: {:?}", input_name, input_config);
-        let input = match input::create_input(event::ModuleId(module_id), input_config) {
+    for (module_name, module_config) in config.modules {
+        println!("Module {}: {:?}", module_name, module_config);
+        let module = match input::create_input(event::ModuleId(module_id), module_config) {
             Ok(i) => i,
             Err(e) => {
-                eprintln!("Failed to initialize input {}: {}", input_name, e);
+                // TODO: should be non-fatal? How/when to reinitialize?
+                eprintln!("Failed to initialize module {}: {}", module_name, e);
                 std::process::exit(1);
             }
         };
-        inputs.push(input);
+        modules.push(module);
         module_id += 1;
     }
 
-    for mut input in inputs {
+    for mut module in modules {
         std::thread::spawn(move || {
-            while let Ok(ev) = input::Input::read_event(&mut *input) {
+            while let Ok(ev) = input::Input::read_event(&mut *module) {
                 println!("Received event: {:?}", ev);
             }
         });

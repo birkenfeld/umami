@@ -12,8 +12,6 @@ use crate::util::resolve;
 
 const PACKET_NORMAL:     u32 = 0x1000;
 const PACKET_NORM_FAKE:  u32 = 0x1100;
-const PACKET_WAVEFORM:   u32 = 0x2000;
-const PACKET_WFORM_FAKE: u32 = 0x2100;
 const PACKET_DIAG:       u32 = 0x3000;
 const PACKET_DIAG_FAKE:  u32 = 0x3100;
 const PACKET_HEARTBT:    u32 = 0x5000;
@@ -40,6 +38,8 @@ impl crate::input::Input for GeInput {
 
         // read header
         let mut buffer = [0_u8; MAX_PACKET_SIZE];
+        // TODO: this blocks if no data is available. OK?
+        // TODO: handle reconnect if necessary
         self.socket.read_exact(&mut buffer[..16])?;
         let len = LE::read_u32(&buffer) as usize;
         let pktype = LE::read_u32(&buffer[4..]);
@@ -59,26 +59,34 @@ impl crate::input::Input for GeInput {
 
         // read the rest
         self.socket.read_exact(&mut buffer[..len])?;
-        let evlen = match pktype {
-            PACKET_NORMAL | PACKET_NORM_FAKE => 12,
-            PACKET_WAVEFORM | PACKET_WFORM_FAKE => 12,
-            PACKET_DIAG | PACKET_DIAG_FAKE  => 24,
+        let (evlen, flags) = match pktype {
+            PACKET_NORMAL => (12, EventFlags::None),
+            PACKET_NORM_FAKE => (12, EventFlags::Fake),
+            PACKET_DIAG => (24, EventFlags::None),
+            PACKET_DIAG_FAKE  => (24, EventFlags::Fake),
             _ => return Err(anyhow!("Unsupported packet type {:#x}", pktype).into()),
         };
         let mut offset = 24;
         let nevents = (len - offset) / evlen;
         for _ in 0..nevents {
             let detid = LE::read_u32(&buffer[offset+8..]);
-            let (inputid, data) = if self.is_ts {
-                (detid as u16, EventData::Signal { up: detid & 0x8000_0000 != 0 })
+            let data = if self.is_ts {
+                EventData::AuxSignal { up: detid & 0x8000_0000 != 0 }
+            } else if pktype == PACKET_DIAG || pktype == PACKET_DIAG_FAKE {
+                let max_heights = LE::read_u32(&buffer[offset+12..]);
+                let a_integrated = LE::read_u32(&buffer[offset+16..]);
+                let b_integrated = LE::read_u32(&buffer[offset+20..]);
+                EventData::Digital { value1: max_heights,
+                                     value2: a_integrated,
+                                     value3: b_integrated }
             } else {
-                (detid as u16, EventData::Neutron)
+                EventData::Neutron
             };
             self.buffer.push_back(Event::new(
                 read_time(&buffer[offset..]),
                 self.module,
-                InputId(inputid),
-                EventFlags::None,
+                InputId(detid as u16),
+                flags,
                 data,
             ));
             offset += evlen;

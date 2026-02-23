@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum InputConfig {
+pub enum ModuleConfig {
     GE {
         addr: String,
         ts: bool,
@@ -15,5 +15,6 @@ pub enum InputConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    pub inputs: BTreeMap<String, InputConfig>,
+    pub modules: BTreeMap<String, ModuleConfig>,
+    // TODO: loglevel
 }
