@@ -12,6 +12,10 @@ use rkyv::{Archive, Serialize, Deserialize};
 pub struct EventTime(u64);
 
 impl EventTime {
+    pub fn from_nsec(nsec: u64) -> Self {
+        Self(nsec)
+    }
+
     pub fn from_sec_nsec(sec: u32, nsec: u32) -> Self {
         Self(sec as u64 * 1_000_000_000 + nsec as u64)
     }
@@ -22,6 +26,14 @@ impl std::ops::Sub for EventTime {
 
     fn sub(self, other: Self) -> Self {
         Self(self.0 - other.0)
+    }
+}
+
+impl std::ops::Add for EventTime {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self(self.0 + other.0)
     }
 }
 
@@ -40,6 +52,7 @@ pub struct InputId(pub u16);
 pub enum EventData {
     Neutron = 0x0,
     Monitor = 0x20,
+    Tzero = 0x21,
     AuxSignal { up: bool } = 0x30,
     Analog1 { value1: u32, value2: f64 } = 0x40,
     Analog2 { value1: u32, value2: f32, value3: f32 } = 0x41,

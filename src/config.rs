@@ -10,6 +10,10 @@ pub enum ModuleConfig {
     GE {
         addr: String,
         ts: bool,
+    },
+    Canon {
+        addr: String,
+        gate: bool,
     }
 }
 
