@@ -31,6 +31,15 @@ fn read_time(buf: &[u8]) -> EventTime {
 }
 
 impl crate::input::Input for GeInput {
+    fn description(&self) -> String {
+        format!(
+            "GE {} module {} at {}",
+            if self.is_ts { "TS" } else { "EP" },
+            self.module.0,
+            self.socket.peer_addr().map(|x| x.to_string()).unwrap_or("?".into()),
+        )
+    }
+
     fn read_event(&mut self) -> UResult<Event> {
         if let Some(ev) = self.buffer.pop_front() {
             return Ok(ev);

@@ -4,20 +4,28 @@
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use rkyv::{Archive, Serialize, Deserialize};
 
+/// Timestamp of the event in nanoseconds.
+///
+/// Should be absolute (relative to UNIX epoch) if possible.
 #[derive(Debug, Clone, Copy)]
 #[derive(Archive, Serialize, Deserialize)]
-pub struct EventTime(
-    // Absolute time in nanoseconds (TODO)
-    u64
-);
+pub struct EventTime(u64);
 
 impl EventTime {
-    pub fn now() -> Self { todo!() }
     pub fn from_sec_nsec(sec: u32, nsec: u32) -> Self {
         Self(sec as u64 * 1_000_000_000 + nsec as u64)
     }
 }
 
+impl std::ops::Sub for EventTime {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        Self(self.0 - other.0)
+    }
+}
+
+/// Numeric order of the module
 #[derive(Debug, Clone, Copy)]
 #[derive(Archive, Serialize, Deserialize)]
 pub struct ModuleId(pub u16);
@@ -52,6 +60,7 @@ pub enum EventFlags {
 #[derive(Clone, Copy)]
 #[derive(Archive, Serialize, Deserialize)]
 pub struct Event {
+    // Do not change the structure, the serialization format depends on it.
     pub time: EventTime,
     pub flags: EventFlags,
     pub module: ModuleId,

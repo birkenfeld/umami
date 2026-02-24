@@ -54,7 +54,7 @@ fn main() {
     let mut modules = Vec::new();
     let mut module_id = 0;
     for (module_name, module_config) in config.modules {
-        println!("Module {}: {:?}", module_name, module_config);
+        println!("Configured module {}: {:?}", module_name, module_config);
         let module = match input::create_input(event::ModuleId(module_id), module_config) {
             Ok(i) => i,
             Err(e) => {
@@ -63,6 +63,7 @@ fn main() {
                 std::process::exit(1);
             }
         };
+        println!("Initialized {}: {}", module_name, module.description());
         modules.push(module);
         module_id += 1;
     }

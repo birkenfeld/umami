@@ -8,6 +8,8 @@ use crate::error::UResult;
 use crate::config::ModuleConfig;
 
 pub trait Input : Send {
+    fn description(&self) -> String;
+
     // TODO: instead possibly return list/vector of events?
     fn read_event(&mut self) -> UResult<Event>;
 }
