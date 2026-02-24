@@ -71,7 +71,7 @@ fn main() {
     for mut module in modules {
         std::thread::spawn(move || {
             while let Ok(ev) = input::Input::read_event(&mut *module) {
-                println!("Received event: {:?}", ev);
+                // println!("Received event: {:?}", ev);
             }
         });
     }

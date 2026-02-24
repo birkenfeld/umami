@@ -3,6 +3,7 @@
 
 mod ge;
 mod canon;
+mod mesy;
 
 use crate::event::{Event, ModuleId};
 use crate::error::UResult;
@@ -18,6 +19,7 @@ pub trait Input : Send {
 pub fn create_input(module: ModuleId, config: ModuleConfig) -> UResult<Box<dyn Input>> {
     Ok(match config {
         ModuleConfig::GE { addr, ts } => Box::new(ge::GeInput::new(module, addr, ts)?),
-        ModuleConfig::Canon { addr, gate } => Box::new(canon::CanonInput::new(module, addr, gate)?)
+        ModuleConfig::Canon { addr, gate } => Box::new(canon::CanonInput::new(module, addr, gate)?),
+        ModuleConfig::Mesy { addr, local } => Box::new(mesy::MesyInput::new(module, local, addr)?),
     })
 }

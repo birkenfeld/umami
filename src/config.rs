@@ -9,16 +9,23 @@ use serde::Deserialize;
 pub enum ModuleConfig {
     GE {
         addr: String,
+        #[serde(default)]
         ts: bool,
     },
     Canon {
         addr: String,
+        #[serde(default)]
         gate: bool,
+    },
+    Mesy {
+        addr: String,
+        local: String,
     }
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub modules: BTreeMap<String, ModuleConfig>,
-    // TODO: loglevel
+    #[serde(default)]
+    pub loglevel: String, // TODO: type, and use it!
 }
