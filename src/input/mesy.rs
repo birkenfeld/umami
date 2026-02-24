@@ -33,9 +33,9 @@ impl crate::input::Input for MesyInput {
 }
 
 impl MesyInput {
-    pub fn new(module: ModuleId, local: String, addr: String) -> UResult<Self> {
-        let socket = UdpSocket::bind(resolve(&local)?).map_err(UError::SourceInit)?;
-        socket.connect(resolve(&addr)?).map_err(UError::SourceInit)?;
+    pub fn new(module: ModuleId, local: &str, addr: &str) -> UResult<Self> {
+        let socket = UdpSocket::bind(resolve(local)?).map_err(UError::SourceInit)?;
+        socket.connect(resolve(addr)?).map_err(UError::SourceInit)?;
         Ok(Self {
             module,
             socket,

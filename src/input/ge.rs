@@ -105,8 +105,8 @@ impl crate::input::Input for GeInput {
 }
 
 impl GeInput {
-    pub fn new(module: ModuleId, addr: String, ts: bool) -> UResult<Self> {
-        let socket = TcpStream::connect(resolve(&addr)?)
+    pub fn new(module: ModuleId, addr: &str, ts: bool) -> UResult<Self> {
+        let socket = TcpStream::connect(resolve(addr)?)
             .map_err(UError::SourceInit)?;
         Ok(Self { module, socket, is_ts: ts,
                   buffer: VecDeque::with_capacity(32) })

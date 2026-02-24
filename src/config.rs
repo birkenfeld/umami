@@ -26,6 +26,12 @@ pub enum ModuleConfig {
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub modules: BTreeMap<String, ModuleConfig>,
+    #[serde(default = "default_shm_name")]
+    pub shm_name: String,
     #[serde(default)]
-    pub loglevel: String, // TODO: type, and use it!
+    pub debug: bool,
+}
+
+fn default_shm_name() -> String {
+    "umami".into()
 }

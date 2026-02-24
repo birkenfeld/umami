@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 use std::{fmt, thread};
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::net::TcpStream;
 use std::time::Duration;
 use anyhow::anyhow;
@@ -121,8 +121,8 @@ impl crate::input::Input for CanonInput {
 }
 
 impl CanonInput {
-    pub fn new(module: ModuleId, addr: String, gate: bool) -> UResult<Self> {
-        let socket = TcpStream::connect(resolve(&addr)?)
+    pub fn new(module: ModuleId, addr: &str, gate: bool) -> UResult<Self> {
+        let socket = TcpStream::connect(resolve(addr)?)
             .map_err(UError::SourceInit)?;
         Ok(Self {
             module,
@@ -153,10 +153,6 @@ enum EventType {
 impl CanonEvent {
     fn read<R: Read>(read: &mut R) -> io::Result<Self> {
         read.read_u64::<BE>().map(Self)
-    }
-
-    fn dump<W: Write>(&self, write: &mut W) -> io::Result<()> {
-        write.write_u64::<BE>(self.0)
     }
 
     fn evtype(&self) -> EventType {
