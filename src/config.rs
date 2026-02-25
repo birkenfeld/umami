@@ -5,22 +5,31 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
+pub struct GEConfig {
+    pub addr: String,
+    #[serde(default)]
+    pub ts: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CanonConfig {
+    pub addr: String,
+    #[serde(default)]
+    pub gate: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MesyConfig {
+    pub addr: String,
+    pub local: String,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ModuleConfig {
-    GE {
-        addr: String,
-        #[serde(default)]
-        ts: bool,
-    },
-    Canon {
-        addr: String,
-        #[serde(default)]
-        gate: bool,
-    },
-    Mesy {
-        addr: String,
-        local: String,
-    }
+    GE(GEConfig),
+    Canon(CanonConfig),
+    Mesy(MesyConfig),
 }
 
 #[derive(Debug, Deserialize)]

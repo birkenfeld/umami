@@ -4,6 +4,7 @@
 use std::collections::VecDeque;
 use std::net::UdpSocket;
 use anyhow::anyhow;
+use crate::config::MesyConfig;
 use crate::error::{UError, UResult};
 use crate::event::{ModuleId, Event};
 use crate::util::resolve;
@@ -14,7 +15,18 @@ pub struct MesyInput {
     buffer: VecDeque<Event>,
 }
 
-impl crate::input::Input for MesyInput {
+impl MesyInput {
+    pub fn init(module: ModuleId, config: MesyConfig, channels: super::InputChannels) -> UResult<()> {
+        unimplemented!()
+        // let socket = UdpSocket::bind(resolve(local)?).map_err(UError::SourceInit)?;
+        // socket.connect(resolve(addr)?).map_err(UError::SourceInit)?;
+        // Ok(Self {
+        //     module,
+        //     socket,
+        //     buffer: VecDeque::with_capacity(32),
+        // })
+    }
+
     fn description(&self) -> String {
         format!(
             "MCPD module {} at {}",
@@ -29,17 +41,5 @@ impl crate::input::Input for MesyInput {
         }
 
         return Err(anyhow!("nope").into());
-    }
-}
-
-impl MesyInput {
-    pub fn new(module: ModuleId, local: &str, addr: &str) -> UResult<Self> {
-        let socket = UdpSocket::bind(resolve(local)?).map_err(UError::SourceInit)?;
-        socket.connect(resolve(addr)?).map_err(UError::SourceInit)?;
-        Ok(Self {
-            module,
-            socket,
-            buffer: VecDeque::with_capacity(32),
-        })
     }
 }

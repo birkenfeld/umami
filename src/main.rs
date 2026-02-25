@@ -1,6 +1,8 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
+#![allow(unused)]
+
 mod config;
 mod error;
 mod event;
@@ -92,34 +94,33 @@ fn inner_main(args: Options) -> error::UResult<()> {
     let mut shm = interface::ShmInterface::map(&config.shm_name)?;
     shm.initialize();
 
-    let mut modules = Vec::new();
-    let mut module_id = 0;
-    for (module_name, module_config) in config.modules {
-        ldebug!("Configured module {}: {:?}", module_name, module_config);
-        let module = match input::create_input(event::ModuleId(module_id), module_config) {
-            Ok(i) => i,
-            Err(e) => {
-                // TODO: should be non-fatal? How/when to reinitialize?
-                lprintln!(ERROR, "Failed to initialize module {}: {}", module_name, e);
-                std::process::exit(1);
-            }
-        };
-        lprintln!(INFO, "Initialized {}: {}", module_name, module.description());
-        modules.push(module);
-        module_id += 1;
+    let (events_write, events_read) = kanal::unbounded();  // TODO tune capacity
+    let (command_write, command_read) = kanal::bounded(16);
+    let (config_request_write, config_request_read) = kanal::bounded(16);
+    let (config_reply_write, config_reply_read) = kanal::bounded(16);
+    let channels = input::InputChannels {
+        events: events_write,
+        command: command_read,
+        config_request: config_request_read,
+        config_reply: config_reply_write,
+    };
+
+    for (module_id, (module_name, module_config)) in config.modules.into_iter().enumerate() {
+        ldebug!("Initializing module {}: {:?}", module_name, module_config);
+        if let Err(e) = input::init(event::ModuleId(module_id as _), module_config, channels.clone()) {
+            // TODO: should be non-fatal? How/when to reinitialize?
+            lprintln!(ERROR, "Failed to initialize module {}: {}", module_name, e);
+            std::process::exit(1);
+        }
     }
 
-    let mut joiners = Vec::new();
-    for mut module in modules {
-        joiners.push(std::thread::spawn(move || {
-            while let Ok(ev) = input::Input::read_event(&mut *module) {
-                ltrace!("Received event: {:?}", ev);
-            }
-        }));
-    }
-
-    for joiner in joiners {
-        let _ = joiner.join();
+    let mut i: usize = 0;
+    for ev in events_read {
+        ltrace!("Received event: {:?}", ev);
+        i += 1;
+        if (i.is_multiple_of(1000000)) {
+            println!("Received {} events", i);
+        }
     }
 
     Ok(())

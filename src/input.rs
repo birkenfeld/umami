@@ -5,24 +5,24 @@ mod ge;
 mod canon;
 mod mesy;
 
+use kanal;
+
 use crate::event::{Event, ModuleId};
 use crate::error::UResult;
 use crate::config::ModuleConfig;
 
-pub trait Input : Send {
-    fn description(&self) -> String;
-
-    // TODO: instead possibly return list/vector of events?
-    fn read_event(&mut self) -> UResult<Event>;
+#[derive(Clone)]
+pub struct InputChannels {
+    pub events: kanal::Sender<Event>,
+    pub command: kanal::Receiver<()>,
+    pub config_request: kanal::Receiver<()>,
+    pub config_reply: kanal::Sender<()>,
 }
 
-pub fn create_input(module: ModuleId, config: ModuleConfig) -> UResult<Box<dyn Input>> {
+pub fn init(module: ModuleId, config: ModuleConfig, channels: InputChannels) -> UResult<()> {
     Ok(match config {
-        ModuleConfig::GE { addr, ts } =>
-            Box::new(ge::GeInput::new(module, &addr, ts)?),
-        ModuleConfig::Canon { addr, gate } =>
-            Box::new(canon::CanonInput::new(module, &addr, gate)?),
-        ModuleConfig::Mesy { addr, local } =>
-            Box::new(mesy::MesyInput::new(module, &local, &addr)?),
+        ModuleConfig::GE(cfg) => ge::GeInput::init(module, cfg, channels)?,
+        ModuleConfig::Canon(cfg) => canon::CanonInput::init(module, cfg, channels)?,
+        ModuleConfig::Mesy(cfg) => mesy::MesyInput::init(module, cfg, channels)?,
     })
 }

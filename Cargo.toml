@@ -8,7 +8,9 @@ anyhow = "1.0.102"
 bitflag-attr = "0.13.0"
 byteorder = "1.5.0"
 clap = { version = "4.5.60", features = ["derive"] }
+interprocess = "2.4.0"
 jiff = "0.2.21"
+kanal = { version = "0.1.1", default-features = false }
 rkyv = "0.8.15"
 serde = { version = "1.0.228", features = ["derive"] }
 shmem-bind = "0.1.3"

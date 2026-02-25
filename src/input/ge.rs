@@ -4,8 +4,11 @@
 use std::collections::VecDeque;
 use std::io::Read;
 use std::net::TcpStream;
+use std::thread;
 use anyhow::anyhow;
 use byteorder::{ByteOrder, LE};
+use crate::lprintln;
+use crate::config::GEConfig;
 use crate::error::{UError, UResult};
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
 use crate::util::resolve;
@@ -30,7 +33,19 @@ fn read_time(buf: &[u8]) -> EventTime {
     EventTime::from_sec_nsec(sec, nsec)
 }
 
-impl crate::input::Input for GeInput {
+impl GeInput {
+    pub fn init(module: ModuleId, config: GEConfig, channels: super::InputChannels) -> UResult<()> {
+        let mut input = Self::new(module, &config.addr, config.ts)?;
+        lprintln!(INFO, "Initialized {}", input.description());
+        thread::spawn(move || {
+            loop {
+                let ev = input.read_event().unwrap(); // XXX
+                channels.events.send(ev).unwrap(); // XXX
+            }
+        });
+        Ok(())
+    }
+
     fn description(&self) -> String {
         format!(
             "GE {} module {} at {}",
@@ -38,6 +53,13 @@ impl crate::input::Input for GeInput {
             self.module.0,
             self.socket.peer_addr().map(|x| x.to_string()).unwrap_or("?".into()),
         )
+    }
+
+    pub fn new(module: ModuleId, addr: &str, ts: bool) -> UResult<Self> {
+        let socket = TcpStream::connect(resolve(addr)?)
+            .map_err(UError::SourceInit)?;
+        Ok(Self { module, socket, is_ts: ts,
+                  buffer: VecDeque::with_capacity(32) })
     }
 
     fn read_event(&mut self) -> UResult<Event> {
@@ -101,14 +123,5 @@ impl crate::input::Input for GeInput {
             offset += evlen;
         }
         Ok(self.buffer.pop_front().expect("no events in nonempty packet?"))
-    }
-}
-
-impl GeInput {
-    pub fn new(module: ModuleId, addr: &str, ts: bool) -> UResult<Self> {
-        let socket = TcpStream::connect(resolve(addr)?)
-            .map_err(UError::SourceInit)?;
-        Ok(Self { module, socket, is_ts: ts,
-                  buffer: VecDeque::with_capacity(32) })
     }
 }

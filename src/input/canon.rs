@@ -8,6 +8,7 @@ use std::net::TcpStream;
 use std::time::Duration;
 use anyhow::anyhow;
 use byteorder::{WriteBytesExt, ReadBytesExt, BE};
+use crate::config::CanonConfig;
 use crate::error::{UError, UResult};
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
 use crate::util::resolve;
@@ -23,7 +24,20 @@ pub struct CanonInput {
 // 01/01/2008 00:00:00 UTC, the epoch for Canon device time
 const EPOCH: u64 = 1199145600 * 1_000_000_000;
 
-impl crate::input::Input for CanonInput {
+impl CanonInput {
+    pub fn init(module: ModuleId, config: CanonConfig, channels: super::InputChannels) -> UResult<()> {
+        unimplemented!()
+        // let socket = TcpStream::connect(resolve(&config.addr)?)
+        //     .map_err(UError::SourceInit)?;
+        // Ok(Self {
+        //     module,
+        //     socket,
+        //     is_gate: config.gate,
+        //     buffer: VecDeque::with_capacity(32),
+        //     time_ofs: EventTime::from_nsec(0),
+        // })
+    }
+
     fn description(&self) -> String {
         format!(
             "{} module {} at {}",
@@ -119,21 +133,6 @@ impl crate::input::Input for CanonInput {
         }
     }
 }
-
-impl CanonInput {
-    pub fn new(module: ModuleId, addr: &str, gate: bool) -> UResult<Self> {
-        let socket = TcpStream::connect(resolve(addr)?)
-            .map_err(UError::SourceInit)?;
-        Ok(Self {
-            module,
-            socket,
-            is_gate: gate,
-            buffer: VecDeque::with_capacity(32),
-            time_ofs: EventTime::from_nsec(0),
-        })
-    }
-}
-
 
 
 struct CanonEvent(u64);
