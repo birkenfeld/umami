@@ -3,14 +3,12 @@
 
 use std::fs::File;
 use std::net::TcpStream;
-use std::thread;
 use anyhow::anyhow;
 use byteorder::{ByteOrder, LE};
-use crate::lprintln;
 use crate::config::{GEConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
-use super::{Source, InputChannels};
+use super::{Source, Input, InputChannels};
 
 const PACKET_NORMAL:     u32 = 0x1000;
 const PACKET_NORM_FAKE:  u32 = 0x1100;
@@ -43,21 +41,18 @@ impl GeInput<()> {
     }
 }
 
-impl<S: Source + Send + 'static> GeInput<S> {
+impl<S: Source> GeInput<S> {
     fn init_with_source(source: S, module: ModuleId, config: GEConfig,
                         channels: InputChannels) -> UResult<()> {
-        let mut input = Self { source, module, is_ts: config.timestamper, channels };
-        lprintln!(INFO, "Initialized {}", input.description());
-        thread::spawn(move || {
-            loop {
-                let ev = input.read_events().unwrap(); // XXX
-                if ev.is_empty() {
-                    break;
-                }
-                input.channels.events.send(ev).unwrap(); // XXX
-            }
-        });
+        let input = Self { source, module, is_ts: config.timestamper, channels };
+        input.start_event_thread();
         Ok(())
+    }
+}
+
+impl<S: Source> Input for GeInput<S> {
+    fn channels(&self) -> &InputChannels {
+        &self.channels
     }
 
     fn description(&self) -> String {
@@ -69,35 +64,28 @@ impl<S: Source + Send + 'static> GeInput<S> {
         )
     }
 
-    fn read_events(&mut self) -> UResult<Vec<Event>> {
+    fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
         // read header
         let mut buffer = [0_u8; MAX_PACKET_SIZE];
         // TODO: this blocks if no data is available. OK?
         // TODO: handle reconnect if necessary
         match self.source.read_exact(&mut buffer[..16]) {
             Ok(_) => {},
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                lprintln!(INFO, "End of input from {}", self.description());
-                self.channels.state.send(()).unwrap(); // XXX
-                return Ok(vec![]);
-            },
-            Err(e) => {
-                lprintln!(ERROR, "Failed to read packet header from {}: {}", self.description(), e);
-                return Err(UError::ReadInput(e).into());
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(UError::ReadInput(e).into()),
         }
         let len = LE::read_u32(&buffer) as usize;
         let pktype = LE::read_u32(&buffer[4..]);
 
         if len == 0 {
             if pktype == PACKET_HEARTBT {
-                return Ok(vec![Event::new(
+                return Ok(Some(vec![Event::new(
                     read_time(&buffer[8..]),
                     self.module,
                     InputId(0),
                     EventFlags::None,
                     EventData::Heartbeat,
-                )]);
+                )]));
             }
             return Err(anyhow!("Received empty packet of type {:#x}", pktype).into());
         }
@@ -137,6 +125,6 @@ impl<S: Source + Send + 'static> GeInput<S> {
             ));
             offset += evlen;
         }
-        Ok(events)
+        Ok(Some(events))
     }
 }

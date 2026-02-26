@@ -117,10 +117,11 @@ fn inner_main(args: Options) -> error::UResult<()> {
             std::process::exit(1);
         }
     }
+    drop(channels);  // drop unused channels in main thread
 
     std::thread::spawn(move || {
-        state_read.take(n_modules).count();
-        lprintln!(INFO, "All modules finished");
+        let successful = state_read.take(n_modules).count();
+        lprintln!(INFO, "All modules finished, {} successful", successful);
         std::process::exit(0);
     });
 
