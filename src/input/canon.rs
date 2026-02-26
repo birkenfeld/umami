@@ -3,14 +3,13 @@
 
 use std::{fmt, thread};
 use std::fs::File;
-use std::io::{self, Read};
 use std::net::TcpStream;
 use std::time::Duration;
 use anyhow::anyhow;
-use byteorder::{WriteBytesExt, ReadBytesExt, BE};
+use byteorder::{ByteOrder, WriteBytesExt, ReadBytesExt, BE};
 use crate::lprintln;
 use crate::config::{CanonConfig, SourceConfig};
-use crate::error::UResult;
+use crate::error::{UError, UResult};
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
 use super::{Source, InputChannels};
 
@@ -69,17 +68,31 @@ impl<S: Source + WriteBytesExt + Send + 'static> CanonInput<S> {
             self.source.write_u64::<BE>(0xA300_0000_0000_FFFF)?;
 
             // read back the number of available 16-byte units
-            let n = self.source.read_u32::<BE>().unwrap();
+            let n = match self.source.read_u32::<BE>() {
+                Ok(n) => n as usize / 4,
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    lprintln!(INFO, "End of input from {}", self.description());
+                    self.channels.state.send(()).unwrap(); // XXX
+                    return Ok(vec![]);
+                },
+                Err(e) => {
+                    lprintln!(ERROR, "Failed to read packet number from {}: {}",
+                              self.description(), e);
+                    return Err(UError::ReadInput(e).into());
+                }
+            };
             if n > 0 {
                 break n;
             }
             thread::sleep(Duration::from_millis(100));
         };
 
+        let mut buffer = vec![0_u8; n];
+        self.source.read_exact(&mut buffer)?;
         // read events (4 16-bit units per event)
         let mut events = Vec::new();
-        for _ in 0..n/4 {
-            let cev = CanonEvent::read(&mut self.source).unwrap();
+        for i in 0..n {
+            let cev = CanonEvent(BE::read_u64(&buffer[8*i..]));
             let event = match cev.evtype() {
                 // We don't use the TriggerSync events
                 EventType::TriggerSync | EventType::Trigger =>
@@ -158,10 +171,6 @@ enum EventType {
 }
 
 impl CanonEvent {
-    fn read<R: Read>(read: &mut R) -> io::Result<Self> {
-        read.read_u64::<BE>().map(Self)
-    }
-
     fn evtype(&self) -> EventType {
         match self.0 >> 56 {
             0x51 => EventType::TriggerSync,
