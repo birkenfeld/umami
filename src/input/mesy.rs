@@ -1,13 +1,14 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
+#![allow(unused)]
+
 use std::collections::VecDeque;
 use std::net::UdpSocket;
 use anyhow::anyhow;
 use crate::config::MesyConfig;
-use crate::error::{UError, UResult};
+use crate::error::UResult;
 use crate::event::{ModuleId, Event};
-use crate::util::resolve;
 
 pub struct MesyInput {
     module: ModuleId,
@@ -18,13 +19,6 @@ pub struct MesyInput {
 impl MesyInput {
     pub fn init(module: ModuleId, config: MesyConfig, channels: super::InputChannels) -> UResult<()> {
         unimplemented!()
-        // let socket = UdpSocket::bind(resolve(local)?).map_err(UError::SourceInit)?;
-        // socket.connect(resolve(addr)?).map_err(UError::SourceInit)?;
-        // Ok(Self {
-        //     module,
-        //     socket,
-        //     buffer: VecDeque::with_capacity(32),
-        // })
     }
 
     fn description(&self) -> String {

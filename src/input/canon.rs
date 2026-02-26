@@ -1,22 +1,23 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-use std::collections::VecDeque;
 use std::{fmt, thread};
+use std::fs::File;
 use std::io::{self, Read};
 use std::net::TcpStream;
 use std::time::Duration;
 use anyhow::anyhow;
 use byteorder::{WriteBytesExt, ReadBytesExt, BE};
-use crate::config::CanonConfig;
-use crate::error::{UError, UResult};
+use crate::lprintln;
+use crate::config::{CanonConfig, SourceConfig};
+use crate::error::UResult;
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
-use crate::util::resolve;
+use super::{Source, InputChannels};
 
-pub struct CanonInput {
+pub struct CanonInput<S> {
+    source: S,
     module: ModuleId,
-    socket: TcpStream,
-    buffer: VecDeque<Event>,
+    channels: InputChannels,
     is_gate: bool,
     time_ofs: EventTime,
 }
@@ -24,18 +25,33 @@ pub struct CanonInput {
 // 01/01/2008 00:00:00 UTC, the epoch for Canon device time
 const EPOCH: u64 = 1199145600 * 1_000_000_000;
 
-impl CanonInput {
-    pub fn init(module: ModuleId, config: CanonConfig, channels: super::InputChannels) -> UResult<()> {
-        unimplemented!()
-        // let socket = TcpStream::connect(resolve(&config.addr)?)
-        //     .map_err(UError::SourceInit)?;
-        // Ok(Self {
-        //     module,
-        //     socket,
-        //     is_gate: config.gate,
-        //     buffer: VecDeque::with_capacity(32),
-        //     time_ofs: EventTime::from_nsec(0),
-        // })
+impl CanonInput<()> {
+    pub fn init(module: ModuleId, config: CanonConfig, channels: InputChannels) -> UResult<()> {
+        match &config.source {
+            SourceConfig::IP(addr) => CanonInput::init_with_source(TcpStream::from_config(addr)?,
+                                                                   module, config, channels),
+            SourceConfig::File(path) => CanonInput::init_with_source(File::from_config(path)?,
+                                                                     module, config, channels),
+        }
+    }
+}
+
+impl<S: Source + WriteBytesExt + Send + 'static> CanonInput<S> {
+    pub fn init_with_source(source: S, module: ModuleId, config: CanonConfig,
+                            channels: InputChannels) -> UResult<()> {
+        let mut input = Self { source, module, channels, is_gate: config.gatenet,
+                               time_ofs: EventTime::from_nsec(0) };
+        lprintln!(INFO, "Initialized {}", input.description());
+        thread::spawn(move || {
+            loop {
+                let ev = input.read_events().unwrap(); // XXX
+                if ev.is_empty() {
+                    break;
+                }
+                input.channels.events.send(ev).unwrap(); // XXX
+            }
+        });
+        Ok(())
     }
 
     fn description(&self) -> String {
@@ -43,21 +59,17 @@ impl CanonInput {
             "{} module {} at {}",
             if self.is_gate { "GateNet" } else { "NeuNet" },
             self.module.0,
-            self.socket.peer_addr().map(|x| x.to_string()).unwrap_or("?".into()),
+            self.source.description()
         )
     }
 
-    fn read_event(&mut self) -> UResult<Event> {
-        if let Some(ev) = self.buffer.pop_front() {
-            return Ok(ev);
-        }
-
+    fn read_events(&mut self) -> UResult<Vec<Event>> {
         let n = loop {
             // request up to 0xFFFF 16-byte units of event data
-            self.socket.write_u64::<BE>(0xA300_0000_0000_FFFF)?;
+            self.source.write_u64::<BE>(0xA300_0000_0000_FFFF)?;
 
             // read back the number of available 16-byte units
-            let n = self.socket.read_u32::<BE>().unwrap();
+            let n = self.source.read_u32::<BE>().unwrap();
             if n > 0 {
                 break n;
             }
@@ -65,8 +77,9 @@ impl CanonInput {
         };
 
         // read events (4 16-bit units per event)
+        let mut events = Vec::new();
         for _ in 0..n/4 {
-            let cev = CanonEvent::read(&mut self.socket).unwrap();
+            let cev = CanonEvent::read(&mut self.source).unwrap();
             let event = match cev.evtype() {
                 // We don't use the TriggerSync events
                 EventType::TriggerSync | EventType::Trigger =>
@@ -122,15 +135,10 @@ impl CanonInput {
                 // TODO log instead?
                 _ => return Err(anyhow!("Unsupported packet type {:?}", cev.evtype()).into()),
             };
-            self.buffer.push_back(event);
+            events.push(event);
         };
 
-        // Since some events are skipped, the buffer may still be empty here.
-        // In that case, we just wait for the next batch of events.
-        match self.buffer.pop_front() {
-            Some(ev) => Ok(ev),
-            None => self.read_event(),
-        }
+        Ok(events)
     }
 }
 

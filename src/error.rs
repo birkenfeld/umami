@@ -9,10 +9,10 @@ pub type UResult<T> = Result<T, UError>;
 // Which errors need to be handled specially?
 #[derive(Debug, Error)]
 pub enum UError {
-    #[error("Failed to initialize event source: {0}")]
+    #[error("Failed to initialize event source: {0:#}")]
     SourceInit(#[source] std::io::Error),
-    #[error("Failed to read event from input: {0}")]
+    #[error("Failed to read event from input: {0:#}")]
     ReadInput(#[from] std::io::Error),
-    #[error("Unspecified error: {0}")]
+    #[error("Unspecified error: {0:#}")]
     Other(#[from] anyhow::Error),
 }

@@ -1,8 +1,6 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-#![allow(unused)]
-
 mod config;
 mod error;
 mod event;
@@ -14,6 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::path::PathBuf;
 use anyhow::Context;
 use clap::Parser;
+
+pub use kanal as channel;
 
 static DEBUG: AtomicBool = AtomicBool::new(false);
 static TRACE: AtomicBool = AtomicBool::new(false);
@@ -94,16 +94,20 @@ fn inner_main(args: Options) -> error::UResult<()> {
     let mut shm = interface::ShmInterface::map(&config.shm_name)?;
     shm.initialize();
 
-    let (events_write, events_read) = kanal::unbounded();  // TODO tune capacity
-    let (command_write, command_read) = kanal::bounded(16);
-    let (config_request_write, config_request_read) = kanal::bounded(16);
-    let (config_reply_write, config_reply_read) = kanal::bounded(16);
+    let (events_write, events_read) = channel::bounded(1024);  // TODO tune capacity
+    let (state_write, state_read) = channel::bounded(16);
+    let (_command_write, command_read) = channel::bounded(16);
+    let (_config_request_write, config_request_read) = channel::bounded(16);
+    let (config_reply_write, _config_reply_read) = channel::bounded(16);
     let channels = input::InputChannels {
         events: events_write,
+        state: state_write,
         command: command_read,
         config_request: config_request_read,
         config_reply: config_reply_write,
     };
+
+    let n_modules = config.modules.len();
 
     for (module_id, (module_name, module_config)) in config.modules.into_iter().enumerate() {
         ldebug!("Initializing module {}: {:?}", module_name, module_config);
@@ -114,12 +118,19 @@ fn inner_main(args: Options) -> error::UResult<()> {
         }
     }
 
+    std::thread::spawn(move || {
+        state_read.take(n_modules).count();
+        lprintln!(INFO, "All modules finished");
+        std::process::exit(0);
+    });
+
     let mut i: usize = 0;
+    let mut limit = 0;
     for ev in events_read {
-        ltrace!("Received event: {:?}", ev);
-        i += 1;
-        if (i.is_multiple_of(1000000)) {
+        i += ev.len();
+        if i > limit {
             println!("Received {} events", i);
+            limit += 1000000;
         }
     }
 
