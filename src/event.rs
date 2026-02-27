@@ -64,15 +64,30 @@ pub struct InputId(pub u16);
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[derive(Archive, Serialize, Deserialize)]
 pub enum EventData {
-    Neutron = 0x0,
-    Monitor = 0x20,
-    Tzero = 0x21,
-    AuxSignal { up: bool } = 0x30,
-    Analog1 { value1: u32, value2: f64 } = 0x40,
-    Analog2 { value1: u32, value2: f32, value3: f32 } = 0x41,
-    Digital { value1: u32, value2: u32, value3: u32 } = 0x42,
-    AuxData { value: [u8; 14], len: u8 } = 0x50,
-    Heartbeat = 0xFF,
+    // Variants used when reading from raw event sources.
+
+    /// Neutron with no additional time or position information.
+    RawNeutron = 0x0,
+    /// Signal edge without additional information.
+    RawEdge { up: bool } = 0x10,
+    RawAnalog1 { value1: u32, value2: f64 } = 0x20,
+    RawAnalog2 { value1: u32, value2: f32, value3: f32 } = 0x21,
+    RawDigital { value1: u32, value2: u32, value3: u32 } = 0x22,
+    RawData { value: [u8; 14], len: u8 } = 0x30,
+    Heartbeat = 0x40,
+
+    // Variants used after processing, with more detailed information.
+
+    /// Neutron with associated time and position information.
+    Neutron { x: u32, y: u32, z: u32 } = 0x80,
+    /// Monitor count.
+    Monitor { index: u32 } = 0x90,
+    /// T-zero signal (usually chopper).
+    Tzero = 0x91,
+    /// Gate signal.
+    Gate { up: bool } = 0x92,
+    /// Auxiliary signal.
+    AuxSignal { value: u32, up: bool } = 0x93,
 }
 
 impl Eq for EventData {}
@@ -82,6 +97,7 @@ impl Eq for EventData {}
 #[derive(Archive, Serialize, Deserialize)]
 pub enum EventFlags {
     None = 0,
+    HasRelTime = 1,
     Fake = 0x1000,
 }
 
@@ -91,6 +107,7 @@ pub enum EventFlags {
 pub struct Event {
     // Do not change the structure, the serialization format depends on it.
     pub time: EventTime,
+    pub rel_time: EventTime,  // zeroed until determined
     pub flags: EventFlags,
     pub module: ModuleId,
     pub input: InputId,
@@ -98,9 +115,9 @@ pub struct Event {
 }
 
 impl Event {
-    pub fn new(time: EventTime, module: ModuleId, input: InputId,
+    pub fn new(time: EventTime, rel_time: EventTime, module: ModuleId, input: InputId,
                flags: EventFlags, data: EventData) -> Self {
-        Self { time, module, input, flags, data }
+        Self { time, rel_time, module, input, flags, data }
     }
 }
 

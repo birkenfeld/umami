@@ -93,9 +93,10 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
                     self.time_ofs = time;
                     Event::new(
                         self.time_ofs,
+                        EventTime::zero(),
                         self.module,
                         InputId(0),
-                        EventFlags::None,
+                        EventFlags::HasRelTime,
                         EventData::Tzero,
                     )
                 },
@@ -107,30 +108,37 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
                     self.time_ofs = time;
                     Event::new(
                         self.time_ofs,
+                        EventTime::zero(),
                         self.module,
                         InputId(0),
-                        EventFlags::None,
+                        EventFlags::HasRelTime,
                         EventData::Tzero,
                     )
                 },
                 EventType::Neutron => {
+                    let t = EventTime::from_clock(40_000_000, cev.t());
                     Event::new(
-                        self.time_ofs + EventTime::from_clock(40_000_000, cev.t()),
+                        self.time_ofs + t,
+                        t,
                         self.module,
                         InputId(cev.p() as u16),
-                        EventFlags::None,
-                        EventData::Digital { value1: cev.pl() as u32, value2: cev.pr() as u32,
-                                             value3: 0 },
+                        EventFlags::HasRelTime,
+                        EventData::RawDigital { value1: cev.pl() as u32,
+                                                value2: cev.pr() as u32,
+                                                value3: 0 },
                     )
                 },
                 EventType::Neutron14bit => {
+                    let t = EventTime::from_clock(40_000_000, cev.t());
                     Event::new(
-                        self.time_ofs + EventTime::from_clock(40_000_000, cev.t()),
+                        self.time_ofs + t,
+                        t,
                         self.module,
                         InputId(cev.p14() as u16),
-                        EventFlags::None,
-                        EventData::Digital { value1: cev.pl14() as u32, value2: cev.pr14() as u32,
-                                             value3: 0 },
+                        EventFlags::HasRelTime,
+                        EventData::RawDigital { value1: cev.pl14() as u32,
+                                                value2: cev.pr14() as u32,
+                                                value3: 0 },
                     )
                 },
                 EventType::External =>

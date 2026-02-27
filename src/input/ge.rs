@@ -83,6 +83,7 @@ impl<S: Source> Input for GeInput<S> {
             if pktype == PACKET_HEARTBT {
                 return Ok(Some(vec![Event::new(
                     read_time(&buffer[8..]),
+                    EventTime::zero(),
                     self.module,
                     InputId(0),
                     EventFlags::None,
@@ -107,19 +108,20 @@ impl<S: Source> Input for GeInput<S> {
         for _ in 0..nevents {
             let detid = LE::read_u32(&buffer[offset+8..]);
             let data = if self.is_ts {
-                EventData::AuxSignal { up: detid & 0x8000_0000 != 0 }
+                EventData::RawEdge { up: detid & 0x8000_0000 != 0 }
             } else if pktype == PACKET_DIAG || pktype == PACKET_DIAG_FAKE {
                 let max_heights = LE::read_u32(&buffer[offset+12..]);
                 let a_integrated = LE::read_u32(&buffer[offset+16..]);
                 let b_integrated = LE::read_u32(&buffer[offset+20..]);
-                EventData::Digital { value1: max_heights,
-                                     value2: a_integrated,
-                                     value3: b_integrated }
+                EventData::RawDigital { value1: max_heights,
+                                        value2: a_integrated,
+                                        value3: b_integrated }
             } else {
-                EventData::Neutron
+                EventData::RawNeutron
             };
             events.push(Event::new(
                 read_time(&buffer[offset..]),
+                EventTime::zero(),
                 self.module,
                 InputId(detid as u16),
                 flags,
