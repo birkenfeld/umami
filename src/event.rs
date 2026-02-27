@@ -9,7 +9,7 @@ use rkyv::{Archive, Serialize, Deserialize};
 /// Should be absolute (relative to UNIX epoch) if possible.
 #[derive(Debug, Clone, Copy)]
 #[derive(Archive, Serialize, Deserialize)]
-pub struct EventTime(u64);
+pub struct EventTime(pub u64); // XXX pub
 
 impl EventTime {
     pub fn from_nsec(nsec: u64) -> Self {

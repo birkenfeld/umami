@@ -45,7 +45,7 @@ pub trait Input: Send {
                 Err(e) => panic!("Failed to read events from {}: {}", self.description(), e),
                 Ok(None) => {
                     lprintln!(INFO, "End of input from {}", self.description());
-                    self.channels().state.send(()).unwrap();
+                    //self.channels().state.send(()).unwrap(); TODO these are not read ATM
                     break;
                 }
             }

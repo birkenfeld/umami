@@ -6,6 +6,7 @@ mod error;
 mod event;
 mod input;
 mod interface;
+mod sorter;
 mod util;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -88,42 +89,64 @@ fn inner_main(args: Options) -> error::UResult<()> {
             .with_context(|| format!("Failed to read config file {}", args.config.display()))?
     ).with_context(|| format!("Failed to parse config file {}", args.config.display()))?;
 
+    let n_modules = config.modules.len();
+    if n_modules == 0 {
+        lprintln!(ERROR, "No modules configured, exiting.");
+        std::process::exit(1);
+    }
+
     DEBUG.store(config.debug | args.debug | args.trace, Ordering::Relaxed);
     TRACE.store(args.trace, Ordering::Relaxed);
 
     let mut shm = interface::ShmInterface::map(&config.shm_name)?;
     shm.initialize();
 
-    let (events_write, events_read) = channel::bounded(1024);  // TODO tune capacity
+    const EV_BOUND: usize = 64; // TODO tune
     let (state_write, state_read) = channel::bounded(16);
     let (_command_write, command_read) = channel::bounded(16);
     let (_config_request_write, config_request_read) = channel::bounded(16);
     let (config_reply_write, _config_reply_read) = channel::bounded(16);
-    let channels = input::InputChannels {
-        events: events_write,
-        state: state_write,
-        command: command_read,
-        config_request: config_request_read,
-        config_reply: config_reply_write,
-    };
 
-    let n_modules = config.modules.len();
+    let start = jiff::Timestamp::now();
 
+    let mut event_read_chans = vec![];
     for (module_id, (module_name, module_config)) in config.modules.into_iter().enumerate() {
         ldebug!("Initializing module {}: {:?}", module_name, module_config);
+
+        let (events_write, events_read) = channel::bounded(EV_BOUND);
+        let channels = input::InputChannels {
+            events: events_write,
+            state: state_write.clone(),
+            command: command_read.clone(),
+            config_request: config_request_read.clone(),
+            config_reply: config_reply_write.clone(),
+        };
+        event_read_chans.push(events_read);
+
         if let Err(e) = input::init(event::ModuleId(module_id as _), module_config, channels.clone()) {
             // TODO: should be non-fatal? How/when to reinitialize?
             lprintln!(ERROR, "Failed to initialize module {}: {}", module_name, e);
             std::process::exit(1);
         }
     }
-    drop(channels);  // drop unused channels in main thread
 
-    std::thread::spawn(move || {
-        let successful = state_read.take(n_modules).count();
-        lprintln!(INFO, "All modules finished, {} successful", successful);
-        std::process::exit(0);
-    });
+    // create event sorters if we have more than one module
+    while event_read_chans.len() > 1 {
+        let read_1 = event_read_chans.pop().expect("len checked");
+        let read_2 = event_read_chans.pop().expect("len checked");
+        let (write, sorted_read) = channel::bounded(EV_BOUND);
+        sorter::Sorter::run(read_1, read_2, write);
+        event_read_chans.push(sorted_read);
+    }
+
+    // the last remaining channel gets all events, sorted
+    let events_read = event_read_chans.pop().expect("len checked");
+
+    // drop unused channels
+    drop(state_write);
+    drop(command_read);
+    drop(config_request_read);
+    drop(config_reply_write);
 
     let mut i: usize = 0;
     let mut limit = 0;
@@ -134,6 +157,8 @@ fn inner_main(args: Options) -> error::UResult<()> {
             limit += 1000000;
         }
     }
+    let stop = jiff::Timestamp::now();
+    println!("Final count: {} events in {} secs", i, stop - start);
 
     Ok(())
 }
