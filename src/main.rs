@@ -4,8 +4,10 @@
 mod config;
 mod error;
 mod event;
+mod histo;
 mod input;
 mod interface;
+mod recipe;
 mod sorter;
 mod util;
 
@@ -111,20 +113,22 @@ fn inner_main(args: Options) -> error::UResult<()> {
     let start = jiff::Timestamp::now();
 
     let mut event_read_chans = vec![];
-    for (module_id, (module_name, module_config)) in config.modules.into_iter().enumerate() {
+    for (module_name, module_config) in config.modules {
         ldebug!("Initializing module {}: {:?}", module_name, module_config);
 
         let (events_write, events_read) = channel::bounded(EV_BOUND);
-        let channels = input::InputChannels {
+        let plumbing = input::InputPlumbing {
             events: events_write,
             state: state_write.clone(),
             command: command_read.clone(),
             config_request: config_request_read.clone(),
             config_reply: config_reply_write.clone(),
+            recipe: recipe::from_config(&config.recipes, &module_config.recipe)?,
         };
         event_read_chans.push(events_read);
 
-        if let Err(e) = input::init(event::ModuleId(module_id as _), module_config, channels.clone()) {
+        if let Err(e) = input::init(event::ModuleId(module_config.id),
+                                    module_config.specific, plumbing) {
             // TODO: should be non-fatal? How/when to reinitialize?
             lprintln!(ERROR, "Failed to initialize module {}: {}", module_name, e);
             std::process::exit(1);
@@ -149,12 +153,16 @@ fn inner_main(args: Options) -> error::UResult<()> {
     drop(config_request_read);
     drop(config_reply_write);
 
+    let mut post_recipe = recipe::from_config(&config.recipes, &config.postprocess.recipe)?;
+    let mut histo = histo::Histogram::new(config.histogram.nx, config.histogram.ny);
+
     let mut i: usize = 0;
     let mut limit = 0;
     let mut ts = EventTime::zero();
     let mut ooo = 0;
-    for evs in events_read {
+    for mut evs in events_read {
         i += evs.len();
+        evs = post_recipe.process(evs);
         if i > limit {
             println!("Received {} events", i);
             limit += 1000000;
@@ -165,8 +173,16 @@ fn inner_main(args: Options) -> error::UResult<()> {
                 ooo += 1;
             }
             ts = nts;
+
+            match ev.data {
+                event::EventData::Neutron { x, y, .. } => {
+                    histo.add(x as usize, y as usize);
+                }
+                _ => {}
+            }
         }
     }
+
     let stop = jiff::Timestamp::now();
     println!("Final count: {} events in {} secs, {} out of order", i, stop - start, ooo);
 

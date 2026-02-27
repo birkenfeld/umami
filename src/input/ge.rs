@@ -8,7 +8,7 @@ use byteorder::{ByteOrder, LE};
 use crate::config::{GEConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
-use super::{Source, Input, InputChannels};
+use super::{Source, Input, InputPlumbing};
 
 const PACKET_NORMAL:     u32 = 0x1000;
 const PACKET_NORM_FAKE:  u32 = 0x1100;
@@ -21,7 +21,7 @@ pub struct GeInput<S> {
     source: S,
     module: ModuleId,
     is_ts: bool,
-    channels: InputChannels,
+    plumbing: InputPlumbing,
     last_event_at: EventTime,
 }
 
@@ -32,20 +32,20 @@ fn read_time(buf: &[u8]) -> EventTime {
 }
 
 impl GeInput<()> {
-    pub fn init(module: ModuleId, config: GEConfig, channels: InputChannels) -> UResult<()> {
+    pub fn init(module: ModuleId, config: GEConfig, plumbing: InputPlumbing) -> UResult<()> {
         match &config.source {
             SourceConfig::IP(addr) => GeInput::init_with_source(TcpStream::from_config(addr)?,
-                                                             module, config, channels),
+                                                             module, config, plumbing),
             SourceConfig::File(path) => GeInput::init_with_source(File::from_config(path)?,
-                                                               module, config, channels),
+                                                               module, config, plumbing),
         }
     }
 }
 
 impl<S: Source> GeInput<S> {
     fn init_with_source(source: S, module: ModuleId, config: GEConfig,
-                        channels: InputChannels) -> UResult<()> {
-        let input = Self { source, module, is_ts: config.timestamper, channels,
+                        plumbing: InputPlumbing) -> UResult<()> {
+        let input = Self { source, module, is_ts: config.timestamper, plumbing,
                            last_event_at: EventTime::zero() };
         input.start_event_thread();
         Ok(())
@@ -53,8 +53,8 @@ impl<S: Source> GeInput<S> {
 }
 
 impl<S: Source> Input for GeInput<S> {
-    fn channels(&self) -> &InputChannels {
-        &self.channels
+    fn plumbing(&self) -> &InputPlumbing {
+        &self.plumbing
     }
 
     fn description(&self) -> String {
@@ -130,11 +130,14 @@ impl<S: Source> Input for GeInput<S> {
             offset += evlen;
         }
         events.sort();
-        if events[0].time < self.last_event_at {
-            crate::lprintln!(WARN, "Received out-of-order events with time {} (current ts {}), jump {}",
-                             events[0].time, self.last_event_at, self.last_event_at - events[0].time);
-        }
-        self.last_event_at = events.last().unwrap().time;
+        events = self.plumbing.recipe.process(events);
+
+        // if events[0].time < self.last_event_at {
+        //     crate::lprintln!(WARN, "Received out-of-order events with time {} (current ts {}), jump {}",
+        //                      events[0].time, self.last_event_at, self.last_event_at - events[0].time);
+        // }
+        // self.last_event_at = events.last().unwrap().time;
+
         Ok(Some(events))
     }
 }

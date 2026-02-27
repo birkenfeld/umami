@@ -78,8 +78,8 @@ pub enum EventData {
 
     // Variants used after processing, with more detailed information.
 
-    /// Neutron with associated time and position information.
-    Neutron { x: u32, y: u32, z: u32 } = 0x80,
+    /// Neutron with associated position and time bin information.
+    Neutron { x: u32, y: u32, t: u32 } = 0x80,
     /// Monitor count.
     Monitor { index: u32 } = 0x90,
     /// T-zero signal (usually chopper).

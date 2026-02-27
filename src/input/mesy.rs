@@ -9,37 +9,37 @@ use anyhow::anyhow;
 use crate::config::{MesyConfig, SourceConfig};
 use crate::error::UResult;
 use crate::event::{ModuleId, Event};
-use super::{Source, Input, InputChannels, UdpReader};
+use super::{Source, Input, InputPlumbing, UdpReader};
 
 pub struct MesyInput<S> {
     source: S,
     module: ModuleId,
-    channels: InputChannels,
+    plumbing: InputPlumbing,
 }
 
 impl MesyInput<()> {
-    pub fn init(module: ModuleId, config: MesyConfig, channels: InputChannels) -> UResult<()> {
+    pub fn init(module: ModuleId, config: MesyConfig, plumbing: InputPlumbing) -> UResult<()> {
         match &config.source {
             SourceConfig::IP(addr) => MesyInput::init_with_source(UdpReader::from_config(addr)?,
-                                                                  module, config, channels),
+                                                                  module, config, plumbing),
             SourceConfig::File(path) => MesyInput::init_with_source(File::from_config(path)?,
-                                                                    module, config, channels),
+                                                                    module, config, plumbing),
         }
     }
 }
 
 impl<S: Source> MesyInput<S> {
     fn init_with_source(source: S, module: ModuleId, config: MesyConfig,
-                        channels: InputChannels) -> UResult<()> {
-        let input = Self { source, module, channels };
+                        plumbing: InputPlumbing) -> UResult<()> {
+        let input = Self { source, module, plumbing };
         input.start_event_thread();
         Ok(())
     }
 }
 
 impl<S: Source> Input for MesyInput<S> {
-    fn channels(&self) -> &InputChannels {
-        &self.channels
+    fn plumbing(&self) -> &InputPlumbing {
+        &self.plumbing
     }
 
 
@@ -49,5 +49,6 @@ impl<S: Source> Input for MesyInput<S> {
 
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
         unimplemented!()
+        // events = self.plumbing.recipe.process(events);
     }
 }

@@ -10,23 +10,24 @@ use crate::lprintln;
 use crate::channel::{Sender, Receiver};
 use crate::event::{Event, ModuleId};
 use crate::error::{UError, UResult};
-use crate::config::ModuleConfig;
+use crate::config::SpecificModuleConfig;
+use crate::recipe::Recipe;
 use crate::util::resolve;
 
-#[derive(Clone)]
-pub struct InputChannels {
+pub struct InputPlumbing {
     pub events: Sender<Vec<Event>>,
     pub command: Receiver<()>,
     pub state: Sender<()>,
     pub config_request: Receiver<()>,
     pub config_reply: Sender<()>,
+    pub recipe: Box<dyn Recipe>,
 }
 
-pub fn init(module: ModuleId, config: ModuleConfig, channels: InputChannels) -> UResult<()> {
+pub fn init(module: ModuleId, config: SpecificModuleConfig, plumbing: InputPlumbing) -> UResult<()> {
     Ok(match config {
-        ModuleConfig::GE(cfg) => ge::GeInput::init(module, cfg, channels)?,
-        ModuleConfig::Canon(cfg) => canon::CanonInput::init(module, cfg, channels)?,
-        ModuleConfig::Mesy(cfg) => mesy::MesyInput::init(module, cfg, channels)?,
+        SpecificModuleConfig::GE(cfg) => ge::GeInput::init(module, cfg, plumbing)?,
+        SpecificModuleConfig::Canon(cfg) => canon::CanonInput::init(module, cfg, plumbing)?,
+        SpecificModuleConfig::Mesy(cfg) => mesy::MesyInput::init(module, cfg, plumbing)?,
     })
 }
 
@@ -34,18 +35,18 @@ pub fn init(module: ModuleId, config: ModuleConfig, channels: InputChannels) -> 
 pub trait Input: Send {
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>>;
     fn description(&self) -> String;
-    fn channels(&self) -> &InputChannels;
+    fn plumbing(&self) -> &InputPlumbing;
 
     fn start_event_thread(mut self) where Self: Sized + 'static {
         lprintln!(INFO, "Initialized {}", self.description());
         std::thread::spawn(move || loop {
             match self.read_events() {
-                Ok(Some(ev)) => self.channels().events.send(ev).unwrap(),
+                Ok(Some(ev)) => self.plumbing().events.send(ev).unwrap(),
                 // TODO: what to do here?
                 Err(e) => panic!("Failed to read events from {}: {}", self.description(), e),
                 Ok(None) => {
                     lprintln!(INFO, "End of input from {}", self.description());
-                    //self.channels().state.send(()).unwrap(); TODO these are not read ATM
+                    //self.plumbing().state.send(()).unwrap(); TODO these are not read ATM
                     break;
                 }
             }

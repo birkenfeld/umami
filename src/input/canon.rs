@@ -10,12 +10,12 @@ use byteorder::{ByteOrder, WriteBytesExt, ReadBytesExt, BE};
 use crate::config::{CanonConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
-use super::{Source, Input, InputChannels};
+use super::{Source, Input, InputPlumbing};
 
 pub struct CanonInput<S> {
     source: S,
     module: ModuleId,
-    channels: InputChannels,
+    plumbing: InputPlumbing,
     is_gate: bool,
     time_ofs: EventTime,
 }
@@ -24,20 +24,20 @@ pub struct CanonInput<S> {
 const EPOCH: EventTime = EventTime::from_sec_nsec(1199145600, 0);
 
 impl CanonInput<()> {
-    pub fn init(module: ModuleId, config: CanonConfig, channels: InputChannels) -> UResult<()> {
+    pub fn init(module: ModuleId, config: CanonConfig, plumbing: InputPlumbing) -> UResult<()> {
         match &config.source {
             SourceConfig::IP(addr) => CanonInput::init_with_source(TcpStream::from_config(addr)?,
-                                                                   module, config, channels),
+                                                                   module, config, plumbing),
             SourceConfig::File(path) => CanonInput::init_with_source(File::from_config(path)?,
-                                                                     module, config, channels),
+                                                                     module, config, plumbing),
         }
     }
 }
 
 impl<S: Source + WriteBytesExt> CanonInput<S> {
     pub fn init_with_source(source: S, module: ModuleId, config: CanonConfig,
-                            channels: InputChannels) -> UResult<()> {
-        let input = Self { source, module, channels, is_gate: config.gatenet,
+                            plumbing: InputPlumbing) -> UResult<()> {
+        let input = Self { source, module, plumbing, is_gate: config.gatenet,
                            time_ofs: EventTime::zero() };
         input.start_event_thread();
         Ok(())
@@ -54,8 +54,8 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
         )
     }
 
-    fn channels(&self) -> &InputChannels {
-        &self.channels
+    fn plumbing(&self) -> &InputPlumbing {
+        &self.plumbing
     }
 
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
@@ -148,6 +148,7 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
             };
             events.push(event);
         };
+        events = self.plumbing.recipe.process(events);
 
         Ok(Some(events))
     }
