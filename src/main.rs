@@ -102,7 +102,7 @@ fn inner_main(args: Options) -> error::UResult<()> {
     shm.initialize();
 
     const EV_BOUND: usize = 64; // TODO tune
-    let (state_write, state_read) = channel::bounded(16);
+    let (state_write, _state_read) = channel::bounded(16);
     let (_command_write, command_read) = channel::bounded(16);
     let (_config_request_write, config_request_read) = channel::bounded(16);
     let (config_reply_write, _config_reply_read) = channel::bounded(16);
@@ -150,15 +150,24 @@ fn inner_main(args: Options) -> error::UResult<()> {
 
     let mut i: usize = 0;
     let mut limit = 0;
-    for ev in events_read {
-        i += ev.len();
+    let mut ts = 0;
+    let mut ooo = 0;
+    for evs in events_read {
+        i += evs.len();
         if i > limit {
             println!("Received {} events", i);
             limit += 1000000;
         }
+        for ev in evs {
+            let nts = ev.time.0;
+            if nts < ts {
+                ooo += 1;
+            }
+            ts = nts;
+        }
     }
     let stop = jiff::Timestamp::now();
-    println!("Final count: {} events in {} secs", i, stop - start);
+    println!("Final count: {} events in {} secs, {} out of order", i, stop - start, ooo);
 
     Ok(())
 }
