@@ -69,7 +69,7 @@ impl Source for std::fs::File {
     }
 
     fn description(&self) -> String {
-        "file".into()
+        "<file>".into()
     }
 }
 

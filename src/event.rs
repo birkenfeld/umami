@@ -7,7 +7,7 @@ use rkyv::{Archive, Serialize, Deserialize};
 /// Timestamp of the event in nanoseconds.
 ///
 /// Should be absolute (relative to UNIX epoch) if possible.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
 pub struct EventTime(pub u64); // XXX pub
 
@@ -38,16 +38,16 @@ impl std::ops::Add for EventTime {
 }
 
 /// Numeric order of the module
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
 pub struct ModuleId(pub u16);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
 pub struct InputId(pub u16);
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[derive(Archive, Serialize, Deserialize)]
 pub enum EventData {
     Neutron = 0x0,
@@ -70,7 +70,7 @@ pub enum EventFlags {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 #[derive(Archive, Serialize, Deserialize)]
 pub struct Event {
     // Do not change the structure, the serialization format depends on it.
@@ -93,5 +93,11 @@ impl Debug for Event {
         write!(f, "Event(time={:.9}, flags={:#x}, module={}, input={}, data={:?})",
                self.time.0 as f64 / 1_000_000_000.0, self.flags.0,
                self.module.0, self.input.0, self.data)
+    }
+}
+
+impl PartialOrd for Event {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.time.0.cmp(&other.time.0))
     }
 }
