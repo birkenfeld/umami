@@ -21,7 +21,7 @@ pub struct CanonInput<S> {
 }
 
 // 01/01/2008 00:00:00 UTC, the epoch for Canon device time
-const EPOCH: u64 = 1199145600 * 1_000_000_000;
+const EPOCH: EventTime = EventTime::from_sec_nsec(1199145600, 0);
 
 impl CanonInput<()> {
     pub fn init(module: ModuleId, config: CanonConfig, channels: InputChannels) -> UResult<()> {
@@ -38,7 +38,7 @@ impl<S: Source + WriteBytesExt> CanonInput<S> {
     pub fn init_with_source(source: S, module: ModuleId, config: CanonConfig,
                             channels: InputChannels) -> UResult<()> {
         let input = Self { source, module, channels, is_gate: config.gatenet,
-                           time_ofs: EventTime::from_nsec(0) };
+                           time_ofs: EventTime::zero() };
         input.start_event_thread();
         Ok(())
     }
@@ -86,10 +86,11 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
                 EventType::TriggerSync | EventType::Trigger =>
                     continue,
                 EventType::DeviceTime => {
-                    let time = EPOCH + cev.s() as u64 * 1_000_000_000 +
-                        cev.ss() as u64 * 1_000_000_000 / 32768 +
-                        cev.us() as u64 * 25;
-                    self.time_ofs = EventTime::from_nsec(time);
+                    let time = EPOCH +
+                        EventTime::from_clock(1, cev.s()) +
+                        EventTime::from_clock(32768, cev.ss()) +
+                        EventTime::from_clock(40_000_000, cev.us());
+                    self.time_ofs = time;
                     Event::new(
                         self.time_ofs,
                         self.module,
@@ -99,10 +100,11 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
                     )
                 },
                 EventType::DevTime32bit => {
-                    let time = EPOCH + cev.s32() as u64 * 1_000_000_000 +
-                        cev.ss32() as u64 * 1_000_000_000 / 32768 +
-                        cev.us32() as u64 * 100;
-                    self.time_ofs = EventTime::from_nsec(time);
+                    let time = EPOCH +
+                        EventTime::from_clock(1, cev.s32()) +
+                        EventTime::from_clock(32768, cev.ss32()) +
+                        EventTime::from_clock(40_000_000, cev.us32());
+                    self.time_ofs = time;
                     Event::new(
                         self.time_ofs,
                         self.module,
@@ -113,7 +115,7 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
                 },
                 EventType::Neutron => {
                     Event::new(
-                        self.time_ofs + EventTime::from_nsec(cev.t() as u64 * 25),
+                        self.time_ofs + EventTime::from_clock(40_000_000, cev.t()),
                         self.module,
                         InputId(cev.p() as u16),
                         EventFlags::None,
@@ -123,7 +125,7 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
                 },
                 EventType::Neutron14bit => {
                     Event::new(
-                        self.time_ofs + EventTime::from_nsec(cev.t() as u64 * 25),
+                        self.time_ofs + EventTime::from_clock(40_000_000, cev.t()),
                         self.module,
                         InputId(cev.p14() as u16),
                         EventFlags::None,

@@ -22,6 +22,7 @@ pub struct GeInput<S> {
     module: ModuleId,
     is_ts: bool,
     channels: InputChannels,
+    last_event_at: EventTime,
 }
 
 fn read_time(buf: &[u8]) -> EventTime {
@@ -44,7 +45,8 @@ impl GeInput<()> {
 impl<S: Source> GeInput<S> {
     fn init_with_source(source: S, module: ModuleId, config: GEConfig,
                         channels: InputChannels) -> UResult<()> {
-        let input = Self { source, module, is_ts: config.timestamper, channels };
+        let input = Self { source, module, is_ts: config.timestamper, channels,
+                           last_event_at: EventTime::zero() };
         input.start_event_thread();
         Ok(())
     }
@@ -125,6 +127,12 @@ impl<S: Source> Input for GeInput<S> {
             ));
             offset += evlen;
         }
+        events.sort();
+        if events[0].time < self.last_event_at {
+            crate::lprintln!(WARN, "Received out-of-order events with time {} (current ts {}), jump {}",
+                             events[0].time, self.last_event_at, self.last_event_at - events[0].time);
+        }
+        self.last_event_at = events.last().unwrap().time;
         Ok(Some(events))
     }
 }

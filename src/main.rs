@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use clap::Parser;
 
+use event::EventTime;
 pub use kanal as channel;
 
 static DEBUG: AtomicBool = AtomicBool::new(false);
@@ -150,7 +151,7 @@ fn inner_main(args: Options) -> error::UResult<()> {
 
     let mut i: usize = 0;
     let mut limit = 0;
-    let mut ts = 0;
+    let mut ts = EventTime::zero();
     let mut ooo = 0;
     for evs in events_read {
         i += evs.len();
@@ -159,7 +160,7 @@ fn inner_main(args: Options) -> error::UResult<()> {
             limit += 1000000;
         }
         for ev in evs {
-            let nts = ev.time.0;
+            let nts = ev.time;
             if nts < ts {
                 ooo += 1;
             }

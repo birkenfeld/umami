@@ -1,39 +1,53 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use rkyv::{Archive, Serialize, Deserialize};
 
 /// Timestamp of the event in nanoseconds.
 ///
 /// Should be absolute (relative to UNIX epoch) if possible.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[derive(Archive, Serialize, Deserialize)]
-pub struct EventTime(pub u64); // XXX pub
+pub struct EventTime(i64);
 
-impl EventTime {
-    pub fn from_nsec(nsec: u64) -> Self {
-        Self(nsec)
-    }
-
-    pub fn from_sec_nsec(sec: u32, nsec: u32) -> Self {
-        Self(sec as u64 * 1_000_000_000 + nsec as u64)
+impl Display for EventTime {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "{:.9}s", self.0 as f64 / 1_000_000_000.0)
     }
 }
 
-impl std::ops::Sub for EventTime {
-    type Output = Self;
+impl EventTime {
+    pub const fn zero() -> Self {
+        Self(0)
+    }
 
-    fn sub(self, other: Self) -> Self {
-        Self(self.0 - other.0)
+    pub const fn from_nsec(nsec: i64) -> Self {
+        Self(nsec)
+    }
+
+    pub const fn from_sec_nsec(sec: u32, nsec: u32) -> Self {
+        Self(sec as i64 * 1_000_000_000 + nsec as i64)
+    }
+
+    pub fn from_clock<T>(freq: i64, ticks: T) -> Self where i64: From<T> {
+        Self(i64::from(ticks) * 1_000_000_000 / freq)
     }
 }
 
 impl std::ops::Add for EventTime {
     type Output = Self;
 
-    fn add(self, other: Self) -> Self {
+    fn add(self, other: EventTime) -> Self {
         Self(self.0 + other.0)
+    }
+}
+
+impl std::ops::Sub for EventTime {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> EventTime {
+        EventTime(self.0 - other.0)
     }
 }
 
@@ -61,6 +75,8 @@ pub enum EventData {
     Heartbeat = 0xFF,
 }
 
+impl Eq for EventData {}
+
 #[bitflag_attr::bitflag(u16)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
@@ -70,7 +86,7 @@ pub enum EventFlags {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
 pub struct Event {
     // Do not change the structure, the serialization format depends on it.
@@ -99,5 +115,11 @@ impl Debug for Event {
 impl PartialOrd for Event {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.time.0.cmp(&other.time.0))
+    }
+}
+
+impl Ord for Event {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.time.0.cmp(&other.time.0)
     }
 }
