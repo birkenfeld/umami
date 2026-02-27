@@ -123,7 +123,7 @@ impl<S: Source> Input for GeInput<S> {
                 read_time(&buffer[offset..]),
                 EventTime::zero(),
                 self.module,
-                InputId(detid as u16),
+                InputId(detid),
                 flags,
                 data,
             ));

@@ -13,6 +13,8 @@ flume = { version = "0.12.0", default-features = false }
 interprocess = "2.4.0"
 jiff = "0.2.21"
 kanal = { version = "0.1.1", default-features = false }
+plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "image", "colormaps", "full_palette", "ttf"] }
+plotters-bitmap = { version = "0.3.7", default-features = false, features = ["image"] }
 rkyv = "0.8.15"
 serde = { version = "1.0.228", features = ["derive"] }
 shmem-bind = "0.1.3"

@@ -58,7 +58,7 @@ pub struct ModuleId(pub u16);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
-pub struct InputId(pub u16);
+pub struct InputId(pub u32);
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]

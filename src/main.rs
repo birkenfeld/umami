@@ -186,6 +186,8 @@ fn inner_main(args: Options) -> error::UResult<()> {
     let stop = jiff::Timestamp::now();
     println!("Final count: {} events in {} secs, {} out of order", i, stop - start, ooo);
 
+    histo.plot();
+
     Ok(())
 }
 
