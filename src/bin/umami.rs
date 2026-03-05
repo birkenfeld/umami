@@ -15,9 +15,8 @@ use umami::input::{self, InputPlumbing};
 use umami::interface::ShmInterface;
 use umami::sorter::Sorter;
 
-//#[global_allocator]
-//static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-//static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 #[derive(Parser)]
 #[clap(version, author, about)]
