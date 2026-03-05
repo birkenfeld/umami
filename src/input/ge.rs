@@ -22,7 +22,7 @@ pub struct GeInput<S> {
     module: ModuleId,
     is_ts: bool,
     plumbing: InputPlumbing,
-    last_event_at: EventTime,
+    // last_event_at: EventTime,
 }
 
 fn read_time(buf: &[u8]) -> EventTime {
@@ -45,8 +45,10 @@ impl GeInput<()> {
 impl<S: Source> GeInput<S> {
     fn init_with_source(source: S, module: ModuleId, config: GEConfig,
                         plumbing: InputPlumbing) -> UResult<()> {
-        let input = Self { source, module, is_ts: config.timestamper, plumbing,
-                           last_event_at: EventTime::zero() };
+        let input = Self {
+            source, module, is_ts: config.timestamper, plumbing,
+                           // last_event_at: EventTime::zero()
+        };
         input.start_event_thread();
         Ok(())
     }

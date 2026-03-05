@@ -1,62 +1,19 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-mod config;
-mod error;
-mod event;
-mod histo;
-mod input;
-mod interface;
-mod recipe;
-mod sorter;
-mod util;
-
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::path::PathBuf;
 use anyhow::Context;
 use clap::Parser;
 
-use event::EventTime;
-pub use kanal as channel;
-
-static DEBUG: AtomicBool = AtomicBool::new(false);
-static TRACE: AtomicBool = AtomicBool::new(false);
-
-#[macro_export]
-macro_rules! ldebug {
-    ($($tt:tt)+) => {
-        if crate::DEBUG.load(std::sync::atomic::Ordering::Relaxed) {
-            eprint!("{} : DEBUG : ", jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.f"));
-            eprintln!($($tt)+);
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! ltrace {
-    ($($tt:tt)+) => {
-        if crate::TRACE.load(std::sync::atomic::Ordering::Relaxed) {
-            eprint!("{} : TRACE : ", jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.f"));
-            eprintln!($($tt)+);
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! lprintln {
-    ($lvl:expr, $($tt:tt)+) => {
-        eprint!("{} : {:-5} : ", jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.f"),
-                stringify!($lvl));
-        eprintln!($($tt)+);
-    };
-}
-
-#[macro_export]
-macro_rules! lpanic {
-    ($($tt:tt)+) => {
-        { lprintln!(ERROR, $($tt)+); std::process::exit(1); }
-    };
-}
+use umami::{channel, recipe, ldebug, lprintln, DEBUG, TRACE};
+use umami::config::Config;
+use umami::error::UResult;
+use umami::event::{EventData, EventTime, ModuleId};
+use umami::histo::Histogram;
+use umami::input::{self, InputPlumbing};
+use umami::interface::ShmInterface;
+use umami::sorter::Sorter;
 
 #[derive(Parser)]
 #[clap(version, author, about)]
@@ -69,25 +26,8 @@ pub struct Options {
     trace: bool,
 }
 
-// TODO Pipeline draft
-//
-//   - input: read raw events, translate to internal event format
-//
-// / - raw: write raw data to disk (TODO use original or internal format?)
-// | - signals: assign meaning to additional events
-// | - translate: apply actual setup from instrument to calculate pixel
-// \   x,y from amplitudes, calibration, mapping tables, offsets
-//
-//   - filter: remove unneeded events?
-//   - tof: calculate time-of-flight from chopper/t0 events
-//
-//   - histogram: accumulate events into histograms
-//
-// / - output: write to disk in some format (e.g. NeXus)
-// \ - live: provide live view for Tango server
-
-fn inner_main(args: Options) -> error::UResult<()> {
-    let config: config::Config = toml::from_str(
+fn inner_main(args: Options) -> UResult<()> {
+    let config: Config = toml::from_str(
         &std::fs::read_to_string(&args.config)
             .with_context(|| format!("Failed to read config file {}", args.config.display()))?
     ).with_context(|| format!("Failed to parse config file {}", args.config.display()))?;
@@ -101,7 +41,7 @@ fn inner_main(args: Options) -> error::UResult<()> {
     DEBUG.store(config.debug | args.debug | args.trace, Ordering::Relaxed);
     TRACE.store(args.trace, Ordering::Relaxed);
 
-    let mut shm = interface::ShmInterface::map(&config.shm_name)?;
+    let mut shm = ShmInterface::map(&config.shm_name)?;
     shm.initialize();
 
     const EV_BOUND: usize = 64; // TODO tune
@@ -117,7 +57,7 @@ fn inner_main(args: Options) -> error::UResult<()> {
         ldebug!("Initializing module {}: {:?}", module_name, module_config);
 
         let (events_write, events_read) = channel::bounded(EV_BOUND);
-        let plumbing = input::InputPlumbing {
+        let plumbing = InputPlumbing {
             events: events_write,
             state: state_write.clone(),
             command: command_read.clone(),
@@ -127,7 +67,7 @@ fn inner_main(args: Options) -> error::UResult<()> {
         };
         event_read_chans.push(events_read);
 
-        if let Err(e) = input::init(event::ModuleId(module_config.id),
+        if let Err(e) = input::init(ModuleId(module_config.id),
                                     module_config.specific, plumbing) {
             // TODO: should be non-fatal? How/when to reinitialize?
             lprintln!(ERROR, "Failed to initialize module {}: {}", module_name, e);
@@ -140,7 +80,7 @@ fn inner_main(args: Options) -> error::UResult<()> {
         let read_1 = event_read_chans.pop().expect("len checked");
         let read_2 = event_read_chans.pop().expect("len checked");
         let (write, sorted_read) = channel::bounded(EV_BOUND);
-        sorter::Sorter::run(read_1, read_2, write);
+        Sorter::run(read_1, read_2, write);
         event_read_chans.push(sorted_read);
     }
 
@@ -154,7 +94,7 @@ fn inner_main(args: Options) -> error::UResult<()> {
     drop(config_reply_write);
 
     let mut post_recipe = recipe::from_config(&config.recipes, &config.postprocess.recipe)?;
-    let mut histo = histo::Histogram::new(config.histogram.nx, config.histogram.ny);
+    let mut histo = Histogram::new(config.histogram.nx, config.histogram.ny);
 
     let mut i: usize = 0;
     let mut limit = 0;
@@ -175,7 +115,7 @@ fn inner_main(args: Options) -> error::UResult<()> {
             ts = nts;
 
             match ev.data {
-                event::EventData::Neutron { x, y, .. } => {
+                EventData::Neutron { x, y, .. } => {
                     histo.add(x as usize, y as usize);
                 }
                 _ => {}
