@@ -5,10 +5,10 @@ use std::{io, fmt, thread};
 use std::fs::File;
 use std::net::TcpStream;
 use std::time::Duration;
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use byteorder::{ByteOrder, WriteBytesExt, ReadBytesExt, BE};
 use crate::config::{CanonConfig, SourceConfig};
-use crate::error::{UError, UResult};
+use crate::error::UResult;
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
 use super::{Source, Input, InputPlumbing};
 
@@ -61,13 +61,14 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
         let n = loop {
             // request up to 0xFFFF 16-byte units of event data
-            self.source.write_u64::<BE>(0xA300_0000_0000_FFFF)?;
+            self.source.write_u64::<BE>(0xA300_0000_0000_FFFF)
+                .context("Requesting events")?;
 
             // read back the number of available 16-byte units
             let n = match self.source.read_u32::<BE>() {
                 Ok(n) => n as usize / 4,
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-                Err(e) => return Err(UError::ReadInput(e).into()),
+                Err(e) => Err(e).context("Reading number of events")?,
             };
             if n > 0 {
                 break n;
@@ -76,7 +77,7 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
         };
 
         let mut buffer = vec![0_u8; n];
-        self.source.read_exact(&mut buffer)?;
+        self.source.read_exact(&mut buffer).context("Reading events")?;
         // read events (4 16-bit units per event)
         let mut events = Vec::new();
         for i in 0..n {

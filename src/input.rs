@@ -6,10 +6,11 @@ mod canon;
 mod mesy;
 
 use std::io::Read;
+use anyhow::Context;
 use crate::lprintln;
 use crate::channel::{Sender, Receiver};
 use crate::event::{Event, ModuleId};
-use crate::error::{UError, UResult};
+use crate::error::UResult;
 use crate::config::SpecificModuleConfig;
 use crate::recipe::Recipe;
 use crate::util::resolve;
@@ -65,8 +66,8 @@ impl Source for std::fs::File {
     type Config = String;
 
     fn from_config(cfg: &Self::Config) -> UResult<Self> {
-        std::fs::File::open(cfg)
-            .map_err(|e| UError::SourceInit(e))
+        Ok(std::fs::File::open(cfg)
+           .with_context(|| format!("Opening source file {:?}", cfg))?)
     }
 
     fn description(&self) -> String {
@@ -79,8 +80,8 @@ impl Source for std::net::TcpStream {
 
     fn from_config(cfg: &Self::Config) -> UResult<Self> {
         let addr = resolve(cfg)?;
-        std::net::TcpStream::connect(addr)
-            .map_err(|e| UError::SourceInit(e))
+        Ok(std::net::TcpStream::connect(addr)
+           .with_context(|| format!("Connecting to source socket {}", addr))?)
     }
 
     fn description(&self) -> String {
@@ -101,9 +102,10 @@ impl Source for UdpReader {
 
     fn from_config(cfg: &Self::Config) -> UResult<Self> {
         let addr = resolve(cfg)?;
-        std::net::UdpSocket::bind(addr)
-            .map_err(|e| UError::SourceInit(e))
-            .map(UdpReader)
+        Ok(UdpReader(
+            std::net::UdpSocket::bind(addr)
+                .context(format!("Binding to source socket {}", addr))?
+        ))
     }
 
     fn description(&self) -> String {

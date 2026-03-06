@@ -21,7 +21,7 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 #[derive(Parser)]
 #[clap(version, author, about)]
 pub struct Options {
-    #[clap(long="config", default_value="umami.conf", help="Config file")]
+    #[clap(default_value="umami.conf", help="Configuration to use")]
     config: PathBuf,
     #[clap(long="debug", default_value="false", help="Enable debug output")]
     debug: bool,
@@ -30,10 +30,11 @@ pub struct Options {
 }
 
 fn inner_main(args: Options) -> UResult<()> {
+    lprintln!(INFO, "Starting UMAMI with config file {:?}", args.config.display());
     let config: Config = toml::from_str(
         &std::fs::read_to_string(&args.config)
-            .with_context(|| format!("Failed to read config file {}", args.config.display()))?
-    ).with_context(|| format!("Failed to parse config file {}", args.config.display()))?;
+            .with_context(|| format!("Failed to read config file {:?}", args.config.display()))?
+    ).with_context(|| format!("Failed to parse config file {:?}", args.config.display()))?;
 
     let n_modules = config.modules.len();
     if n_modules == 0 {
@@ -55,6 +56,7 @@ fn inner_main(args: Options) -> UResult<()> {
 
     let start = jiff::Timestamp::now();
 
+    let mut init_errors = false;
     let mut event_read_chans = vec![];
     for (module_name, module_config) in config.modules {
         ldebug!("Initializing module {}: {:?}", module_name, module_config);
@@ -72,10 +74,13 @@ fn inner_main(args: Options) -> UResult<()> {
 
         if let Err(e) = input::init(ModuleId(module_config.id),
                                     module_config.specific, plumbing) {
-            // TODO: should be non-fatal? How/when to reinitialize?
             lprintln!(ERROR, "Failed to initialize module {}: {}", module_name, e);
-            std::process::exit(1);
+            init_errors = true;
         }
+    }
+    if init_errors {
+        lprintln!(FATAL, "Exiting due to init errors");
+        std::process::exit(1);
     }
 
     // create event sorters if we have more than one module

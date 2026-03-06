@@ -32,7 +32,7 @@ macro_rules! ldebug {
 macro_rules! ltrace {
     ($($tt:tt)+) => {
         if crate::TRACE.load(std::sync::atomic::Ordering::Relaxed) {
-            eprint!("{} : TRACE : ", jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.f"));
+            eprint!("{} : TRACE : ", jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.9f"));
             eprintln!($($tt)+);
         }
     };
@@ -41,7 +41,7 @@ macro_rules! ltrace {
 #[macro_export]
 macro_rules! lprintln {
     ($lvl:expr, $($tt:tt)+) => {
-        eprint!("{} : {:-5} : ", jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.f"),
+        eprint!("{} : {:-5} : ", jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.9f"),
                 stringify!($lvl));
         eprintln!($($tt)+);
     };

@@ -3,10 +3,10 @@
 
 use std::fs::File;
 use std::net::TcpStream;
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use byteorder::{ByteOrder, LE};
 use crate::config::{GEConfig, SourceConfig};
-use crate::error::{UError, UResult};
+use crate::error::UResult;
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
 use super::{Source, Input, InputPlumbing};
 
@@ -76,7 +76,7 @@ impl<S: Source> Input for GeInput<S> {
         match self.source.read_exact(&mut buffer[..16]) {
             Ok(_) => {},
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-            Err(e) => return Err(UError::ReadInput(e).into()),
+            Err(e) => Err(e).context("Reading from source")?,
         }
         let len = LE::read_u32(&buffer) as usize;
         let pktype = LE::read_u32(&buffer[4..]);
@@ -96,13 +96,13 @@ impl<S: Source> Input for GeInput<S> {
         }
 
         // read the rest
-        self.source.read_exact(&mut buffer[..len])?;
+        self.source.read_exact(&mut buffer[..len]).context("Reading packet content")?;
         let (evlen, flags) = match pktype {
             PACKET_NORMAL => (12, EventFlags::None),
             PACKET_NORM_FAKE => (12, EventFlags::Fake),
             PACKET_DIAG => (24, EventFlags::None),
             PACKET_DIAG_FAKE  => (24, EventFlags::Fake),
-            _ => return Err(anyhow!("Unsupported packet type {:#x}", pktype).into()),
+            _ => return Err(anyhow!("Unsupported packet type {:#x}", pktype))?,
         };
         let mut offset = 24;
         let nevents = (len - offset) / evlen;
