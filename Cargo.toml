@@ -15,7 +15,6 @@ byteorder = "1.5.0"
 clap = { version = "4.5.60", features = ["derive"] }
 crossbeam-channel = "0.5.15"
 flume = { version = "0.12.0", default-features = false }
-interprocess = "2.4.0"
 jemallocator = "0.5.4"
 jiff = "0.2.21"
 kanal = { version = "0.1.1", default-features = false }
@@ -23,7 +22,9 @@ plotters = { version = "0.3.7", default-features = false, features = ["bitmap_ba
 plotters-bitmap = { version = "0.3.7", default-features = false, features = ["image"] }
 rkyv = "0.8.15"
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
 shmem-bind = "0.1.3"
 thiserror = "2.0.18"
 toml = "1.0.3"
+uds = "0.4.2"
 zerocopy = { version = "0.8.39", features = ["derive"] }

@@ -77,8 +77,8 @@ pub struct Config {
     pub recipes: BTreeMap<String, RecipeConfig>,
     pub postprocess: PostConfig,
     pub histogram: HistoConfig,
-    #[serde(default = "default_shm_name")]
-    pub shm_name: String,
+    #[serde(default = "default_ipc_name")]
+    pub ipc_name: String,
     #[serde(default)]
     pub debug: bool,
 }
@@ -95,7 +95,7 @@ where
     }
 }
 
-fn default_shm_name() -> String {
+fn default_ipc_name() -> String {
     "umami".into()
 }
 

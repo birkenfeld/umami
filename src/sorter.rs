@@ -1,7 +1,9 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
+use anyhow::Context;
 use crate::channel::{Sender, Receiver};
+use crate::error::UResult;
 use crate::event::Event;
 
 pub struct Sorter {
@@ -11,11 +13,13 @@ pub struct Sorter {
 }
 
 impl Sorter {
-    pub fn run(rcv1: Receiver<Vec<Event>>, rcv2: Receiver<Vec<Event>>, send: Sender<Vec<Event>>) {
-        std::thread::spawn(move || {
-            let mut sorter = Sorter { rcv1, rcv2, send };
-            sorter.main();
-        });
+    pub fn run(rcv1: Receiver<Vec<Event>>, rcv2: Receiver<Vec<Event>>, send: Sender<Vec<Event>>) -> UResult<()> {
+        let mut sorter = Sorter { rcv1, rcv2, send };
+        std::thread::Builder::new()
+            .name("Sorter".into())
+            .spawn(move || sorter.main())
+            .context("Spawning sorter thread")?;
+        Ok(())
     }
 
     fn main(&mut self) {

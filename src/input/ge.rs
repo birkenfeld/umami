@@ -8,7 +8,7 @@ use byteorder::{ByteOrder, LE};
 use crate::config::{GEConfig, SourceConfig};
 use crate::error::UResult;
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
-use super::{Source, Input, InputPlumbing};
+use super::{Source, Input, InputPlumbing, NullCmdHandler};
 
 const PACKET_NORMAL:     u32 = 0x1000;
 const PACKET_NORM_FAKE:  u32 = 0x1100;
@@ -21,7 +21,6 @@ pub struct GeInput<S> {
     source: S,
     module: ModuleId,
     is_ts: bool,
-    plumbing: InputPlumbing,
     // last_event_at: EventTime,
 }
 
@@ -35,9 +34,9 @@ impl GeInput<()> {
     pub fn init(module: ModuleId, config: GEConfig, plumbing: InputPlumbing) -> UResult<()> {
         match &config.source {
             SourceConfig::IP(addr) => GeInput::init_with_source(TcpStream::from_config(addr)?,
-                                                             module, config, plumbing),
+                                                                module, config, plumbing),
             SourceConfig::File(path) => GeInput::init_with_source(File::from_config(path)?,
-                                                               module, config, plumbing),
+                                                                  module, config, plumbing),
         }
     }
 }
@@ -46,18 +45,16 @@ impl<S: Source> GeInput<S> {
     fn init_with_source(source: S, module: ModuleId, config: GEConfig,
                         plumbing: InputPlumbing) -> UResult<()> {
         let input = Self {
-            source, module, is_ts: config.timestamper, plumbing,
+            source, module, is_ts: config.timestamper,
                            // last_event_at: EventTime::zero()
         };
-        input.start_event_thread();
+        input.start(module, plumbing);
         Ok(())
     }
 }
 
 impl<S: Source> Input for GeInput<S> {
-    fn plumbing(&self) -> &InputPlumbing {
-        &self.plumbing
-    }
+    type CmdHandler = NullCmdHandler;
 
     fn description(&self) -> String {
         format!(
@@ -66,6 +63,10 @@ impl<S: Source> Input for GeInput<S> {
             self.module.0,
             self.source.description()
         )
+    }
+
+    fn command_handler(&self, _: &InputPlumbing) -> Self::CmdHandler {
+        NullCmdHandler(self.module)
     }
 
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
@@ -132,7 +133,6 @@ impl<S: Source> Input for GeInput<S> {
             offset += evlen;
         }
         events.sort();
-        events = self.plumbing.recipe.process(events);
 
         // if events[0].time < self.last_event_at {
         //     crate::lprintln!(WARN, "Received out-of-order events with time {} (current ts {}), jump {}",

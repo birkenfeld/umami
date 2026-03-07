@@ -10,12 +10,11 @@ use byteorder::{ByteOrder, WriteBytesExt, ReadBytesExt, BE};
 use crate::config::{CanonConfig, SourceConfig};
 use crate::error::UResult;
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
-use super::{Source, Input, InputPlumbing};
+use super::{Source, Input, InputPlumbing, NullCmdHandler};
 
 pub struct CanonInput<S> {
     source: S,
     module: ModuleId,
-    plumbing: InputPlumbing,
     is_gate: bool,
     time_ofs: EventTime,
 }
@@ -37,14 +36,16 @@ impl CanonInput<()> {
 impl<S: Source + WriteBytesExt> CanonInput<S> {
     pub fn init_with_source(source: S, module: ModuleId, config: CanonConfig,
                             plumbing: InputPlumbing) -> UResult<()> {
-        let input = Self { source, module, plumbing, is_gate: config.gatenet,
+        let input = Self { source, module, is_gate: config.gatenet,
                            time_ofs: EventTime::zero() };
-        input.start_event_thread();
+        input.start(module, plumbing);
         Ok(())
     }
 }
 
 impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
+    type CmdHandler = NullCmdHandler;
+
     fn description(&self) -> String {
         format!(
             "{} module {} at {}",
@@ -54,8 +55,8 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
         )
     }
 
-    fn plumbing(&self) -> &InputPlumbing {
-        &self.plumbing
+    fn command_handler(&self, _: &InputPlumbing) -> Self::CmdHandler {
+        NullCmdHandler(self.module)
     }
 
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
@@ -149,7 +150,6 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
             };
             events.push(event);
         };
-        events = self.plumbing.recipe.process(events);
 
         Ok(Some(events))
     }

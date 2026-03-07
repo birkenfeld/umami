@@ -9,18 +9,24 @@ use std::io::Read;
 use anyhow::Context;
 use crate::lprintln;
 use crate::channel::{Sender, Receiver};
-use crate::event::{Event, ModuleId};
-use crate::error::UResult;
+use crate::command::{Command, CommandReply};
 use crate::config::SpecificModuleConfig;
+use crate::error::UResult;
+use crate::event::{Event, ModuleId};
 use crate::recipe::Recipe;
 use crate::util::resolve;
 
+#[derive(Debug)]
+pub enum InputState {
+    Running(ModuleId),
+    Ended(ModuleId),
+}
+
 pub struct InputPlumbing {
+    pub state: Sender<InputState>,
     pub events: Sender<Vec<Event>>,
-    pub command: Receiver<()>,
-    pub state: Sender<()>,
-    pub config_request: Receiver<()>,
-    pub config_reply: Sender<()>,
+    pub command: Receiver<Command>,
+    pub command_reply: Sender<CommandReply>,
     pub recipe: Box<dyn Recipe>,
 }
 
@@ -32,22 +38,46 @@ pub fn init(module: ModuleId, config: SpecificModuleConfig, plumbing: InputPlumb
     })
 }
 
+pub trait InputCmdHandler: Send {
+    fn handle(&mut self, cmd: Command) -> CommandReply;
+}
+
 
 pub trait Input: Send {
-    fn read_events(&mut self) -> UResult<Option<Vec<Event>>>;
-    fn description(&self) -> String;
-    fn plumbing(&self) -> &InputPlumbing;
+    type CmdHandler: InputCmdHandler;
 
-    fn start_event_thread(mut self) where Self: Sized + 'static {
+    fn description(&self) -> String;
+    fn command_handler(&self, plumbing: &InputPlumbing) -> Self::CmdHandler;
+
+    fn read_events(&mut self) -> UResult<Option<Vec<Event>>>;
+
+    fn start(mut self, module: ModuleId, mut plumbing: InputPlumbing) where Self: Sized + 'static {
         lprintln!(INFO, "Initialized {}", self.description());
+
+        let mut cmd_handler = self.command_handler(&plumbing);
+        let desc = self.description();
+        std::thread::spawn(move || loop {
+            match plumbing.command.recv() {
+                Ok(cmd) => {
+                    let reply = cmd_handler.handle(cmd);
+                    plumbing.command_reply.send(reply).unwrap(); // TODO
+                }
+                // TODO
+                Err(e) => panic!("Failed to read command for {}: {}", desc, e),
+            }
+        });
+
         std::thread::spawn(move || loop {
             match self.read_events() {
-                Ok(Some(ev)) => self.plumbing().events.send(ev).unwrap(),
+                Ok(Some(ev)) => {
+                    let ev = plumbing.recipe.process(ev);
+                    plumbing.events.send(ev).unwrap();
+                }
                 // TODO: what to do here?
                 Err(e) => panic!("Failed to read events from {}: {}", self.description(), e),
                 Ok(None) => {
                     lprintln!(INFO, "End of input from {}", self.description());
-                    //self.plumbing().state.send(()).unwrap(); TODO these are not read ATM
+                    plumbing.state.send(InputState::Ended(module)).unwrap(); // TODO
                     break;
                 }
             }
@@ -110,5 +140,14 @@ impl Source for UdpReader {
 
     fn description(&self) -> String {
         self.0.peer_addr().map(|x| x.to_string()).unwrap_or("?".into())
+    }
+}
+
+
+pub struct NullCmdHandler(pub ModuleId);
+
+impl InputCmdHandler for NullCmdHandler {
+    fn handle(&mut self, _cmd: Command) -> CommandReply {
+        CommandReply::new_ok(Some(self.0))
     }
 }

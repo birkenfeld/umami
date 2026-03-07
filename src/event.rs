@@ -52,8 +52,9 @@ impl std::ops::Sub for EventTime {
 }
 
 /// Numeric order of the module
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Archive, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct ModuleId(pub u16);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
