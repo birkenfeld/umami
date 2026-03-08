@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use anyhow::anyhow;
-use crate::{channel, lprintln, ldebug};
+use crate::{channel, lprintln, ldebug, ltrace};
 use crate::{command, histo, input, recipe, sorter};
 use crate::config::Config;
 use crate::error::UResult;
@@ -16,9 +16,21 @@ const EV_CHANNEL_SIZE: usize = 64; // TODO tune
 
 // TODO: channels don't need &mut to send/recv, can simplify by sharing?
 
+pub fn set_debug_params(debug: bool, trace: bool) -> UResult<()> {
+    crate::DEBUG.store(debug, std::sync::atomic::Ordering::Relaxed);
+    if cfg!(feature = "trace") {
+        crate::TRACE.store(trace, std::sync::atomic::Ordering::Relaxed);
+    } else if trace {
+        Err(anyhow!("Trace logging is not available in this build"))?;
+    }
+    Ok(())
+}
+
 pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     let n_modules = config.modules.len();
-    if n_modules > MAX_MODULES {
+    if n_modules == 0 {
+        Err(anyhow!("No modules configured"))?;
+    } else if n_modules > MAX_MODULES {
         Err(anyhow!("Too many modules: {}, max is {}", n_modules, MAX_MODULES))?;
     }
 
@@ -106,6 +118,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     for mut evs in events_read {
         i += evs.len();
         evs = post_recipe.process(evs);
+        ltrace!("Postprocessed events: {:?}", evs);
         if i > limit {
             println!("Received {} events", i);
             limit += 1000000;

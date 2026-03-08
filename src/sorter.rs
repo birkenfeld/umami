@@ -2,6 +2,7 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use anyhow::Context;
+use crate::ltrace;
 use crate::channel::{Sender, Receiver};
 use crate::error::UResult;
 use crate::event::{Event, EventData};
@@ -13,7 +14,7 @@ pub struct Sorter {
 }
 
 fn is_end(evs: &[Event]) -> bool {
-    evs.last().map_or(false, |ev| matches!(ev.data, EventData::EndOfRun))
+    evs.last().is_some_and(|ev| matches!(ev.data, EventData::EndOfRun))
 }
 
 impl Sorter {
@@ -36,8 +37,10 @@ impl Sorter {
         match rcv_a.recv() {
             Ok(evs_a) if is_end(&evs_a) => {
                 snd.send(std::mem::take(buf_b)).unwrap();
+                ltrace!("Sorter received end from one channel");
                 while let Ok(evs_b) = rcv_b.recv() {
                     if is_end(&evs_b) {
+                        ltrace!("Sorter received end from other channel");
                         // send on one of the end events
                         snd.send(evs_b).unwrap();
                         return Some(vec![]);

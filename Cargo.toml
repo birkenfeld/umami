@@ -29,3 +29,6 @@ thiserror = "2.0.18"
 toml = "1.0.3"
 uds = "0.4.2"
 zerocopy = { version = "0.8.39", features = ["derive"] }
+
+[features]
+trace = []

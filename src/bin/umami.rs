@@ -1,12 +1,11 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-use std::sync::atomic::Ordering;
 use std::path::PathBuf;
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use clap::Parser;
 
-use umami::{lprintln, DEBUG, TRACE};
+use umami::lprintln;
 
 #[global_allocator]
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
@@ -33,18 +32,11 @@ fn inner_main(args: Options) -> umami::UResult<()> {
             .with_context(|| format!("Failed to read config file {:?}", args.config.display()))?
     ).with_context(|| format!("Failed to parse config file {:?}", args.config.display()))?;
 
-    let n_modules = config.modules.len();
-    if n_modules == 0 {
-        Err(anyhow!("No modules configured"))?;
-    }
-
-    DEBUG.store(config.debug | args.debug | args.trace, Ordering::Relaxed);
-    TRACE.store(args.trace, Ordering::Relaxed);
-
     if let Some(ipc_name) = args.ipc_name {
         config.ipc_name = ipc_name.to_string();
     }
 
+    umami::set_debug_params(config.debug | args.debug | args.trace, args.trace)?;
     umami::run_pipeline(config, args.start)
 }
 

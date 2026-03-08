@@ -9,7 +9,7 @@ use std::thread;
 use std::io::{Read, Seek};
 use std::time::Duration;
 use anyhow::Context;
-use crate::lprintln;
+use crate::{lprintln, ltrace};
 use crate::channel::{Sender, Receiver};
 use crate::command::{Command, CommandReply};
 use crate::config::SpecificModuleConfig;
@@ -127,8 +127,10 @@ pub trait Input: Send {
             if !common.needs_reset {
                 match self.read_events() {
                     Ok(Some(ev)) => {
+                        ltrace!("{} | Incoming events: {:?}", desc, ev);
                         if common.running {
                             let ev = common.recipe.process(ev);
+                            ltrace!("{} | Processed events: {:?}", desc, ev);
                             common.events.send(ev).expect("event channel closed");
                         }
                         continue;

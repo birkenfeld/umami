@@ -131,14 +131,15 @@ impl<S: Source> Input for GeInput<S> {
             } else {
                 EventData::RawNeutron
             };
-            events.push(Event::new(
+            let event = Event::new(
                 read_time(&buffer[offset..]),
                 EventTime::zero(),
                 self.module,
                 InputId(detid),
                 flags,
                 data,
-            ));
+            );
+            events.push(event);
             offset += evlen;
         }
         events.sort();

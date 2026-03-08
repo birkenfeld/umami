@@ -127,7 +127,8 @@ impl Event {
     }
 
     pub fn end(module: ModuleId) -> Self {
-        Self { time: EventTime::MAX, rel_time: EventTime::MAX, flags: EventFlags::Fake,
+        Self { time: EventTime::MAX, rel_time: EventTime::MAX,
+               flags: EventFlags::Fake | EventFlags::HasRelTime,
                module, input: InputId(0), data: EventData::EndOfRun }
     }
 }
