@@ -14,6 +14,8 @@ use crate::interface::{UdsInterface, ShmInterface, MAX_MODULES};
 const EV_CHANNEL_SIZE: usize = 64; // TODO tune
 
 
+// TODO: channels don't need &mut to send/recv, can simplify by sharing?
+
 pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     let n_modules = config.modules.len();
     if n_modules > MAX_MODULES {
@@ -118,13 +120,16 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
             if let EventData::Neutron { x, y, .. } = ev.data {
                 histo.add(x as usize, y as usize);
             }
+            else if let EventData::EndOfRun = ev.data {
+                let stop = jiff::Timestamp::now();
+                println!("Final count: {} events in {} secs, {} out of order", i, stop - start, ooo);
+                i = 0;
+                ooo = 0;
+                histo.plot();
+            }
         }
     }
 
-    let stop = jiff::Timestamp::now();
-    println!("Final count: {} events in {} secs, {} out of order", i, stop - start, ooo);
-
-    histo.plot();
 
     Ok(())
 }
