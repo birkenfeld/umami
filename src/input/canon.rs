@@ -60,7 +60,16 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
     }
 
     fn handle(&mut self, _cmd: Command) -> CommandReply {
-        CommandReply::new_ok(Some(self.module))
+        CommandReply::Ok
+    }
+
+    fn start(&mut self) -> UResult<()> {
+        self.source.reset()?;
+        Ok(())
+    }
+
+    fn stop(&mut self) -> UResult<()> {
+        Ok(())
     }
 
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {

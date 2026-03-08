@@ -21,6 +21,7 @@ pub static DEBUG: AtomicBool = AtomicBool::new(false);
 pub static TRACE: AtomicBool = AtomicBool::new(false);
 
 // Public API
+pub use self::command::{Command, CommandReply};
 pub use self::config::Config;
 pub use self::error::UResult;
 pub use self::pipeline::run_pipeline;

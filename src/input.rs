@@ -5,12 +5,13 @@ mod ge;
 mod canon;
 mod mesy;
 
-use std::io::Read;
+use std::thread;
+use std::io::{Read, Seek};
 use std::time::Duration;
 use anyhow::Context;
 use crate::lprintln;
 use crate::channel::{Sender, Receiver};
-use crate::command::{Command, CommandType, CommandReply};
+use crate::command::{Command, CommandReply};
 use crate::config::SpecificModuleConfig;
 use crate::error::UResult;
 use crate::event::{Event, ModuleId};
@@ -46,6 +47,8 @@ pub fn start(module: ModuleId, config: SpecificModuleConfig, plumbing: InputPlum
 pub trait Input: Send {
     fn description(&self) -> String;
     fn handle(&mut self, cmd: Command) -> CommandReply;
+    fn start(&mut self) -> UResult<()>;
+    fn stop(&mut self) -> UResult<()>;
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>>;
 
     fn start_main_loop(self, module: ModuleId, plumbing: InputPlumbing) -> UResult<()>
@@ -53,7 +56,7 @@ pub trait Input: Send {
     {
         let desc = self.description();
         lprintln!(INFO, "Initialized {desc}");
-        std::thread::Builder::new()
+        thread::Builder::new()
             .name(format!("input-{}", self.description()))
             .spawn(move || main_loop(self, module, plumbing))
             .context(format!("Spawning input thread for {desc}"))?;
@@ -69,20 +72,35 @@ fn main_loop(mut input: impl Input, module: ModuleId, mut plumbing: InputPlumbin
         match plumbing.command.try_recv() {
             Ok(None) => (),
             Ok(Some(cmd)) => {
-                match cmd.command {
-                    CommandType::AutoStart => {
+                match cmd {
+                    Command::AutoStart => {
                         running = true;
+                        let _ = input.start();
                         plumbing.state.send(InputState::Running(module)).unwrap(); // TODO
                     }
-                    CommandType::Start => {
+                    Command::Start => {
                         running = true;
-                        plumbing.state.send(InputState::Running(module)).unwrap(); // TODO
-                        plumbing.command_reply.send(CommandReply::new_ok(Some(module))).unwrap(); // TODO
+                        if let Err(e) = input.start() {
+                            plumbing.state.send(InputState::Errored(module)).unwrap(); // TODO
+                            plumbing.command_reply.send(CommandReply::new_error(
+                                Some(module), format!("Failed to start input: {}", e)
+                            )).unwrap(); // TODO
+                        } else {
+                            plumbing.state.send(InputState::Running(module)).unwrap(); // TODO
+                            plumbing.command_reply.send(CommandReply::Ok).unwrap(); // TODO
+                        }
                     }
-                    CommandType::Stop => {
+                    Command::Stop => {
                         running = false;
-                        plumbing.state.send(InputState::Stopped(module)).unwrap(); // TODO
-                        plumbing.command_reply.send(CommandReply::new_ok(Some(module))).unwrap(); // TODO
+                        if let Err(e) = input.stop() {
+                            plumbing.state.send(InputState::Errored(module)).unwrap(); // TODO
+                            plumbing.command_reply.send(CommandReply::new_error(
+                                Some(module), format!("Failed to stop input: {}", e)
+                            )).unwrap(); // TODO
+                        } else {
+                            plumbing.state.send(InputState::Stopped(module)).unwrap(); // TODO
+                            plumbing.command_reply.send(CommandReply::Ok).unwrap(); // TODO
+                        }
                     }
                     _ => {
                         let reply = input.handle(cmd);
@@ -104,9 +122,8 @@ fn main_loop(mut input: impl Input, module: ModuleId, mut plumbing: InputPlumbin
             // TODO: what to do here?
             Err(e) => panic!("Failed to read events from {}: {}", input.description(), e),
             Ok(None) => {
-                lprintln!(INFO, "End of input from {}", input.description());
-                plumbing.state.send(InputState::Ended(module)).unwrap(); // TODO
-                break;
+                plumbing.state.send(InputState::Ended(module)).expect("state channel closed");
+                plumbing.command.peek();
             }
         }
     }
@@ -117,6 +134,9 @@ pub trait Source: Read + Send + 'static {
     type Config;
     fn from_config(cfg: &Self::Config) -> UResult<Self> where Self: Sized;
     fn description(&self) -> String;
+    fn reset(&mut self) -> UResult<()> {
+        Ok(())
+    }
 }
 
 impl Source for std::fs::File {
@@ -129,6 +149,12 @@ impl Source for std::fs::File {
 
     fn description(&self) -> String {
         "<file>".into()
+    }
+
+    fn reset(&mut self) -> UResult<()> {
+        self.seek(std::io::SeekFrom::Start(0))
+            .context("Resetting file source")?;
+        Ok(())
     }
 }
 

@@ -10,13 +10,21 @@ use crate::channel::{Sender, Receiver};
 use crate::command::{Command, CommandReply};
 use crate::error::UResult;
 
+pub const MAX_MODULES: usize = 128;
+pub const MAX_HISTO_SIZE: usize = 256 * 1024 * 1024;  // 1 GB shmem
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 // This trait impl is not actually used but ensures that initializing
 // the SHM does not create undefined behavior.
 #[derive(zerocopy::FromBytes)]
 pub struct ShmInterface {
-    pub state: u32,
+    pub histo: [u32; MAX_HISTO_SIZE],
+    pub state: [u8; MAX_MODULES],
+    pub modules: u32,
+    pub nx: u32,
+    pub ny: u32,
+    pub nt: u32,
 }
 
 impl ShmInterface {
@@ -28,8 +36,13 @@ impl ShmInterface {
         Ok(unsafe { shared_mem.boxed::<ShmInterface>() })
     }
 
-    pub fn reset(&mut self) {
-        self.state = 0;
+    pub fn reset(&mut self, n: u32) {
+        self.histo.fill(0);
+        self.state.fill(0);
+        self.modules = n;
+        self.nx = 0;
+        self.ny = 0;
+        self.nt = 0;
     }
 }
 
@@ -45,7 +58,7 @@ impl UdsInterface {
         let addr = uds::UnixSocketAddr::from_abstract(name.as_bytes())
             .context("Creating abstract socket address")?;
         let sock = net::UnixDatagram::bind_unix_addr(&addr)
-            .context("Binding UDS listener")?;
+            .context("Binding socket listener")?;
         Ok(Self { sock, req_write, rep_read })
     }
 
@@ -64,18 +77,21 @@ impl UdsInterface {
                 Ok((n, addr)) => {
                     // TODO error handling
                     if let Ok(s) = str::from_utf8(&buf[..n])
-                        && let Ok(cmd) = serde_json::from_str::<Command>(s) {
-                            ldebug!("Received command {:?}", cmd);
-                            self.req_write.send(cmd).unwrap();
-                            if let Ok(reply) = self.rep_read.recv() {
-                                ldebug!("Sending reply {:?}", reply);
-                                let r = serde_json::to_string(&reply).unwrap();
-                                self.sock.send_to_addr(r.as_bytes(), &addr).unwrap();
+                        && let Ok(cmd) = serde_json::from_str::<Command>(s)
+                    {
+                        ldebug!("Received command {:?}", cmd);
+                        self.req_write.send(cmd).unwrap();
+                        if let Ok(reply) = self.rep_read.recv() {
+                            ldebug!("Sending reply {:?}", reply);
+                            let r = serde_json::to_string(&reply).unwrap();
+                            if let Err(e) = self.sock.send_to_addr(r.as_bytes(), &addr) {
+                                lprintln!(ERROR, "Sending command reply: {e:#}");
                             }
+                        }
                     }
                 },
                 Err(e) => {
-                    lprintln!(ERROR, "UDS receive error: {:#}", e);
+                    lprintln!(ERROR, "Unix socket receive error: {e:#}");
                 }
             }
         }

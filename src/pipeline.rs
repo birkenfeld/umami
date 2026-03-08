@@ -9,24 +9,28 @@ use crate::config::Config;
 use crate::error::UResult;
 use crate::event::{EventData, EventTime, ModuleId};
 use crate::input::InputPlumbing;
-use crate::interface::{UdsInterface, ShmInterface};
+use crate::interface::{UdsInterface, ShmInterface, MAX_MODULES};
 
-const EV_BOUND: usize = 64; // TODO tune
-const CH_BOUND: usize = 16; // TODO tune
+const EV_CHANNEL_SIZE: usize = 64; // TODO tune
 
 
 pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
-    let mut shm = ShmInterface::map(&config.ipc_name)?;
-    shm.reset();
+    let n_modules = config.modules.len();
+    if n_modules > MAX_MODULES {
+        Err(anyhow!("Too many modules: {}, max is {}", n_modules, MAX_MODULES))?;
+    }
 
-    let (if_cmd_write, if_cmd_read) = channel::bounded(CH_BOUND);
-    let (if_reply_write, if_reply_read) = channel::bounded(CH_BOUND);
+    let mut shm = ShmInterface::map(&config.ipc_name)?;
+    shm.reset(n_modules as u32);
+
+    let (if_cmd_write, if_cmd_read) = channel::bounded(1);  // only one command at a time
+    let (if_reply_write, if_reply_read) = channel::bounded(1);
     let uds = UdsInterface::new(&config.ipc_name, if_cmd_write, if_reply_read)?;
 
     lprintln!(INFO, "IPC interfaces are available under the name {:?}", config.ipc_name);
 
-    let (state_write, state_read) = channel::bounded(CH_BOUND);
-    let (cmd_reply_write, cmd_reply_read) = channel::bounded(CH_BOUND);
+    let (state_write, state_read) = channel::bounded(n_modules + 1);
+    let (cmd_reply_write, cmd_reply_read) = channel::bounded(n_modules + 1);
 
     let start = jiff::Timestamp::now();
 
@@ -37,8 +41,8 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         let mid = ModuleId(module_config.id);
         ldebug!("Initializing module {}: {:?}", module_name, module_config);
 
-        let (events_write, events_read) = channel::bounded(EV_BOUND);
-        let (command_write, command_read) = channel::bounded(CH_BOUND);
+        let (events_write, events_read) = channel::bounded(EV_CHANNEL_SIZE);
+        let (command_write, command_read) = channel::bounded(1);
         let plumbing = InputPlumbing {
             events: events_write,
             state: state_write.clone(),
@@ -48,7 +52,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         };
         event_read_chans.push(events_read);
         if immediate_start {
-            command_write.send(command::Command::new_auto_start(mid))
+            command_write.send(command::Command::AutoStart)
                 .expect("sending start command");
         }
 
@@ -67,7 +71,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     while event_read_chans.len() > 1 {
         let read_1 = event_read_chans.pop().expect("len checked");
         let read_2 = event_read_chans.pop().expect("len checked");
-        let (write, sorted_read) = channel::bounded(EV_BOUND);
+        let (write, sorted_read) = channel::bounded(EV_CHANNEL_SIZE);
         sorter::Sorter::start(read_1, read_2, write)?;
         event_read_chans.push(sorted_read);
     }
@@ -80,11 +84,13 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     drop(cmd_reply_write);
     command::CommandHandler::start(if_cmd_read, command_write_chans, cmd_reply_read, if_reply_write)?;
 
-    std::thread::spawn(move || {
-        while let Ok(state) = state_read.recv() {
-            lprintln!(INFO, "Module state: {:?}", state);
-        }
-    });
+    std::thread::Builder::new()
+        .name("State logger".into())
+        .spawn(move || {
+            while let Ok(state) = state_read.recv() {
+                // lprintln!(INFO, "Module state: {:?}", state);
+            }
+        }).unwrap();
 
     let mut post_recipe = recipe::from_config(&config.recipes, &config.postprocess.recipe)?;
 

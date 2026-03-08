@@ -3,7 +3,7 @@
 
 use std::sync::atomic::Ordering;
 use std::path::PathBuf;
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use clap::Parser;
 
 use umami::{lprintln, DEBUG, TRACE};
@@ -18,7 +18,7 @@ pub struct Options {
     config: PathBuf,
     #[clap(long="start", help="Start the pipeline immediately")]
     start: bool,
-    #[clap(long="ipc-name", help="Name of the SHM and UDS interface, overrides config file")]
+    #[clap(long="ipc", help="Name of the instance for IPC, overrides config file")]
     ipc_name: Option<String>,
     #[clap(long="debug", help="Enable debug output")]
     debug: bool,
@@ -35,8 +35,7 @@ fn inner_main(args: Options) -> umami::UResult<()> {
 
     let n_modules = config.modules.len();
     if n_modules == 0 {
-        lprintln!(ERROR, "No modules configured, exiting.");
-        std::process::exit(1);
+        Err(anyhow!("No modules configured"))?;
     }
 
     DEBUG.store(config.debug | args.debug | args.trace, Ordering::Relaxed);

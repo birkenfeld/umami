@@ -29,6 +29,7 @@ impl Sorter {
 
         loop {
             if buffer1.is_empty() {
+                // TODO: needs timeouts or an "end" event to avoid deadlock when one input ends before the other
                 match self.rcv1.recv() {
                     Ok(evs) => buffer1 = evs,
                     Err(_) => {
@@ -41,6 +42,7 @@ impl Sorter {
                 }
             }
             if buffer2.is_empty() {
+                // TODO: needs timeouts
                 match self.rcv2.recv() {
                     Ok(evs) => buffer2 = evs,
                     Err(_) => if buffer2.is_empty() {
