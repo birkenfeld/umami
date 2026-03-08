@@ -4,77 +4,95 @@
 use anyhow::Context;
 use crate::channel::{Sender, Receiver};
 use crate::error::UResult;
-use crate::event::Event;
+use crate::event::{Event, EventData};
 
 pub struct Sorter {
     pub rcv1: Receiver<Vec<Event>>,
     pub rcv2: Receiver<Vec<Event>>,
     pub send: Sender<Vec<Event>>,
+    buffer1: Vec<Event>,
+    buffer2: Vec<Event>,
+}
+
+fn is_end(evs: &[Event]) -> bool {
+    evs.last().map_or(false, |ev| matches!(ev.data, EventData::EndOfRun))
 }
 
 impl Sorter {
-    pub fn start(rcv1: Receiver<Vec<Event>>, rcv2: Receiver<Vec<Event>>, send: Sender<Vec<Event>>) -> UResult<()> {
-        let mut sorter = Sorter { rcv1, rcv2, send };
+    pub fn new(rcv1: Receiver<Vec<Event>>, rcv2: Receiver<Vec<Event>>, send: Sender<Vec<Event>>) -> Self {
+        Sorter { rcv1, rcv2, send, buffer1: Vec::new(), buffer2: Vec::new() }
+    }
+
+    pub fn start(self) -> UResult<()> {
         std::thread::Builder::new()
             .name("Sorter".into())
-            .spawn(move || sorter.main())
+            .spawn(move || self.main())
             .context("Spawning sorter thread")?;
         Ok(())
     }
 
-    fn main(&mut self) {
-        let mut buffer1: Vec<Event> = Vec::with_capacity(1024);
-        let mut buffer2: Vec<Event> = Vec::with_capacity(1024);
+    fn main(mut self) {
         // let mut ts = crate::event::EventTime::zero();
 
-        loop {
-            if buffer1.is_empty() {
-                // TODO: needs timeouts or an "end" event to avoid deadlock when one input ends before the other
+        'main: loop {
+            if self.buffer1.is_empty() {
                 match self.rcv1.recv() {
-                    Ok(evs) => buffer1 = evs,
-                    Err(_) => {
-                        self.send.send(buffer2).unwrap();
-                        while let Ok(evs) = self.rcv2.recv() {
+                    Ok(evs) => self.buffer1 = evs,
+                    Err(_) => return,
+                }
+                if is_end(&self.buffer1) {
+                    while let Ok(evs) = self.rcv2.recv() {
+                        if is_end(&evs) {
+                            // start anew
+                            self.buffer1.clear();
+                            self.buffer2.clear();
                             self.send.send(evs).unwrap();
+                            continue 'main;
                         }
-                        return;
+                        self.send.send(evs).unwrap();
                     }
                 }
             }
-            if buffer2.is_empty() {
-                // TODO: needs timeouts
+            if self.buffer2.is_empty() {
+                // TODO: duplicate
                 match self.rcv2.recv() {
-                    Ok(evs) => buffer2 = evs,
-                    Err(_) => if buffer2.is_empty() {
-                        self.send.send(buffer1).unwrap();
-                        while let Ok(evs) = self.rcv1.recv() {
+                    Ok(evs) => self.buffer2 = evs,
+                    Err(_) => return,
+                }
+                if is_end(&self.buffer2) {
+                    while let Ok(evs) = self.rcv1.recv() {
+                        if is_end(&evs) {
+                            // start anew
+                            self.buffer1.clear();
+                            self.buffer2.clear();
                             self.send.send(evs).unwrap();
+                            continue 'main;
                         }
-                        return;
+                        self.send.send(evs).unwrap();
                     }
                 }
             }
-            if buffer1.is_empty() || buffer2.is_empty() {
+            if self.buffer1.is_empty() || self.buffer2.is_empty() {
                 continue;
             }
-            let last1 = buffer1.last().unwrap().time;
-            let last2 = buffer2.last().unwrap().time;
+            let last1 = self.buffer1.last().unwrap().time;
+            let last2 = self.buffer2.last().unwrap().time;
             // println!("{:?} bufferlen {} {}, lasttime {} {} {}", std::thread::current().id(),
-            //          buffer1.len(), buffer2.len(), last1, last2, last1 - last2);
+            //          self.buffer1.len(), self.buffer2.len(), last1, last2, last1 - last2);
             let mut batch = if last1 < last2 {
-                if let Some(stop_index) = buffer2.iter().rposition(|ev| ev.time < last1) {
+                if let Some(stop_index) = self.buffer2.iter().rposition(|ev| ev.time < last1) {
                     // println!("{:?} Taking {} of {} from buffer2", std::thread::current().id(),
-                    //      stop_index+1, buffer2.len());
-                    buffer1.extend(buffer2.drain(0..=stop_index));
+                    //      stop_index+1, self.buffer2.len());
+                    self.buffer1.extend(self.buffer2.drain(0..=stop_index));
                 }
-                std::mem::replace(&mut buffer1, Vec::with_capacity(1024))
+                std::mem::replace(&mut self.buffer1, Vec::with_capacity(1024))
             } else {
-                if let Some(stop_index) = buffer1.iter().rposition(|ev| ev.time < last2) {
+                if let Some(stop_index) = self.buffer1.iter().rposition(|ev| ev.time < last2) {
                     // println!("{:?} Taking {} of {} from buffer1", std::thread::current().id(),
-                    //      stop_index+1, buffer1.len());
-                    buffer2.extend(buffer1.drain(0..=stop_index));
+                    //      stop_index+1, self.buffer1.len());
+                    self.buffer2.extend(self.buffer1.drain(0..=stop_index));
                 }
-                std::mem::replace(&mut buffer2, Vec::with_capacity(1024))
+                std::mem::replace(&mut self.buffer2, Vec::with_capacity(1024))
             };
             batch.sort();
             // println!("{:?} out bufferlen {}, lasttime {}", std::thread::current().id(),

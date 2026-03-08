@@ -18,6 +18,7 @@ use kanal as channel;
 use std::sync::atomic::AtomicBool;
 
 pub static DEBUG: AtomicBool = AtomicBool::new(false);
+// TODO: does nothing right now, add cfg for this feature and log
 pub static TRACE: AtomicBool = AtomicBool::new(false);
 
 // Public API

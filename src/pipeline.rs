@@ -44,6 +44,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         let (events_write, events_read) = channel::bounded(EV_CHANNEL_SIZE);
         let (command_write, command_read) = channel::bounded(1);
         let common = InputCommon {
+            needs_reset: false,
             running: immediate_start,
             module: mid,
             events: events_write,
@@ -69,7 +70,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         let read_1 = event_read_chans.pop().expect("len checked");
         let read_2 = event_read_chans.pop().expect("len checked");
         let (write, sorted_read) = channel::bounded(EV_CHANNEL_SIZE);
-        sorter::Sorter::start(read_1, read_2, write)?;
+        sorter::Sorter::new(read_1, read_2, write).start()?;
         event_read_chans.push(sorted_read);
     }
 
@@ -85,7 +86,8 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         .name("State logger".into())
         .spawn(move || {
             while let Ok(state) = state_read.recv() {
-                // lprintln!(INFO, "Module state: {:?}", state);
+                // TODO handle
+                lprintln!(INFO, "Module state: {:?}", state);
             }
         }).unwrap();
 

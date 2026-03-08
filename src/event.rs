@@ -18,6 +18,8 @@ impl Display for EventTime {
 }
 
 impl EventTime {
+    pub const MAX: Self = Self(i64::MAX);
+
     pub const fn zero() -> Self {
         Self(0)
     }
@@ -89,6 +91,9 @@ pub enum EventData {
     Gate { up: bool } = 0x92,
     /// Auxiliary signal.
     AuxSignal { value: u32, up: bool } = 0x93,
+
+    // Special variants for control flow.
+    EndOfRun,
 }
 
 impl Eq for EventData {}
@@ -119,6 +124,11 @@ impl Event {
     pub fn new(time: EventTime, rel_time: EventTime, module: ModuleId, input: InputId,
                flags: EventFlags, data: EventData) -> Self {
         Self { time, rel_time, module, input, flags, data }
+    }
+
+    pub fn end(module: ModuleId) -> Self {
+        Self { time: EventTime::MAX, rel_time: EventTime::MAX, flags: EventFlags::Fake,
+               module, input: InputId(0), data: EventData::EndOfRun }
     }
 }
 
