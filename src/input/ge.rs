@@ -1,13 +1,14 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-use std::{fs::File, io};
+use std::io;
 use std::net::TcpStream;
 use anyhow::{anyhow, Context};
 use byteorder::{ByteOrder, LE};
 use crate::command::{Command, CommandReply};
 use crate::config::{GEConfig, SourceConfig};
 use crate::error::UResult;
+use crate::input::ReplayFile;
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
 use super::{Source, Input, InputCommon};
 
@@ -37,7 +38,7 @@ impl GeInput<()> {
             SourceConfig::IP(addr) => GeInput::start_with_source(
                 TcpStream::from_config(addr)?, config, common),
             SourceConfig::File(path) => GeInput::start_with_source(
-                File::from_config(path)?, config, common),
+                ReplayFile::from_config(path)?, config, common),
         }
     }
 }

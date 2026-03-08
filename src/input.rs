@@ -6,7 +6,7 @@ mod canon;
 mod mesy;
 
 use std::thread;
-use std::io::{Read, Seek};
+use std::io::Seek;
 use std::time::Duration;
 use anyhow::Context;
 use crate::{lprintln, ltrace};
@@ -163,29 +163,44 @@ pub trait Input: Send {
 }
 
 
-pub trait Source: Read + Send + 'static {
+pub trait Source: Send + 'static {
     type Config;
     fn from_config(cfg: &Self::Config) -> UResult<Self> where Self: Sized;
     fn description(&self) -> String;
+    fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()>;
     fn reset(&mut self) -> UResult<()> {
         Ok(())
     }
 }
 
-impl Source for std::fs::File {
+pub struct ReplayFile {
+    file: std::fs::File,
+    name: String,
+}
+
+impl Source for ReplayFile {
     type Config = String;
 
     fn from_config(cfg: &Self::Config) -> UResult<Self> {
-        Ok(std::fs::File::open(cfg)
-           .with_context(|| format!("Opening source file {:?}", cfg))?)
+        let file = std::fs::File::open(cfg)
+           .with_context(|| format!("Opening source file {:?}", cfg))?;
+        Ok(Self {
+            file,
+            name: cfg.clone(),
+        })
     }
 
     fn description(&self) -> String {
-        "<file>".into()
+        format!("{:?}", self.name)
+    }
+
+    fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+        std::io::Read::read_exact(&mut self.file, buf)
     }
 
     fn reset(&mut self) -> UResult<()> {
-        self.seek(std::io::SeekFrom::Start(0))
+        self.file
+            .seek(std::io::SeekFrom::Start(0))
             .context("Resetting file source")?;
         Ok(())
     }
@@ -205,6 +220,10 @@ impl Source for std::net::TcpStream {
 
     fn description(&self) -> String {
         self.peer_addr().map(|x| x.to_string()).unwrap_or("?".into())
+    }
+
+    fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+        std::io::Read::read_exact(self, buf)
     }
 }
 
@@ -230,5 +249,9 @@ impl Source for UdpReader {
 
     fn description(&self) -> String {
         self.0.peer_addr().map(|x| x.to_string()).unwrap_or("?".into())
+    }
+
+    fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+        std::io::Read::read_exact(self, buf)
     }
 }

@@ -2,15 +2,15 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use std::{io, fmt, thread};
-use std::fs::File;
 use std::net::TcpStream;
 use std::time::Duration;
 use anyhow::{anyhow, Context};
-use byteorder::{ByteOrder, WriteBytesExt, ReadBytesExt, BE};
+use byteorder::{ByteOrder, ReadBytesExt, WriteBytesExt, BE};
 use crate::command::{Command, CommandReply};
 use crate::config::{CanonConfig, SourceConfig};
-use crate::error::UResult;
+use crate::error::{UError, UResult};
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
+use crate::input::ReplayFile;
 use super::{Source, Input, InputCommon};
 
 pub struct CanonInput<S> {
@@ -33,12 +33,12 @@ impl CanonInput<()> {
             SourceConfig::IP(addr) => CanonInput::start_with_source(
                 TcpStream::from_config(addr)?, config, common),
             SourceConfig::File(path) => CanonInput::start_with_source(
-                File::from_config(path)?, config, common),
+                ReplayFile::from_config(path)?, config, common),
         }
     }
 }
 
-impl<S: Source + WriteBytesExt> CanonInput<S> {
+impl<S: CanonSource> CanonInput<S> {
     pub fn start_with_source(source: S, config: CanonConfig, common: InputCommon) -> UResult<()> {
         let input = Self {
             source,
@@ -52,7 +52,7 @@ impl<S: Source + WriteBytesExt> CanonInput<S> {
     }
 }
 
-impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
+impl<S: CanonSource> Input for CanonInput<S> {
     fn description(&self) -> String {
         format!(
             "{} module {} at {}",
@@ -76,25 +76,7 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
     }
 
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
-        // request event data (in 16-bit units)
-        self.source.write_u64::<BE>(0xA300_0000_0000_0000 + (MAX_EVENTS as u64 * 4))
-            .context("Requesting events")?;
-
-        // read back the number of available 16-byte units
-        let n = match self.source.read_u32::<BE>() {
-            // if nothing available, sleep for a bit to avoid busy-waiting,
-            // but still give the main loop a chance to check for commands
-            Ok(0) => { thread::sleep(Duration::from_millis(100)); return Ok(Some(vec![])) }
-            Ok(n) => n as usize / 4,
-            // no answer? strange, but give it some time
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(Some(vec![])),
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-            // TODO: handle reconnect if necessary
-            Err(e) => Err(e).context("Reading number of events")?,
-        };
-
-        // read all event data (64 bits per)
-        self.source.read_exact(&mut self.buffer[..n * EVENT_SIZE]).context("Reading events")?;
+        let n = self.source.request_events(&mut self.buffer)?;
 
         // decode events
         let mut events = Vec::new();
@@ -169,6 +151,47 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
         };
 
         Ok(Some(events))
+    }
+}
+
+pub trait CanonSource: Source {
+    fn request_events(&mut self, buffer: &mut [u8]) -> UResult<usize>;
+}
+
+impl CanonSource for TcpStream {
+    fn request_events(&mut self, buffer: &mut [u8]) -> UResult<usize> {
+        // request event data (in 16-bit units)
+        self.write_u64::<BE>(0xA300_0000_0000_0000 + (MAX_EVENTS as u64 * 4))
+            .context("Requesting events")?;
+
+        // read back the number of available 16-byte units
+        let n = match self.read_u32::<BE>() {
+            // if nothing available, sleep for a bit to avoid busy-waiting,
+            // but still give the main loop a chance to check for commands
+            Ok(0) => { thread::sleep(Duration::from_millis(100)); return Ok(0) }
+            Ok(n) => n as usize / 4,
+            // no answer? strange, but give it some time
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(0),
+            // socket closed
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(UError::InputEnded),
+            // TODO: handle reconnect if necessary
+            Err(e) => Err(e).context("Reading number of events")?,
+        };
+
+        // read all event data (64 bits per)
+        self.read_exact(&mut buffer[..n * EVENT_SIZE]).context("Reading events")?;
+        Ok(n)
+    }
+}
+
+impl CanonSource for ReplayFile {
+    fn request_events(&mut self, buffer: &mut [u8]) -> UResult<usize> {
+        // There are no headers in the replay file, so we just read as many events as possible.
+        match io::Read::read(&mut self.file, buffer) {
+            Ok(n) => Ok(n / EVENT_SIZE),
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Err(UError::InputEnded),
+            Err(e) => Err(e).context("Reading events from replay file")?,
+        }
     }
 }
 

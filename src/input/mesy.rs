@@ -3,13 +3,13 @@
 
 #![allow(unused)]
 
-use std::fs::File;
 use std::net::UdpSocket;
 use anyhow::anyhow;
 use crate::command::{Command, CommandReply};
 use crate::config::{MesyConfig, SourceConfig};
 use crate::error::UResult;
 use crate::event::{ModuleId, Event};
+use crate::input::ReplayFile;
 use super::{Source, Input, InputCommon, UdpReader};
 
 pub struct MesyInput<S> {
@@ -23,7 +23,7 @@ impl MesyInput<()> {
             SourceConfig::IP(addr) => MesyInput::start_with_source(
                 UdpReader::from_config(addr)?, config, common),
             SourceConfig::File(path) => MesyInput::start_with_source(
-                File::from_config(path)?, config, common),
+                ReplayFile::from_config(path)?, config, common),
         }
     }
 }

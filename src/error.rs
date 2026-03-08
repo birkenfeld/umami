@@ -11,4 +11,6 @@ pub type UResult<T> = Result<T, UError>;
 pub enum UError {
     #[error("{0:#}")]
     Other(#[from] anyhow::Error),
+    #[error("Input ended")]
+    InputEnded,
 }
