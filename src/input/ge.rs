@@ -1,14 +1,15 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-use std::fs::File;
+use std::{fs::File, io};
 use std::net::TcpStream;
 use anyhow::{anyhow, Context};
 use byteorder::{ByteOrder, LE};
+use crate::command::{Command, CommandReply};
 use crate::config::{GEConfig, SourceConfig};
 use crate::error::UResult;
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
-use super::{Source, Input, InputPlumbing, NullCmdHandler};
+use super::{Source, Input, InputPlumbing};
 
 const PACKET_NORMAL:     u32 = 0x1000;
 const PACKET_NORM_FAKE:  u32 = 0x1100;
@@ -46,16 +47,14 @@ impl<S: Source> GeInput<S> {
                        plumbing: InputPlumbing) -> UResult<()> {
         let input = Self {
             source, module, is_ts: config.timestamper,
-                           // last_event_at: EventTime::zero()
+            // last_event_at: EventTime::zero()
         };
-        input.start(module, plumbing);
+        input.start_main_loop(module, plumbing)?;
         Ok(())
     }
 }
 
 impl<S: Source> Input for GeInput<S> {
-    type CmdHandler = NullCmdHandler;
-
     fn description(&self) -> String {
         format!(
             "GE {} module {} at {}",
@@ -65,18 +64,18 @@ impl<S: Source> Input for GeInput<S> {
         )
     }
 
-    fn command_handler(&self, _: &InputPlumbing) -> Self::CmdHandler {
-        NullCmdHandler(self.module)
+    fn handle(&mut self, _cmd: Command) -> CommandReply {
+        CommandReply::new_ok(Some(self.module))
     }
 
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
         // read header
         let mut buffer = [0_u8; MAX_PACKET_SIZE];
-        // TODO: this blocks if no data is available. OK?
-        // TODO: handle reconnect if necessary
         match self.source.read_exact(&mut buffer[..16]) {
             Ok(_) => {},
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(Some(vec![])),
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+            // TODO: handle reconnect if necessary
             Err(e) => Err(e).context("Reading from source")?,
         }
         let len = LE::read_u32(&buffer) as usize;

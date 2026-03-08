@@ -7,17 +7,22 @@ use std::net::TcpStream;
 use std::time::Duration;
 use anyhow::{anyhow, Context};
 use byteorder::{ByteOrder, WriteBytesExt, ReadBytesExt, BE};
+use crate::command::{Command, CommandReply};
 use crate::config::{CanonConfig, SourceConfig};
 use crate::error::UResult;
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
-use super::{Source, Input, InputPlumbing, NullCmdHandler};
+use super::{Source, Input, InputPlumbing};
 
 pub struct CanonInput<S> {
     source: S,
     module: ModuleId,
     is_gate: bool,
     time_ofs: EventTime,
+    buffer: Vec<u8>,
 }
+
+const MAX_EVENTS: usize = 1000;
+const EVENT_SIZE: usize = 8;
 
 // 01/01/2008 00:00:00 UTC, the epoch for Canon device time
 const EPOCH: EventTime = EventTime::from_sec_nsec(1199145600, 0);
@@ -37,15 +42,14 @@ impl<S: Source + WriteBytesExt> CanonInput<S> {
     pub fn start_with_source(source: S, module: ModuleId, config: CanonConfig,
                            plumbing: InputPlumbing) -> UResult<()> {
         let input = Self { source, module, is_gate: config.gatenet,
-                           time_ofs: EventTime::zero() };
-        input.start(module, plumbing);
+                           time_ofs: EventTime::zero(),
+                           buffer: vec![0; EVENT_SIZE * MAX_EVENTS] };
+        input.start_main_loop(module, plumbing)?;
         Ok(())
     }
 }
 
 impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
-    type CmdHandler = NullCmdHandler;
-
     fn description(&self) -> String {
         format!(
             "{} module {} at {}",
@@ -55,34 +59,35 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
         )
     }
 
-    fn command_handler(&self, _: &InputPlumbing) -> Self::CmdHandler {
-        NullCmdHandler(self.module)
+    fn handle(&mut self, _cmd: Command) -> CommandReply {
+        CommandReply::new_ok(Some(self.module))
     }
 
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
-        let n = loop {
-            // request up to 0xFFFF 16-byte units of event data
-            self.source.write_u64::<BE>(0xA300_0000_0000_FFFF)
-                .context("Requesting events")?;
+        // request event data (in 16-bit units)
+        self.source.write_u64::<BE>(0xA300_0000_0000_0000 + (MAX_EVENTS as u64 * 4))
+            .context("Requesting events")?;
 
-            // read back the number of available 16-byte units
-            let n = match self.source.read_u32::<BE>() {
-                Ok(n) => n as usize / 4,
-                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-                Err(e) => Err(e).context("Reading number of events")?,
-            };
-            if n > 0 {
-                break n;
-            }
-            thread::sleep(Duration::from_millis(100));
+        // read back the number of available 16-byte units
+        let n = match self.source.read_u32::<BE>() {
+            // if nothing available, sleep for a bit to avoid busy-waiting,
+            // but still give the main loop a chance to check for commands
+            Ok(0) => { thread::sleep(Duration::from_millis(100)); return Ok(Some(vec![])) }
+            Ok(n) => n as usize / 4,
+            // no answer? strange, but give it some time
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(Some(vec![])),
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+            // TODO: handle reconnect if necessary
+            Err(e) => Err(e).context("Reading number of events")?,
         };
 
-        let mut buffer = vec![0_u8; n];
-        self.source.read_exact(&mut buffer).context("Reading events")?;
-        // read events (4 16-bit units per event)
+        // read all event data (64 bits per)
+        self.source.read_exact(&mut self.buffer[..n * EVENT_SIZE]).context("Reading events")?;
+
+        // decode events
         let mut events = Vec::new();
         for i in 0..n {
-            let cev = CanonEvent(BE::read_u64(&buffer[8*i..]));
+            let cev = CanonEvent(BE::read_u64(&self.buffer[i * EVENT_SIZE..]));
             let event = match cev.evtype() {
                 // We don't use the TriggerSync events
                 EventType::TriggerSync | EventType::Trigger =>

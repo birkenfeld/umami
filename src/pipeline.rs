@@ -11,21 +11,22 @@ use crate::event::{EventData, EventTime, ModuleId};
 use crate::input::InputPlumbing;
 use crate::interface::{UdsInterface, ShmInterface};
 
+const EV_BOUND: usize = 64; // TODO tune
+const CH_BOUND: usize = 16; // TODO tune
 
-pub fn run_pipeline(config: Config, ipc_name: Option<&str>) -> UResult<()> {
-    let ipc_name = ipc_name.unwrap_or(&config.ipc_name);
-    let mut shm = ShmInterface::map(ipc_name)?;
+
+pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
+    let mut shm = ShmInterface::map(&config.ipc_name)?;
     shm.reset();
 
-    let (if_cmd_write, if_cmd_read) = channel::bounded(16);
-    let (if_reply_write, if_reply_read) = channel::bounded(16);
-    let uds = UdsInterface::new(ipc_name, if_cmd_write, if_reply_read)?;
+    let (if_cmd_write, if_cmd_read) = channel::bounded(CH_BOUND);
+    let (if_reply_write, if_reply_read) = channel::bounded(CH_BOUND);
+    let uds = UdsInterface::new(&config.ipc_name, if_cmd_write, if_reply_read)?;
 
-    lprintln!(INFO, "IPC interfaces are available under the name {:?}", ipc_name);
+    lprintln!(INFO, "IPC interfaces are available under the name {:?}", config.ipc_name);
 
-    const EV_BOUND: usize = 64; // TODO tune
-    let (state_write, state_read) = channel::bounded(16);
-    let (cmd_reply_write, cmd_reply_read) = channel::bounded(16);
+    let (state_write, state_read) = channel::bounded(CH_BOUND);
+    let (cmd_reply_write, cmd_reply_read) = channel::bounded(CH_BOUND);
 
     let start = jiff::Timestamp::now();
 
@@ -33,10 +34,11 @@ pub fn run_pipeline(config: Config, ipc_name: Option<&str>) -> UResult<()> {
     let mut event_read_chans = vec![];
     let mut command_write_chans = BTreeMap::new();
     for (module_name, module_config) in config.modules {
+        let mid = ModuleId(module_config.id);
         ldebug!("Initializing module {}: {:?}", module_name, module_config);
 
         let (events_write, events_read) = channel::bounded(EV_BOUND);
-        let (command_write, command_read) = channel::bounded(32);
+        let (command_write, command_read) = channel::bounded(CH_BOUND);
         let plumbing = InputPlumbing {
             events: events_write,
             state: state_write.clone(),
@@ -45,10 +47,14 @@ pub fn run_pipeline(config: Config, ipc_name: Option<&str>) -> UResult<()> {
             recipe: recipe::from_config(&config.recipes, &module_config.recipe)?,
         };
         event_read_chans.push(events_read);
-        command_write_chans.insert(ModuleId(module_config.id), command_write);
+        if immediate_start {
+            command_write.send(command::Command::new_auto_start(mid))
+                .expect("sending start command");
+        }
 
-        if let Err(e) = input::start(ModuleId(module_config.id),
-                                     module_config.specific, plumbing) {
+        command_write_chans.insert(mid, command_write);
+
+        if let Err(e) = input::start(mid, module_config.specific, plumbing) {
             lprintln!(ERROR, "Failed to initialize module {}: {}", module_name, e);
             init_errors = true;
         }

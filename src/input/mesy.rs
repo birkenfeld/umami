@@ -10,7 +10,7 @@ use crate::command::{Command, CommandReply};
 use crate::config::{MesyConfig, SourceConfig};
 use crate::error::UResult;
 use crate::event::{ModuleId, Event};
-use super::{Source, Input, InputPlumbing, UdpReader, NullCmdHandler};
+use super::{Source, Input, InputPlumbing, UdpReader};
 
 pub struct MesyInput<S> {
     source: S,
@@ -32,20 +32,18 @@ impl<S: Source> MesyInput<S> {
     fn start_with_source(source: S, module: ModuleId, config: MesyConfig,
                        plumbing: InputPlumbing) -> UResult<()> {
         let input = Self { source, module };
-        input.start(module, plumbing);
+        input.start_main_loop(module, plumbing)?;
         Ok(())
     }
 }
 
 impl<S: Source> Input for MesyInput<S> {
-    type CmdHandler = NullCmdHandler;
-
-    fn command_handler(&self, _: &InputPlumbing) -> Self::CmdHandler {
-        NullCmdHandler(self.module)
-    }
-
     fn description(&self) -> String {
         format!("MCPD module {} at {}", self.module.0, self.source.description())
+    }
+
+    fn handle(&mut self, _cmd: Command) -> CommandReply {
+        CommandReply::new_ok(Some(self.module))
     }
 
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {

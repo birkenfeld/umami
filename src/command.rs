@@ -11,21 +11,40 @@ use crate::event::ModuleId;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Command {
     to_module: Option<ModuleId>,
-    command: CommandType,
+    pub command: CommandType,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum CommandType {
+    Clear,
     Start,
     Stop,
     Config(String, Value),
     GetConfig(String),
+    AutoStart, // Like Start, but don't send a reply
+}
+
+impl Command {
+    pub fn new(to_module: Option<ModuleId>, command: CommandType) -> Self {
+        Self { to_module, command }
+    }
+
+    pub fn new_auto_start(to_module: ModuleId) -> Self {
+        Self::new(Some(to_module), CommandType::AutoStart)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommandReply {
     from_module: Option<ModuleId>,
     reply: CommandReplyType,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum CommandReplyType {
+    Ok,
+    Error(String),
+    Data(Value),
 }
 
 impl CommandReply {
@@ -46,12 +65,6 @@ impl CommandReply {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum CommandReplyType {
-    Ok,
-    Error(String),
-    Data(Value),
-}
 
 pub struct CommandHandler {
     if_rcv: Receiver<Command>,

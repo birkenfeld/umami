@@ -16,17 +16,19 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 pub struct Options {
     #[clap(default_value="umami.conf", help="Configuration to use")]
     config: PathBuf,
+    #[clap(long="start", help="Start the pipeline immediately")]
+    start: bool,
     #[clap(long="ipc-name", help="Name of the SHM and UDS interface, overrides config file")]
     ipc_name: Option<String>,
-    #[clap(long="debug", default_value="false", help="Enable debug output")]
+    #[clap(long="debug", help="Enable debug output")]
     debug: bool,
-    #[clap(long="trace", default_value="false", help="Enable trace output (every event)")]
+    #[clap(long="trace", help="Enable trace output (every event)")]
     trace: bool,
 }
 
 fn inner_main(args: Options) -> umami::UResult<()> {
     lprintln!(INFO, "Starting UMAMI with config file {:?}", args.config.display());
-    let config: umami::Config = toml::from_str(
+    let mut config: umami::Config = toml::from_str(
         &std::fs::read_to_string(&args.config)
             .with_context(|| format!("Failed to read config file {:?}", args.config.display()))?
     ).with_context(|| format!("Failed to parse config file {:?}", args.config.display()))?;
@@ -40,7 +42,11 @@ fn inner_main(args: Options) -> umami::UResult<()> {
     DEBUG.store(config.debug | args.debug | args.trace, Ordering::Relaxed);
     TRACE.store(args.trace, Ordering::Relaxed);
 
-    umami::run_pipeline(config, args.ipc_name.as_deref())
+    if let Some(ipc_name) = args.ipc_name {
+        config.ipc_name = ipc_name.to_string();
+    }
+
+    umami::run_pipeline(config, args.start)
 }
 
 fn main() {
