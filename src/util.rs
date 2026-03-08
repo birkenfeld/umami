@@ -10,7 +10,7 @@ pub fn resolve(addr: &str) -> UResult<std::net::SocketAddr> {
     Ok(addr
        .to_socket_addrs()
        .map_err(|e| anyhow!("Invalid address '{}': {}", addr, e))?
-       .filter(|a| a.is_ipv4())
-       .next().ok_or_else(|| anyhow!("No addresses found for '{}'", addr))?
+       .find(|a| a.is_ipv4())
+       .ok_or_else(|| anyhow!("No addresses found for '{}'", addr))?
     )
 }

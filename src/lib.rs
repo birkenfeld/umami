@@ -28,7 +28,7 @@ pub use self::pipeline::run_pipeline;
 #[macro_export]
 macro_rules! ldebug {
     ($($tt:tt)+) => {
-        if crate::DEBUG.load(std::sync::atomic::Ordering::Relaxed) {
+        if $crate::DEBUG.load(std::sync::atomic::Ordering::Relaxed) {
             eprint!("{} : DEBUG : ", jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.f"));
             eprintln!($($tt)+);
         }
@@ -38,7 +38,7 @@ macro_rules! ldebug {
 #[macro_export]
 macro_rules! ltrace {
     ($($tt:tt)+) => {
-        if crate::TRACE.load(std::sync::atomic::Ordering::Relaxed) {
+        if $crate::TRACE.load(std::sync::atomic::Ordering::Relaxed) {
             eprint!("{} : TRACE : ", jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.9f"));
             eprintln!($($tt)+);
         }

@@ -110,11 +110,8 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
             }
             ts = nts;
 
-            match ev.data {
-                EventData::Neutron { x, y, .. } => {
-                    histo.add(x as usize, y as usize);
-                }
-                _ => {}
+            if let EventData::Neutron { x, y, .. } = ev.data {
+                histo.add(x as usize, y as usize);
             }
         }
     }

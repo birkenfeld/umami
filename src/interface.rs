@@ -63,8 +63,8 @@ impl UdsInterface {
             match self.sock.recv_from(&mut buf) {
                 Ok((n, addr)) => {
                     // TODO error handling
-                    if let Ok(s) = str::from_utf8(&buf[..n]) {
-                        if let Ok(cmd) = serde_json::from_str::<Command>(s) {
+                    if let Ok(s) = str::from_utf8(&buf[..n])
+                        && let Ok(cmd) = serde_json::from_str::<Command>(s) {
                             ldebug!("Received command {:?}", cmd);
                             self.req_write.send(cmd).unwrap();
                             if let Ok(reply) = self.rep_read.recv() {
@@ -72,7 +72,6 @@ impl UdsInterface {
                                 let r = serde_json::to_string(&reply).unwrap();
                                 self.sock.send_to_addr(r.as_bytes(), &addr).unwrap();
                             }
-                        }
                     }
                 },
                 Err(e) => {

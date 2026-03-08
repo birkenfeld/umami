@@ -35,11 +35,12 @@ pub struct InputPlumbing {
 }
 
 pub fn start(module: ModuleId, config: SpecificModuleConfig, plumbing: InputPlumbing) -> UResult<()> {
-    Ok(match config {
+    match config {
         SpecificModuleConfig::GE(cfg) => ge::GeInput::start(module, cfg, plumbing)?,
         SpecificModuleConfig::Canon(cfg) => canon::CanonInput::start(module, cfg, plumbing)?,
         SpecificModuleConfig::Mesy(cfg) => mesy::MesyInput::start(module, cfg, plumbing)?,
-    })
+    }
+    Ok(())
 }
 
 pub trait Input: Send {

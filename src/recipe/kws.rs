@@ -39,25 +39,25 @@ impl Recipe for KWSGERecipe {
                 EventData::RawNeutron => {
                     let mut x;
                     let mut y;
-                    let mut id = event.input.0 as u32;
+                    let mut id = event.input.0;
                     let n8p = id / PIXEL_PER_PACK;
                     id %= PIXEL_PER_PACK;
 
                     if self.reso_1024 {
                         x = id / 1024;
                         let y1 = id % 1024;
-                        if n8p < 3 || n8p > 14 {
+                        if !(3..=14).contains(&n8p) {
                             y = (y1 * SMALL_TUBE_RES) / 1024 + SMALL_TUBE_OFFS;
-                        } else if n8p < 6 || n8p > 11 {
+                        } else if !(6..=11).contains(&n8p) {
                             y = (y1 * MIDDLE_TUBE_RES) / 1024 + MIDDLE_TUBE_OFFS;
                         } else {
                             y = (y1 * TUBE_RESOLUTION) / 1024;
                         }
                     } else {
-                        if n8p < 3 || n8p > 14 {
+                        if !(3..=14).contains(&n8p) {
                             x = id / SMALL_TUBE_RES;
                             y = id % SMALL_TUBE_RES + SMALL_TUBE_OFFS;
-                        } else if n8p < 6 || n8p > 11 {
+                        } else if !(6..=11).contains(&n8p) {
                             x = id / MIDDLE_TUBE_RES;
                             y = id % MIDDLE_TUBE_RES + MIDDLE_TUBE_OFFS;
                         } else {

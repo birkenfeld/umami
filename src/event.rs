@@ -132,7 +132,7 @@ impl Debug for Event {
 
 impl PartialOrd for Event {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.time.0.cmp(&other.time.0))
+        Some(self.cmp(other))
     }
 }
 

@@ -185,7 +185,7 @@ impl CanonEvent {
             0x5d => EventType::External,
             0x5f => EventType::Neutron14bit,
             0x6c => EventType::DevTime32bit,
-            c => return EventType::Other(c as u8),
+            c =>    EventType::Other(c as u8),
         }
     }
 
