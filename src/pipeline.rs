@@ -47,8 +47,8 @@ pub fn run_pipeline(config: Config, ipc_name: Option<&str>) -> UResult<()> {
         event_read_chans.push(events_read);
         command_write_chans.insert(ModuleId(module_config.id), command_write);
 
-        if let Err(e) = input::init(ModuleId(module_config.id),
-                                    module_config.specific, plumbing) {
+        if let Err(e) = input::start(ModuleId(module_config.id),
+                                     module_config.specific, plumbing) {
             lprintln!(ERROR, "Failed to initialize module {}: {}", module_name, e);
             init_errors = true;
         }
@@ -62,7 +62,7 @@ pub fn run_pipeline(config: Config, ipc_name: Option<&str>) -> UResult<()> {
         let read_1 = event_read_chans.pop().expect("len checked");
         let read_2 = event_read_chans.pop().expect("len checked");
         let (write, sorted_read) = channel::bounded(EV_BOUND);
-        sorter::Sorter::run(read_1, read_2, write)?;
+        sorter::Sorter::start(read_1, read_2, write)?;
         event_read_chans.push(sorted_read);
     }
 
@@ -72,7 +72,7 @@ pub fn run_pipeline(config: Config, ipc_name: Option<&str>) -> UResult<()> {
     // create command handler
     drop(state_write);
     drop(cmd_reply_write);
-    command::CommandHandler::run(if_cmd_read, command_write_chans, cmd_reply_read, if_reply_write)?;
+    command::CommandHandler::start(if_cmd_read, command_write_chans, cmd_reply_read, if_reply_write)?;
 
     std::thread::spawn(move || {
         while let Ok(state) = state_read.recv() {
@@ -82,7 +82,7 @@ pub fn run_pipeline(config: Config, ipc_name: Option<&str>) -> UResult<()> {
 
     let mut post_recipe = recipe::from_config(&config.recipes, &config.postprocess.recipe)?;
 
-    uds.run()?;
+    uds.start()?;
 
     let mut histo = histo::Histogram::new(config.histogram.nx, config.histogram.ny);
 

@@ -23,19 +23,19 @@ pub struct CanonInput<S> {
 const EPOCH: EventTime = EventTime::from_sec_nsec(1199145600, 0);
 
 impl CanonInput<()> {
-    pub fn init(module: ModuleId, config: CanonConfig, plumbing: InputPlumbing) -> UResult<()> {
+    pub fn start(module: ModuleId, config: CanonConfig, plumbing: InputPlumbing) -> UResult<()> {
         match &config.source {
-            SourceConfig::IP(addr) => CanonInput::init_with_source(TcpStream::from_config(addr)?,
-                                                                   module, config, plumbing),
-            SourceConfig::File(path) => CanonInput::init_with_source(File::from_config(path)?,
-                                                                     module, config, plumbing),
+            SourceConfig::IP(addr) => CanonInput::start_with_source(
+                TcpStream::from_config(addr)?, module, config, plumbing),
+            SourceConfig::File(path) => CanonInput::start_with_source(
+                File::from_config(path)?, module, config, plumbing),
         }
     }
 }
 
 impl<S: Source + WriteBytesExt> CanonInput<S> {
-    pub fn init_with_source(source: S, module: ModuleId, config: CanonConfig,
-                            plumbing: InputPlumbing) -> UResult<()> {
+    pub fn start_with_source(source: S, module: ModuleId, config: CanonConfig,
+                           plumbing: InputPlumbing) -> UResult<()> {
         let input = Self { source, module, is_gate: config.gatenet,
                            time_ofs: EventTime::zero() };
         input.start(module, plumbing);

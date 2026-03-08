@@ -49,7 +49,7 @@ impl UdsInterface {
         Ok(Self { sock, req_write, rep_read })
     }
 
-    pub fn run(mut self) -> UResult<()> {
+    pub fn start(mut self) -> UResult<()> {
         std::thread::Builder::new()
             .name("UDS interface".into())
             .spawn(move || self.main())

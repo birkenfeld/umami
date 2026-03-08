@@ -31,19 +31,19 @@ fn read_time(buf: &[u8]) -> EventTime {
 }
 
 impl GeInput<()> {
-    pub fn init(module: ModuleId, config: GEConfig, plumbing: InputPlumbing) -> UResult<()> {
+    pub fn start(module: ModuleId, config: GEConfig, plumbing: InputPlumbing) -> UResult<()> {
         match &config.source {
-            SourceConfig::IP(addr) => GeInput::init_with_source(TcpStream::from_config(addr)?,
-                                                                module, config, plumbing),
-            SourceConfig::File(path) => GeInput::init_with_source(File::from_config(path)?,
-                                                                  module, config, plumbing),
+            SourceConfig::IP(addr) => GeInput::start_with_source(
+                TcpStream::from_config(addr)?, module, config, plumbing),
+            SourceConfig::File(path) => GeInput::start_with_source(
+                File::from_config(path)?, module, config, plumbing),
         }
     }
 }
 
 impl<S: Source> GeInput<S> {
-    fn init_with_source(source: S, module: ModuleId, config: GEConfig,
-                        plumbing: InputPlumbing) -> UResult<()> {
+    fn start_with_source(source: S, module: ModuleId, config: GEConfig,
+                       plumbing: InputPlumbing) -> UResult<()> {
         let input = Self {
             source, module, is_ts: config.timestamper,
                            // last_event_at: EventTime::zero()

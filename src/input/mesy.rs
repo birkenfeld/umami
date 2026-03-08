@@ -18,19 +18,19 @@ pub struct MesyInput<S> {
 }
 
 impl MesyInput<()> {
-    pub fn init(module: ModuleId, config: MesyConfig, plumbing: InputPlumbing) -> UResult<()> {
+    pub fn start(module: ModuleId, config: MesyConfig, plumbing: InputPlumbing) -> UResult<()> {
         match &config.source {
-            SourceConfig::IP(addr) => MesyInput::init_with_source(UdpReader::from_config(addr)?,
-                                                                  module, config, plumbing),
-            SourceConfig::File(path) => MesyInput::init_with_source(File::from_config(path)?,
-                                                                    module, config, plumbing),
+            SourceConfig::IP(addr) => MesyInput::start_with_source(
+                UdpReader::from_config(addr)?, module, config, plumbing),
+            SourceConfig::File(path) => MesyInput::start_with_source(
+                File::from_config(path)?, module, config, plumbing),
         }
     }
 }
 
 impl<S: Source> MesyInput<S> {
-    fn init_with_source(source: S, module: ModuleId, config: MesyConfig,
-                        plumbing: InputPlumbing) -> UResult<()> {
+    fn start_with_source(source: S, module: ModuleId, config: MesyConfig,
+                       plumbing: InputPlumbing) -> UResult<()> {
         let input = Self { source, module };
         input.start(module, plumbing);
         Ok(())

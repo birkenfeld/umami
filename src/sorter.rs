@@ -13,7 +13,7 @@ pub struct Sorter {
 }
 
 impl Sorter {
-    pub fn run(rcv1: Receiver<Vec<Event>>, rcv2: Receiver<Vec<Event>>, send: Sender<Vec<Event>>) -> UResult<()> {
+    pub fn start(rcv1: Receiver<Vec<Event>>, rcv2: Receiver<Vec<Event>>, send: Sender<Vec<Event>>) -> UResult<()> {
         let mut sorter = Sorter { rcv1, rcv2, send };
         std::thread::Builder::new()
             .name("Sorter".into())

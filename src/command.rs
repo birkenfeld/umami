@@ -61,10 +61,10 @@ pub struct CommandHandler {
 }
 
 impl CommandHandler {
-    pub fn run(if_rcv: Receiver<Command>,
-               mod_send: BTreeMap<ModuleId, Sender<Command>>,
-               mod_rcv: Receiver<CommandReply>,
-               if_send: Sender<CommandReply>) -> anyhow::Result<()> {
+    pub fn start(if_rcv: Receiver<Command>,
+                 mod_send: BTreeMap<ModuleId, Sender<Command>>,
+                 mod_rcv: Receiver<CommandReply>,
+                 if_send: Sender<CommandReply>) -> anyhow::Result<()> {
         let mut handler = CommandHandler { if_rcv, mod_send, mod_rcv, if_send };
         std::thread::Builder::new()
             .name("CommandHandler".into())
