@@ -16,7 +16,6 @@ pub enum Command {
     Clear,
     Start,
     Stop,
-    AutoStart, // like Start but does not send a response (hack)
     SetTofParams { nt: usize, dt: f64, t0: f64 },
     Config { module: ModuleId, name: String, value: Value },
     GetConfig { module: ModuleId, name: String },
@@ -90,12 +89,6 @@ impl CommandHandler {
                 ).collect_vec();
                 if let Some(err) = replies.into_iter().find(|r| r.is_error()) {
                     return Ok(err);
-                }
-                Ok(CommandReply::Ok)
-            }
-            Command::AutoStart => {
-                for mod_send in self.mod_send.values() {
-                    mod_send.send(cmd.clone()).expect("module command receiver died");
                 }
                 Ok(CommandReply::Ok)
             }

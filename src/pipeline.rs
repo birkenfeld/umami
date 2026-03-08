@@ -8,7 +8,7 @@ use crate::{command, histo, input, recipe, sorter};
 use crate::config::Config;
 use crate::error::UResult;
 use crate::event::{EventData, EventTime, ModuleId};
-use crate::input::InputPlumbing;
+use crate::input::InputCommon;
 use crate::interface::{UdsInterface, ShmInterface, MAX_MODULES};
 
 const EV_CHANNEL_SIZE: usize = 64; // TODO tune
@@ -43,7 +43,9 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
 
         let (events_write, events_read) = channel::bounded(EV_CHANNEL_SIZE);
         let (command_write, command_read) = channel::bounded(1);
-        let plumbing = InputPlumbing {
+        let common = InputCommon {
+            running: immediate_start,
+            module: mid,
             events: events_write,
             state: state_write.clone(),
             command: command_read,
@@ -51,14 +53,9 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
             recipe: recipe::from_config(&config.recipes, &module_config.recipe)?,
         };
         event_read_chans.push(events_read);
-        if immediate_start {
-            command_write.send(command::Command::AutoStart)
-                .expect("sending start command");
-        }
-
         command_write_chans.insert(mid, command_write);
 
-        if let Err(e) = input::start(mid, module_config.specific, plumbing) {
+        if let Err(e) = input::start(module_config.specific, common) {
             lprintln!(ERROR, "Failed to initialize module {}: {}", module_name, e);
             init_errors = true;
         }

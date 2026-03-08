@@ -11,7 +11,7 @@ use crate::command::{Command, CommandReply};
 use crate::config::{CanonConfig, SourceConfig};
 use crate::error::UResult;
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
-use super::{Source, Input, InputPlumbing};
+use super::{Source, Input, InputCommon};
 
 pub struct CanonInput<S> {
     source: S,
@@ -28,23 +28,26 @@ const EVENT_SIZE: usize = 8;
 const EPOCH: EventTime = EventTime::from_sec_nsec(1199145600, 0);
 
 impl CanonInput<()> {
-    pub fn start(module: ModuleId, config: CanonConfig, plumbing: InputPlumbing) -> UResult<()> {
+    pub fn start(config: CanonConfig, common: InputCommon) -> UResult<()> {
         match &config.source {
             SourceConfig::IP(addr) => CanonInput::start_with_source(
-                TcpStream::from_config(addr)?, module, config, plumbing),
+                TcpStream::from_config(addr)?, config, common),
             SourceConfig::File(path) => CanonInput::start_with_source(
-                File::from_config(path)?, module, config, plumbing),
+                File::from_config(path)?, config, common),
         }
     }
 }
 
 impl<S: Source + WriteBytesExt> CanonInput<S> {
-    pub fn start_with_source(source: S, module: ModuleId, config: CanonConfig,
-                           plumbing: InputPlumbing) -> UResult<()> {
-        let input = Self { source, module, is_gate: config.gatenet,
-                           time_ofs: EventTime::zero(),
-                           buffer: vec![0; EVENT_SIZE * MAX_EVENTS] };
-        input.start_main_loop(module, plumbing)?;
+    pub fn start_with_source(source: S, config: CanonConfig, common: InputCommon) -> UResult<()> {
+        let input = Self {
+            source,
+            module: common.module,
+            is_gate: config.gatenet,
+            time_ofs: EventTime::zero(),
+            buffer: vec![0; EVENT_SIZE * MAX_EVENTS],
+        };
+        input.start_main_loop(common)?;
         Ok(())
     }
 }
@@ -59,8 +62,8 @@ impl<S: Source + WriteBytesExt> Input for CanonInput<S> {
         )
     }
 
-    fn handle(&mut self, _cmd: Command) -> CommandReply {
-        CommandReply::Ok
+    fn handle(&mut self, _cmd: Command) -> UResult<CommandReply> {
+        Ok(CommandReply::Ok)
     }
 
     fn start(&mut self) -> UResult<()> {

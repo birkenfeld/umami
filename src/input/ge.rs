@@ -9,7 +9,7 @@ use crate::command::{Command, CommandReply};
 use crate::config::{GEConfig, SourceConfig};
 use crate::error::UResult;
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
-use super::{Source, Input, InputPlumbing};
+use super::{Source, Input, InputCommon};
 
 const PACKET_NORMAL:     u32 = 0x1000;
 const PACKET_NORM_FAKE:  u32 = 0x1100;
@@ -32,24 +32,25 @@ fn read_time(buf: &[u8]) -> EventTime {
 }
 
 impl GeInput<()> {
-    pub fn start(module: ModuleId, config: GEConfig, plumbing: InputPlumbing) -> UResult<()> {
+    pub fn start(config: GEConfig, common: InputCommon) -> UResult<()> {
         match &config.source {
             SourceConfig::IP(addr) => GeInput::start_with_source(
-                TcpStream::from_config(addr)?, module, config, plumbing),
+                TcpStream::from_config(addr)?, config, common),
             SourceConfig::File(path) => GeInput::start_with_source(
-                File::from_config(path)?, module, config, plumbing),
+                File::from_config(path)?, config, common),
         }
     }
 }
 
 impl<S: Source> GeInput<S> {
-    fn start_with_source(source: S, module: ModuleId, config: GEConfig,
-                       plumbing: InputPlumbing) -> UResult<()> {
+    fn start_with_source(source: S, config: GEConfig, common: InputCommon) -> UResult<()> {
         let input = Self {
-            source, module, is_ts: config.timestamper,
-            // last_event_at: EventTime::zero()
+            source,
+            module: common.module,
+            is_ts: config.timestamper,
+            // last_event_at: EventTime::zero(),
         };
-        input.start_main_loop(module, plumbing)?;
+        input.start_main_loop(common)?;
         Ok(())
     }
 }
@@ -64,8 +65,8 @@ impl<S: Source> Input for GeInput<S> {
         )
     }
 
-    fn handle(&mut self, _cmd: Command) -> CommandReply {
-        CommandReply::Ok
+    fn handle(&mut self, _cmd: Command) -> UResult<CommandReply> {
+        Ok(CommandReply::Ok)
     }
 
     fn start(&mut self) -> UResult<()> {

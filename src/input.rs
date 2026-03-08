@@ -27,7 +27,9 @@ pub enum InputState {
     Ended(ModuleId),
 }
 
-pub struct InputPlumbing {
+pub struct InputCommon {
+    pub running: bool,
+    pub module: ModuleId,
     pub state: Sender<InputState>,
     pub events: Sender<Vec<Event>>,
     pub command: Receiver<Command>,
@@ -35,95 +37,111 @@ pub struct InputPlumbing {
     pub recipe: Box<dyn Recipe>,
 }
 
-pub fn start(module: ModuleId, config: SpecificModuleConfig, plumbing: InputPlumbing) -> UResult<()> {
+pub fn start(config: SpecificModuleConfig, common: InputCommon) -> UResult<()> {
     match config {
-        SpecificModuleConfig::GE(cfg) => ge::GeInput::start(module, cfg, plumbing)?,
-        SpecificModuleConfig::Canon(cfg) => canon::CanonInput::start(module, cfg, plumbing)?,
-        SpecificModuleConfig::Mesy(cfg) => mesy::MesyInput::start(module, cfg, plumbing)?,
+        SpecificModuleConfig::GE(cfg) => ge::GeInput::start(cfg, common)?,
+        SpecificModuleConfig::Canon(cfg) => canon::CanonInput::start(cfg, common)?,
+        SpecificModuleConfig::Mesy(cfg) => mesy::MesyInput::start(cfg, common)?,
     }
     Ok(())
 }
 
 pub trait Input: Send {
     fn description(&self) -> String;
-    fn handle(&mut self, cmd: Command) -> CommandReply;
+    fn handle(&mut self, cmd: Command) -> UResult<CommandReply>;
     fn start(&mut self) -> UResult<()>;
     fn stop(&mut self) -> UResult<()>;
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>>;
 
-    fn start_main_loop(self, module: ModuleId, plumbing: InputPlumbing) -> UResult<()>
+    // Rest of methods are all fully implemented
+
+    fn start_main_loop(self, common: InputCommon) -> UResult<()>
     where Self: Sized + 'static
     {
         let desc = self.description();
         lprintln!(INFO, "Initialized {desc}");
         thread::Builder::new()
             .name(format!("input-{}", self.description()))
-            .spawn(move || main_loop(self, module, plumbing))
+            .spawn(move || self.main_loop(common))
             .context(format!("Spawning input thread for {desc}"))?;
         Ok(())
     }
-}
 
-fn main_loop(mut input: impl Input, module: ModuleId, mut plumbing: InputPlumbing) {
-    let desc = input.description();
-    let mut running = false;
-
-    loop {
-        match plumbing.command.try_recv() {
-            Ok(None) => (),
-            Ok(Some(cmd)) => {
-                match cmd {
-                    Command::AutoStart => {
-                        running = true;
-                        let _ = input.start();
-                        plumbing.state.send(InputState::Running(module)).unwrap(); // TODO
-                    }
-                    Command::Start => {
-                        running = true;
-                        if let Err(e) = input.start() {
-                            plumbing.state.send(InputState::Errored(module)).unwrap(); // TODO
-                            plumbing.command_reply.send(CommandReply::new_error(
-                                Some(module), format!("Failed to start input: {}", e)
-                            )).unwrap(); // TODO
-                        } else {
-                            plumbing.state.send(InputState::Running(module)).unwrap(); // TODO
-                            plumbing.command_reply.send(CommandReply::Ok).unwrap(); // TODO
-                        }
-                    }
-                    Command::Stop => {
-                        running = false;
-                        if let Err(e) = input.stop() {
-                            plumbing.state.send(InputState::Errored(module)).unwrap(); // TODO
-                            plumbing.command_reply.send(CommandReply::new_error(
-                                Some(module), format!("Failed to stop input: {}", e)
-                            )).unwrap(); // TODO
-                        } else {
-                            plumbing.state.send(InputState::Stopped(module)).unwrap(); // TODO
-                            plumbing.command_reply.send(CommandReply::Ok).unwrap(); // TODO
-                        }
-                    }
-                    _ => {
-                        let reply = input.handle(cmd);
-                        plumbing.command_reply.send(reply).unwrap(); // TODO
-                    }
+    fn main_loop_command(&mut self, cmd: Command, common: &mut InputCommon) {
+        let reply = match cmd {
+            Command::Start => {
+                if let Err(e) = self.start() {
+                    common.state.send(InputState::Errored(common.module)).expect("state channel closed");
+                    CommandReply::new_error(
+                        Some(common.module), format!("Failed to start input: {}", e)
+                    )
+                } else {
+                    common.running = true;
+                    common.state.send(InputState::Running(common.module)).expect("state channel closed");
+                    CommandReply::Ok
                 }
             }
-            // TODO
-            Err(e) => panic!("Failed to read command for {}: {}", desc, e),
-        }
-
-        match input.read_events() {
-            Ok(Some(ev)) => {
-                if running {
-                    let ev = plumbing.recipe.process(ev);
-                    plumbing.events.send(ev).unwrap(); // TODO
+            Command::Stop => {
+                common.running = false;
+                if let Err(e) = self.stop() {
+                    common.state.send(InputState::Errored(common.module)).expect("state channel closed");
+                    CommandReply::new_error(
+                        Some(common.module), format!("Failed to stop input: {}", e)
+                    )
+                } else {
+                    common.state.send(InputState::Stopped(common.module)).expect("state channel closed");
+                    CommandReply::Ok
                 }
             }
-            // TODO: what to do here?
-            Err(e) => panic!("Failed to read events from {}: {}", input.description(), e),
-            Ok(None) => {
-                plumbing.state.send(InputState::Ended(module)).expect("state channel closed");
-                plumbing.command.peek();
+            _ => match self.handle(cmd) {
+                Ok(reply) => reply,
+                Err(e) => CommandReply::new_error(Some(common.module),
+                                                  format!("Failed to handle command: {}", e)),
+            }
+        };
+        common.command_reply.send(reply).expect("command channel closed");
+    }
+
+    fn main_loop(mut self, mut common: InputCommon)
+    where Self: Sized
+    {
+        let desc = self.description();
+
+        loop {
+            match common.command.try_recv() {
+                Ok(None) => (),
+                Ok(Some(cmd)) => self.main_loop_command(cmd, &mut common),
+                Err(e) => {
+                    lprintln!(ERROR, "Cannot read command for {}: {}, exiting input", desc, e);
+                    return;
+                }
+            }
+
+            match self.read_events() {
+                Ok(Some(ev)) => {
+                    if common.running {
+                        let ev = common.recipe.process(ev);
+                        common.events.send(ev).expect("event channel closed");
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    lprintln!(ERROR, "Cannot read events for {}: {}", desc, e);
+                    common.state.send(InputState::Errored(common.module)).expect("state channel closed");
+                }
+                Ok(None) => {
+                    common.state.send(InputState::Ended(common.module)).expect("state channel closed");
+                    // wait for commands below
+                }
+            }
+
+            // no events can be collected; wait for commands
+            match common.command.recv() {
+                Ok(cmd) => self.main_loop_command(cmd, &mut common),
+                Err(e) => {
+                    lprintln!(ERROR, "Cannot read command for {}: {}, exiting input", desc, e);
+                    return;
+                }
             }
         }
     }
