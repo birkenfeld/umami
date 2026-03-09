@@ -10,12 +10,13 @@ use crate::command::{Command, CommandReply};
 use crate::config::{CanonConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
-use crate::input::ReplayFile;
+use crate::input::{ReplayFile, DumpHandler};
 use super::{Source, Input, InputCommon};
 
 pub struct CanonInput<S> {
     source: S,
     module: ModuleId,
+    dump: DumpHandler,
     is_gate: bool,
     time_ofs: EventTime,
     buffer: Vec<u8>,
@@ -43,6 +44,7 @@ impl<S: CanonSource> CanonInput<S> {
         let input = Self {
             source,
             module: common.module,
+            dump: Default::default(),
             is_gate: config.gatenet,
             time_ofs: EventTime::zero(),
             buffer: vec![0; EVENT_SIZE * MAX_EVENTS],
@@ -62,21 +64,28 @@ impl<S: CanonSource> Input for CanonInput<S> {
         )
     }
 
-    fn handle(&mut self, _cmd: Command) -> UResult<CommandReply> {
+    fn handle(&mut self, cmd: Command) -> UResult<CommandReply> {
+        match cmd {
+            Command::SetRawDump { enable, path } => self.dump.configure(enable, path)?,
+            _ => ()
+        }
         Ok(CommandReply::Ok)
     }
 
-    fn start(&mut self) -> UResult<()> {
+    fn start(&mut self, run_id: String) -> UResult<()> {
+        self.dump.start(self.module, &run_id)?;
         self.source.reset()?;
         Ok(())
     }
 
     fn stop(&mut self) -> UResult<()> {
+        self.dump.stop();
         Ok(())
     }
 
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
         let n = self.source.request_events(&mut self.buffer)?;
+        self.dump.write(&self.buffer[..n * EVENT_SIZE])?;
 
         // decode events
         let mut events = Vec::new();

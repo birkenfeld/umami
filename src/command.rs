@@ -11,11 +11,12 @@ use crate::error::UResult;
 use crate::event::ModuleId;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "command")]
+#[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
     Clear,
-    Start,
+    Start { run_id: String },
     Stop,
+    SetRawDump { enable: bool, path: String },
     SetTofParams { nt: usize, dt: f64, t0: f64 },
     Config { module: ModuleId, name: String, value: Value },
     GetConfig { module: ModuleId, name: String },
@@ -80,7 +81,7 @@ impl CommandHandler {
                 // TODO implement
                 Ok(CommandReply::Ok)
             }
-            Command::Start | Command::Stop => {
+            Command::Start { .. } | Command::Stop | Command::SetRawDump { .. } => {
                 for mod_send in self.mod_send.values() {
                     mod_send.send(cmd.clone()).expect("module command receiver died");
                 }

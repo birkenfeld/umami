@@ -48,7 +48,7 @@ impl<S: Source> Input for MesyInput<S> {
         Ok(CommandReply::Ok)
     }
 
-    fn start(&mut self) -> UResult<()> {
+    fn start(&mut self, _run_id: String) -> UResult<()> {
         self.source.reset()?;
         Ok(())
     }

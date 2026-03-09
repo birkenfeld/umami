@@ -17,7 +17,11 @@ pub struct Options {
     ipc_name: String,
     #[clap(help="Command to send")]
     command: String,
+    #[clap(help="Command argument")]
+    arg: Option<String>,
 }
+
+// TODO subcommands
 
 fn inner_main(args: Options) -> anyhow::Result<()> {
     // TODO: needs a unique name
@@ -32,9 +36,13 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
     sock.connect_to_unix_addr(&target_addr).context("Connecting Unix socket")?;
 
     let cmd = match &*args.command {
-        "start" => Command::Start,
+        "start" => Command::Start { run_id: args.arg.expect("cmdarg") }, // TODO
         "stop" => Command::Stop,
         "clear" => Command::Clear,
+        "raw" => Command::SetRawDump {
+            enable: true,
+            path: args.arg.expect("cmdarg"),
+        },
         other => bail!("Unknown command: {other}"),
     };
 

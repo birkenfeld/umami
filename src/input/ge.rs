@@ -8,7 +8,7 @@ use byteorder::{ByteOrder, LE};
 use crate::command::{Command, CommandReply};
 use crate::config::{GEConfig, SourceConfig};
 use crate::error::UResult;
-use crate::input::ReplayFile;
+use crate::input::{ReplayFile, DumpHandler};
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
 use super::{Source, Input, InputCommon};
 
@@ -22,6 +22,7 @@ const MAX_PACKET_SIZE: usize = 65536;
 pub struct GeInput<S> {
     source: S,
     module: ModuleId,
+    dump: DumpHandler,
     is_ts: bool,
     // last_event_at: EventTime,
 }
@@ -47,6 +48,7 @@ impl<S: Source> GeInput<S> {
     fn start_with_source(source: S, config: GEConfig, common: InputCommon) -> UResult<()> {
         let input = Self {
             source,
+            dump: Default::default(),
             module: common.module,
             is_ts: config.timestamper,
             // last_event_at: EventTime::zero(),
@@ -66,16 +68,22 @@ impl<S: Source> Input for GeInput<S> {
         )
     }
 
-    fn handle(&mut self, _cmd: Command) -> UResult<CommandReply> {
+    fn handle(&mut self, cmd: Command) -> UResult<CommandReply> {
+        match cmd {
+            Command::SetRawDump { enable, path } => self.dump.configure(enable, path)?,
+            _ => ()
+        }
         Ok(CommandReply::Ok)
     }
 
-    fn start(&mut self) -> UResult<()> {
+    fn start(&mut self, run_id: String) -> UResult<()> {
+        self.dump.start(self.module, &run_id)?;
         self.source.reset()?;
         Ok(())
     }
 
     fn stop(&mut self) -> UResult<()> {
+        self.dump.stop();
         Ok(())
     }
 
@@ -94,6 +102,7 @@ impl<S: Source> Input for GeInput<S> {
 
         if len == 0 {
             if pktype == PACKET_HEARTBT {
+                self.dump.write(&buffer[..16])?;
                 return Ok(Some(vec![Event::new(
                     read_time(&buffer[8..]),
                     EventTime::zero(),
@@ -107,7 +116,8 @@ impl<S: Source> Input for GeInput<S> {
         }
 
         // read the rest
-        self.source.read_exact(&mut buffer[..len]).context("Reading packet content")?;
+        self.source.read_exact(&mut buffer[16..][..len])
+                   .context("Reading packet content")?;
         let (evlen, flags) = match pktype {
             PACKET_NORMAL => (12, EventFlags::None),
             PACKET_NORM_FAKE => (12, EventFlags::Fake),
@@ -115,8 +125,8 @@ impl<S: Source> Input for GeInput<S> {
             PACKET_DIAG_FAKE  => (24, EventFlags::Fake),
             _ => return Err(anyhow!("Unsupported packet type {:#x}", pktype))?,
         };
-        let mut offset = 24;
-        let nevents = (len - offset) / evlen;
+        let nevents = (len - 24) / evlen;
+        let mut offset = 40;
         let mut events = Vec::with_capacity(nevents);
         for _ in 0..nevents {
             let detid = LE::read_u32(&buffer[offset+8..]);
@@ -144,6 +154,8 @@ impl<S: Source> Input for GeInput<S> {
             offset += evlen;
         }
         events.sort();
+
+        self.dump.write(&buffer[..16+len])?;
 
         // if events[0].time < self.last_event_at {
         //     crate::lprintln!(WARN, "Received out-of-order events with time {} (current ts {}), jump {}",

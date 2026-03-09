@@ -5,8 +5,10 @@ mod ge;
 mod canon;
 mod mesy;
 
+use std::fs::File;
 use std::thread;
-use std::io::Seek;
+use std::io::{Seek, Write};
+use std::path::PathBuf;
 use std::time::Duration;
 use anyhow::Context;
 use crate::{lprintln, ltrace};
@@ -50,7 +52,7 @@ pub fn start(config: SpecificModuleConfig, common: InputCommon) -> UResult<()> {
 pub trait Input: Send {
     fn description(&self) -> String;
     fn handle(&mut self, cmd: Command) -> UResult<CommandReply>;
-    fn start(&mut self) -> UResult<()>;
+    fn start(&mut self, run_id: String) -> UResult<()>;
     fn stop(&mut self) -> UResult<()>;
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>>;
 
@@ -71,8 +73,8 @@ pub trait Input: Send {
     fn main_loop_command(&mut self, cmd: Command, common: &mut InputCommon) {
         let mid = common.module;
         let reply = match cmd {
-            Command::Start => {
-                if let Err(e) = self.start() {
+            Command::Start { run_id } => {
+                if let Err(e) = self.start(run_id) {
                     common.needs_reset = true;
                     common.state.send(InputState::Errored(mid)).expect("state channel closed");
                     CommandReply::new_error(
@@ -253,5 +255,46 @@ impl Source for UdpReader {
 
     fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
         std::io::Read::read_exact(self, buf)
+    }
+}
+
+
+#[derive(Debug, Default)]
+pub struct DumpHandler {
+    path: Option<PathBuf>,
+    file: Option<File>,
+}
+
+impl DumpHandler {
+    pub fn configure(&mut self, enable: bool, path: String) -> UResult<()> {
+        if enable {
+            self.path = Some(PathBuf::from(path));
+        } else {
+            self.path = None;
+            self.file = None;
+        }
+        Ok(())
+    }
+
+    pub fn start(&mut self, module: ModuleId, run_id: &str) -> UResult<()> {
+        if let Some(path) = &self.path {
+            let full_path = path.join(run_id);
+            std::fs::create_dir_all(&full_path).context("Creating raw data directory")?;
+            let file_name = full_path.join(format!("{:02}", module.0));
+            let raw_file = File::create(file_name).context("Creating raw data file")?;
+            self.file = Some(raw_file);
+        }
+        Ok(())
+    }
+
+    pub fn stop(&mut self) {
+        self.file = None;
+    }
+
+    pub fn write(&mut self, data: &[u8]) -> UResult<()> {
+        if let Some(file) = &mut self.file {
+            file.write_all(data).context("Writing to raw dump file")?;
+        }
+        Ok(())
     }
 }
