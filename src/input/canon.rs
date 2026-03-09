@@ -84,12 +84,12 @@ impl<S: CanonSource> Input for CanonInput<S> {
     }
 
     fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
-        let n = self.source.request_events(&mut self.buffer)?;
-        self.dump.write(&self.buffer[..n * EVENT_SIZE])?;
+        let nevents = self.source.request_events(&mut self.buffer)?;
+        self.dump.write(&self.buffer[..nevents * EVENT_SIZE])?;
 
         // decode events
-        let mut events = Vec::new();
-        for i in 0..n {
+        let mut events = Vec::with_capacity(nevents);
+        for i in 0..nevents {
             let cev = CanonEvent(BE::read_u64(&self.buffer[i * EVENT_SIZE..]));
             let event = match cev.evtype() {
                 // We don't use the TriggerSync events

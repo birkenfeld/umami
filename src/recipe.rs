@@ -2,6 +2,7 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 mod kws;
+mod mesy;
 mod tof;
 
 use std::collections::BTreeMap;
@@ -42,6 +43,7 @@ pub fn from_config(map: &BTreeMap<String, RecipeConfig>, name: &str) -> UResult<
     match this.r#type.as_str() {
         "none" => Ok(Box::new(NoRecipe)),
         "tof_std" => Ok(Box::new(tof::TofStd::from_config((), map))),
+        "mesy_test" => Ok(Box::new(mesy::MesyTest::from_config((), map))),
         "kws_ge" => Ok(Box::new(kws::KWSGERecipe::from_config(
             this.config.try_into().context("parsing config for kws_ge recipe")?,
             map

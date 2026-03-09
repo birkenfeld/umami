@@ -1,0 +1,2 @@
+- wrong event count when starting while still reading from file
+- check input time offsets for GE
