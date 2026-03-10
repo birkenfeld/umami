@@ -5,7 +5,7 @@ mod cmd;
 
 use std::io;
 use anyhow::Context;
-use byteorder::{ByteOrder, BE};
+use byteorder::{ByteOrder, BE, LE};
 use crate::lprintln;
 use crate::command::{Command, CommandReply};
 use crate::config::{MesyConfig, SourceConfig};
@@ -106,7 +106,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
         self.dump.write(&buffer[..n])?;
         self.dump.write(PKT_MARKER)?;
 
-        let btype = BE::read_u16(&buffer[2..4]);
+        let btype = S::E::read_u16(&buffer[2..4]);
         if btype >> 15 != 0 {
             // not a data buffer
             lprintln!(WARN, "Mesy: got a nondata buffer?");
@@ -116,14 +116,14 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
         let nevents = (n - HEADER_LEN) / EVENT_SIZE;
         let mcpd_id = buffer[10] as u64;
         let status = buffer[11];
-        let pkt_ts = BE::read_uint(&buffer[12..], 6);
+        let pkt_ts = read_48bit::<S::E>(&buffer[12..]);
         if status & 1 != 1 {
             lprintln!(WARN, "Mesy: got event buffer but daq stopped?");
         }
 
         let mut events = Vec::with_capacity(nevents);
         for i in 0..nevents {
-            let data = BE::read_uint(&buffer[HEADER_LEN + i*EVENT_SIZE..], 6);
+            let data = read_48bit::<S::E>(&buffer[HEADER_LEN + i*EVENT_SIZE..]);
             let ts = pkt_ts + (data & 0x7ffff);    // 19bit
             let event = if data >> 47 == 1 {
                 // trigger event
@@ -162,23 +162,41 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
     }
 }
 
+/// Read an 48-bit value (header timestamp or event) from the buffer.
+///
+/// Endianness of individual words can change, but the least significant
+/// word is always first.
+fn read_48bit<E: ByteOrder>(buf: &[u8]) -> u64 {
+    let s1 = E::read_u16(&buf[0..2]) as u64;
+    let s2 = E::read_u16(&buf[2..4]) as u64;
+    let s3 = E::read_u16(&buf[4..6]) as u64;
+    s3 << 32 | s2 << 16 | s1
+}
+
+
 /// Abstraction for reading Mesytec event packets from either the network
 /// or a dump file.
 ///
 /// In the dump file, additional markers are present, and the file header
 /// must be skipped.
 pub trait MesySource: Source {
+    /// The Mesytec on-wire data format is little-endian while the dump file format
+    /// is big-endian.  There doesn't appear to be a good reason for this.
+    type E: ByteOrder;
+
     /// Read one packet into the provided buffer, returning the number of bytes
     /// read.
     fn get_packet(&mut self, buffer: &mut [u8]) -> io::Result<usize>;
 }
 
 impl MesySource for UdpReader {
+    type E = LE;
+
     /// On the wire, every packet just comes in as a datagram.
     fn get_packet(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         let n = self.0.recv(buffer)?;
         // Consistency check the packet header.
-        let packet_n = 2 * BE::read_u16(&buffer[..2]) as usize;
+        let packet_n = 2 * LE::read_u16(&buffer[..2]) as usize;
         if packet_n != n {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
                                       "Packet too large for buffer or invalid packet"));
@@ -188,6 +206,8 @@ impl MesySource for UdpReader {
 }
 
 impl MesySource for ReplayFile {
+    type E = BE;
+
     /// The Mesytec listmode data format is structured like this:
     ///
     /// - File header: some lines of ASCII text (usually 2)

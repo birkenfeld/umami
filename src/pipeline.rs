@@ -76,7 +76,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         }
     }
     if init_errors {
-        Err(anyhow!("Exiting due to module init errors"))?;
+        Err(anyhow!("Some modules failed to initialize"))?;
     }
 
     // create event sorters if we have more than one module
