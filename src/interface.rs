@@ -46,7 +46,7 @@ impl ShmInterface {
     }
 }
 
-
+// TODO combine with CommandHandler
 pub struct UdsInterface {
     sock: net::UnixDatagram,
     req_write: Sender<Command>,

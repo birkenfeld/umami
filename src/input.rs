@@ -17,6 +17,7 @@ use crate::command::{Command, CommandReply};
 use crate::config::SpecificModuleConfig;
 use crate::error::{UError, UResult};
 use crate::event::{Event, ModuleId};
+use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
 use crate::util::resolve;
 
@@ -34,7 +35,7 @@ pub struct InputCommon {
     pub running: bool,
     pub module: ModuleId,
     pub state: Sender<InputState>,
-    pub events: Sender<Vec<Event>>,
+    pub events: Sender<PipeItem>,
     pub command: Receiver<Command>,
     pub command_reply: Sender<CommandReply>,
     pub recipe: Box<dyn Recipe>,
@@ -89,7 +90,7 @@ pub trait Input: Send {
             }
             Command::Stop => {
                 common.running = false;
-                common.events.send(vec![Event::end(mid)]).expect("event channel closed");
+                common.events.send(PipeItem::EndOfRun).expect("event channel closed");
                 if let Err(e) = self.stop() {
                     common.needs_reset = true;
                     common.state.send(InputState::Errored(mid)).expect("state channel closed");
@@ -133,19 +134,19 @@ pub trait Input: Send {
                         if common.running {
                             let ev = common.recipe.process(ev);
                             ltrace!("{} | Processed events: {:?}", desc, ev);
-                            common.events.send(ev).expect("event channel closed");
+                            common.events.send(PipeItem::Events(ev)).expect("event channel closed");
                         }
                         continue;
                     }
                     Err(UError::Other(e)) => {
                         lprintln!(ERROR, "Cannot read events for {}: {}", desc, e);
                         common.needs_reset = true;
-                        common.events.send(vec![Event::end(mid)]).expect("event channel closed");
+                        common.events.send(PipeItem::EndOfRun).expect("event channel closed");
                         common.state.send(InputState::Errored(mid)).expect("state channel closed");
                     }
                     Err(UError::InputEnded) => {
                         common.needs_reset = true;
-                        common.events.send(vec![Event::end(mid)]).expect("event channel closed");
+                        common.events.send(PipeItem::EndOfRun).expect("event channel closed");
                         common.state.send(InputState::Ended(mid)).expect("state channel closed");
                         // wait for commands below
                     }

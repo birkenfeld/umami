@@ -5,20 +5,17 @@ use anyhow::Context;
 use crate::ltrace;
 use crate::channel::{Sender, Receiver};
 use crate::error::UResult;
-use crate::event::{Event, EventData};
+use crate::event::Event;
+use crate::pipeline::PipeItem;
 
 pub struct Sorter {
-    pub rcv1: Receiver<Vec<Event>>,
-    pub rcv2: Receiver<Vec<Event>>,
-    pub send: Sender<Vec<Event>>,
-}
-
-fn is_end(evs: &[Event]) -> bool {
-    evs.last().is_some_and(|ev| matches!(ev.data, EventData::EndOfRun))
+    pub rcv1: Receiver<PipeItem>,
+    pub rcv2: Receiver<PipeItem>,
+    pub send: Sender<PipeItem>,
 }
 
 impl Sorter {
-    pub fn new(rcv1: Receiver<Vec<Event>>, rcv2: Receiver<Vec<Event>>, send: Sender<Vec<Event>>) -> Self {
+    pub fn new(rcv1: Receiver<PipeItem>, rcv2: Receiver<PipeItem>, send: Sender<PipeItem>) -> Self {
         Sorter { rcv1, rcv2, send }
     }
 
@@ -30,26 +27,32 @@ impl Sorter {
         Ok(())
     }
 
-    fn refill_buffer(rcv_a: &Receiver<Vec<Event>>,
-                     rcv_b: &Receiver<Vec<Event>>,
-                     snd: &Sender<Vec<Event>>,
+    fn refill_buffer(rcv_a: &Receiver<PipeItem>,
+                     rcv_b: &Receiver<PipeItem>,
+                     snd: &Sender<PipeItem>,
                      buf_b: &mut Vec<Event>) -> Option<Vec<Event>> {
         match rcv_a.recv() {
-            Ok(evs_a) if is_end(&evs_a) => {
-                snd.send(std::mem::take(buf_b)).unwrap();
+            Ok(PipeItem::EndOfRun) => {
+                snd.send(PipeItem::Events(std::mem::take(buf_b))).unwrap();
                 ltrace!("Sorter received end from one channel");
-                while let Ok(evs_b) = rcv_b.recv() {
-                    if is_end(&evs_b) {
-                        ltrace!("Sorter received end from other channel");
-                        // send on one of the end events
-                        snd.send(evs_b).unwrap();
-                        return Some(vec![]);
+                while let Ok(item_b) = rcv_b.recv() {
+                    match item_b {
+                        PipeItem::EndOfRun => {
+                            ltrace!("Sorter received end from other channel");
+                            // send on one of the end events
+                            snd.send(PipeItem::EndOfRun).unwrap();
+                            return Some(vec![]);
+                        }
+                        _ => snd.send(item_b).unwrap(),
                     }
-                    snd.send(evs_b).unwrap();
                 }
                 None  // input channel closed
             }
-            Ok(evs_a) => Some(evs_a),
+            Ok(PipeItem::Events(evs_a)) => Some(evs_a),
+            Ok(item) => {
+                snd.send(item).unwrap();
+                Self::refill_buffer(rcv_a, rcv_b, snd, buf_b)  // try again
+            }
             Err(_) => None,
         }
     }
@@ -75,8 +78,8 @@ impl Sorter {
             if buffer1.is_empty() || buffer2.is_empty() {
                 continue;
             }
-            let last1 = buffer1.last().unwrap().time;
-            let last2 = buffer2.last().unwrap().time;
+            let last1 = buffer1.last().expect("not empty").time;
+            let last2 = buffer2.last().expect("not empty").time;
             // println!("{:?} bufferlen {} {}, lasttime {} {} {}", std::thread::current().id(),
             //          buffer1.len(), buffer2.len(), last1, last2, last1 - last2);
             let mut batch = if last1 < last2 {
@@ -103,7 +106,7 @@ impl Sorter {
             //              batch[0].time, ts);
             // }
             // ts = batch.last().unwrap().time;
-            self.send.send(batch).unwrap();
+            self.send.send(PipeItem::Events(batch)).unwrap();
         }
     }
 }

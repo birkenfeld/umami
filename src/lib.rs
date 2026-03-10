@@ -9,6 +9,7 @@ mod histo;
 mod input;
 mod interface;
 mod pipeline;
+mod postproc;
 mod recipe;
 mod sorter;
 mod util;

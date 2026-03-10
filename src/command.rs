@@ -9,6 +9,7 @@ use serde_json::Value;
 use crate::channel::{Sender, Receiver};
 use crate::error::UResult;
 use crate::event::ModuleId;
+use crate::pipeline::PipeItem;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
@@ -45,15 +46,19 @@ pub struct CommandHandler {
     if_rcv: Receiver<Command>,
     mod_send: BTreeMap<ModuleId, Sender<Command>>,
     mod_rcv: Receiver<CommandReply>,
+    post_send: Sender<PipeItem>,
     if_send: Sender<CommandReply>,
 }
 
 impl CommandHandler {
-    pub fn start(if_rcv: Receiver<Command>,
-                 mod_send: BTreeMap<ModuleId, Sender<Command>>,
-                 mod_rcv: Receiver<CommandReply>,
-                 if_send: Sender<CommandReply>) -> anyhow::Result<()> {
-        let mut handler = CommandHandler { if_rcv, mod_send, mod_rcv, if_send };
+    pub fn start(
+        if_rcv: Receiver<Command>,
+        mod_send: BTreeMap<ModuleId, Sender<Command>>,
+        mod_rcv: Receiver<CommandReply>,
+        if_send: Sender<CommandReply>,
+        post_send: Sender<PipeItem>,
+    ) -> anyhow::Result<()> {
+        let mut handler = CommandHandler { if_rcv, mod_send, mod_rcv, if_send, post_send };
         std::thread::Builder::new()
             .name("Command handler".into())
             .spawn(move || handler.main())
@@ -77,8 +82,9 @@ impl CommandHandler {
                 // TODO implement
                 Ok(CommandReply::Ok)
             }
-            Command::SetTofParams { .. } => {
-                // TODO implement
+            Command::SetTofParams { nt, dt, t0 } => {
+                self.post_send.send(PipeItem::TofParams { nt, dt, t0 })
+                              .expect("postprocessor command receiver died");
                 Ok(CommandReply::Ok)
             }
             Command::Start { .. } | Command::Stop | Command::SetRawDump { .. } => {

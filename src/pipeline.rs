@@ -3,18 +3,23 @@
 
 use std::collections::BTreeMap;
 use anyhow::anyhow;
-use crate::{channel, lprintln, ldebug, ltrace};
-use crate::{command, histo, input, recipe, sorter};
+use crate::{channel, lprintln, ldebug};
+use crate::{command, input, postproc, recipe, sorter};
 use crate::config::Config;
 use crate::error::UResult;
-use crate::event::{EventData, EventTime, ModuleId};
-use crate::input::InputCommon;
+use crate::event::{Event, ModuleId};
+use crate::input::{InputCommon, InputState};
 use crate::interface::{UdsInterface, ShmInterface, MAX_MODULES};
 
 const EV_CHANNEL_SIZE: usize = 64; // TODO tune
 
+pub enum PipeItem {
+    Events(Vec<Event>),
+    EndOfRun,
+    State(InputState),
+    TofParams { nt: usize, dt: f64, t0: f64 },
+}
 
-// TODO: channels don't need &mut to send/recv, can simplify by sharing?
 
 pub fn set_debug_params(debug: bool, trace: bool) -> UResult<()> {
     crate::DEBUG.store(debug, std::sync::atomic::Ordering::Relaxed);
@@ -46,17 +51,17 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     let (state_write, state_read) = channel::bounded(n_modules + 1);
     let (cmd_reply_write, cmd_reply_read) = channel::bounded(n_modules + 1);
 
-    let start = jiff::Timestamp::now();
-
     let mut init_errors = false;
     let mut event_read_chans = vec![];
     let mut command_write_chans = BTreeMap::new();
+    let mut last_pipe_writer = None;
     for (module_name, module_config) in config.modules {
         let mid = ModuleId(module_config.id);
         ldebug!("Initializing module {}: {:?}", module_name, module_config);
 
         let (events_write, events_read) = channel::bounded(EV_CHANNEL_SIZE);
         let (command_write, command_read) = channel::bounded(1);
+        last_pipe_writer = Some(events_write.clone());
         let common = InputCommon {
             needs_reset: false,
             running: immediate_start,
@@ -84,65 +89,41 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         let read_1 = event_read_chans.pop().expect("len checked");
         let read_2 = event_read_chans.pop().expect("len checked");
         let (write, sorted_read) = channel::bounded(EV_CHANNEL_SIZE);
+        last_pipe_writer = Some(write.clone());
         sorter::Sorter::new(read_1, read_2, write).start()?;
         event_read_chans.push(sorted_read);
     }
 
     // the last remaining channel gets all events, sorted
     let events_read = event_read_chans.pop().expect("len checked");
+    let to_postproc = last_pipe_writer.expect("len checked");
 
     // create command handler
     drop(state_write);
     drop(cmd_reply_write);
-    command::CommandHandler::start(if_cmd_read, command_write_chans, cmd_reply_read, if_reply_write)?;
+    command::CommandHandler::start(
+        if_cmd_read,
+        command_write_chans,
+        cmd_reply_read,
+        if_reply_write,
+        to_postproc.clone(),
+    )?;
 
-    std::thread::Builder::new()
-        .name("State logger".into())
-        .spawn(move || {
-            while let Ok(state) = state_read.recv() {
-                // TODO handle
-                lprintln!(INFO, "Module state: {:?}", state);
-            }
-        }).unwrap();
+    let post_recipe = recipe::from_config(&config.recipes, &config.postprocess.recipe)?;
 
-    let mut post_recipe = recipe::from_config(&config.recipes, &config.postprocess.recipe)?;
+    let (x, _) = channel::bounded(1);
+    let postproc = postproc::PostProcessor::new(post_recipe, events_read, x, shm, config.histogram);
+    postproc.start()?;
 
     uds.start()?;
 
-    let mut histo = histo::Histogram::new(config.histogram.nx, config.histogram.ny);
-
-    let mut i: usize = 0;
-    let mut limit = 0;
-    let mut ts = EventTime::zero();
-    let mut ooo = 0;
-    for mut evs in events_read {
-        i += evs.len();
-        evs = post_recipe.process(evs);
-        ltrace!("Postprocessed events: {:?}", evs);
-        if i > limit {
-            println!("Received {} events", i);
-            limit += 1000000;
-        }
-        for ev in evs {
-            let nts = ev.time;
-            if nts < ts {
-                ooo += 1;
-            }
-            ts = nts;
-
-            if let EventData::Neutron { x, y, .. } = ev.data {
-                histo.add(x as usize, y as usize);
-            }
-            else if let EventData::EndOfRun = ev.data {
-                let stop = jiff::Timestamp::now();
-                println!("Final count: {} events in {} secs, {} out of order", i, stop - start, ooo);
-                i = 0;
-                ooo = 0;
-                histo.plot();
-            }
-        }
+    while let Ok(state) = state_read.recv() {
+        lprintln!(INFO, "Module state: {:?}", state);
+        // Send update to the postprocess/shm thread to update clients
+        to_postproc.send(PipeItem::State(state))
+                   .expect("postprocessor command receiver died");
+        // TODO more?
     }
-
 
     Ok(())
 }
