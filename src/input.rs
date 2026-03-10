@@ -15,7 +15,7 @@ use crate::{lprintln, ltrace};
 use crate::channel::{Sender, Receiver};
 use crate::command::{Command, CommandReply};
 use crate::config::SpecificModuleConfig;
-use crate::error::UResult;
+use crate::error::{UError, UResult};
 use crate::event::{Event, ModuleId};
 use crate::recipe::Recipe;
 use crate::util::resolve;
@@ -54,7 +54,7 @@ pub trait Input: Send {
     fn handle(&mut self, cmd: Command) -> UResult<CommandReply>;
     fn start(&mut self, run_id: String) -> UResult<()>;
     fn stop(&mut self) -> UResult<()>;
-    fn read_events(&mut self) -> UResult<Option<Vec<Event>>>;
+    fn read_events(&mut self) -> UResult<Vec<Event>>;
 
     // Rest of methods are all fully implemented
 
@@ -128,7 +128,7 @@ pub trait Input: Send {
 
             if !common.needs_reset {
                 match self.read_events() {
-                    Ok(Some(ev)) => {
+                    Ok(ev) => {
                         ltrace!("{} | Incoming events: {:?}", desc, ev);
                         if common.running {
                             let ev = common.recipe.process(ev);
@@ -137,13 +137,13 @@ pub trait Input: Send {
                         }
                         continue;
                     }
-                    Err(e) => {
+                    Err(UError::Other(e)) => {
                         lprintln!(ERROR, "Cannot read events for {}: {}", desc, e);
                         common.needs_reset = true;
                         common.events.send(vec![Event::end(mid)]).expect("event channel closed");
                         common.state.send(InputState::Errored(mid)).expect("state channel closed");
                     }
-                    Ok(None) => {
+                    Err(UError::InputEnded) => {
                         common.needs_reset = true;
                         common.events.send(vec![Event::end(mid)]).expect("event channel closed");
                         common.state.send(InputState::Ended(mid)).expect("state channel closed");

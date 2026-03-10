@@ -83,7 +83,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
         Ok(())
     }
 
-    fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
+    fn read_events(&mut self) -> UResult<Vec<Event>> {
         let nevents = self.source.request_events(&mut self.buffer)?;
         self.dump.write(&self.buffer[..nevents * EVENT_SIZE])?;
 
@@ -159,7 +159,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
             events.push(event);
         };
 
-        Ok(Some(events))
+        Ok(events)
     }
 }
 

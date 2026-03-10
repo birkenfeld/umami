@@ -9,7 +9,7 @@ use byteorder::{ByteOrder, BE, LE};
 use crate::lprintln;
 use crate::command::{Command, CommandReply};
 use crate::config::{MesyConfig, SourceConfig};
-use crate::error::UResult;
+use crate::error::{UError, UResult};
 use crate::event::{ModuleId, Event, EventFlags, EventData, EventTime, InputId};
 use crate::input::{ReplayFile, DumpHandler};
 use super::{Source, Input, InputCommon, UdpReader};
@@ -95,13 +95,13 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
         Ok(())
     }
 
-    fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
+    fn read_events(&mut self) -> UResult<Vec<Event>> {
         let mut buffer = [0_u8; MAX_PACKET_SIZE];
         let n = match self.source.get_packet(&mut buffer) {
-            Ok(0) => return Ok(Some(vec![])),
+            Ok(0) => return Ok(vec![]),
             Ok(n) => n,
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(Some(vec![])),
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(vec![]),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Err(UError::InputEnded),
             Err(e) => Err(e).context("Reading packet from source")?,
         };
         self.dump.write(&buffer[..n])?;
@@ -111,7 +111,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
         if btype >> 15 != 0 {
             // not a data buffer
             lprintln!(WARN, "Mesy: got a nondata buffer?");
-            return Ok(Some(vec![]));
+            return Ok(vec![]);
         }
         // TODO: check packet a bit more
         let nevents = (n - HEADER_LEN) / EVENT_SIZE;
@@ -159,7 +159,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
             events.push(event);
         }
 
-        Ok(Some(events))
+        Ok(events)
     }
 }
 

@@ -7,7 +7,7 @@ use anyhow::{anyhow, Context};
 use byteorder::{ByteOrder, LE};
 use crate::command::{Command, CommandReply};
 use crate::config::{GEConfig, SourceConfig};
-use crate::error::UResult;
+use crate::error::{UError, UResult};
 use crate::input::{ReplayFile, DumpHandler};
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
 use super::{Source, Input, InputCommon};
@@ -87,13 +87,13 @@ impl<S: Source> Input for GeInput<S> {
         Ok(())
     }
 
-    fn read_events(&mut self) -> UResult<Option<Vec<Event>>> {
+    fn read_events(&mut self) -> UResult<Vec<Event>> {
         // read header
         let mut buffer = [0_u8; MAX_PACKET_SIZE];
         match self.source.read_exact(&mut buffer[..16]) {
             Ok(_) => {},
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(Some(vec![])),
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(vec![]),
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(UError::InputEnded),
             // TODO: handle reconnect if necessary
             Err(e) => Err(e).context("Reading from source")?,
         }
@@ -103,14 +103,14 @@ impl<S: Source> Input for GeInput<S> {
         if len == 0 {
             if pktype == PACKET_HEARTBT {
                 self.dump.write(&buffer[..16])?;
-                return Ok(Some(vec![Event::new(
+                return Ok(vec![Event::new(
                     read_time(&buffer[8..]),
                     EventTime::zero(),
                     self.module,
                     InputId(0),
                     EventFlags::None,
                     EventData::Heartbeat,
-                )]));
+                )]);
             }
             return Err(anyhow!("Received empty packet of type {:#x}", pktype).into());
         }
@@ -163,6 +163,6 @@ impl<S: Source> Input for GeInput<S> {
         // }
         // self.last_event_at = events.last().unwrap().time;
 
-        Ok(Some(events))
+        Ok(events)
     }
 }
