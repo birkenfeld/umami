@@ -1,6 +1,8 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
+mod cmd;
+
 use std::io;
 use anyhow::Context;
 use byteorder::{ByteOrder, BE};
@@ -13,41 +15,52 @@ use crate::input::{ReplayFile, DumpHandler};
 use super::{Source, Input, InputCommon, UdpReader};
 
 const MAX_PACKET_SIZE: usize = 2048;
+const HEADER_LEN: usize = 42;
+const EVENT_SIZE: usize = 6;
 const BEG_MARKER: &[u8] = b"\x00\x00\x55\x55\xaa\xaa\xff\xff";
 const PKT_MARKER: &[u8] = b"\x00\x00\xff\xff\x55\x55\xaa\xaa";
 const END_MARKER: &[u8] = b"\xff\xff\xaa\xaa\x55\x55\x00\x00";
 const FILE_START: &[u8] = b"mesytec ";
 
-pub struct MesyInput<S> {
+pub struct MesyInput<S, C> {
     source: S,
+    command_handler: C,
     module: ModuleId,
     dump: DumpHandler,
+    is_master: bool,
 }
 
-impl MesyInput<()> {
+impl MesyInput<(), ()> {
     pub fn start(config: MesyConfig, common: InputCommon) -> UResult<()> {
         match &config.source {
-            SourceConfig::IP(addr) => MesyInput::start_with_source(
-                UdpReader::from_config(addr)?, config, common),
-            SourceConfig::File(path) => MesyInput::start_with_source(
-                ReplayFile::from_config(path)?, config, common),
+            SourceConfig::IP(addr) => {
+                let reader = UdpReader::from_config(addr)?;
+                let local = reader.0.local_addr().context("Getting local address of UDP reader")?;
+                let cmds = cmd::make_command_socket(local, &config)?;
+                MesyInput::start_with_source(reader, cmds, config, common)
+            }
+            SourceConfig::File(path) => {
+                MesyInput::start_with_source(ReplayFile::from_config(path)?, (), config, common)
+            }
         }
     }
 }
 
-impl<S: MesySource> MesyInput<S> {
-    fn start_with_source(source: S, _config: MesyConfig, common: InputCommon) -> UResult<()> {
+impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
+    fn start_with_source(source: S, commands: C, config: MesyConfig, common: InputCommon) -> UResult<()> {
         let input = Self {
             source,
+            command_handler: commands,
             module: common.module,
             dump: Default::default(),
+            is_master: config.is_master,
         };
         input.start_main_loop(common)?;
         Ok(())
     }
 }
 
-impl<S: MesySource> Input for MesyInput<S> {
+impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
     fn description(&self) -> String {
         format!("MCPD module {} at {}", self.module.0, self.source.description())
     }
@@ -65,12 +78,18 @@ impl<S: MesySource> Input for MesyInput<S> {
         self.dump.write(b"mesytec psd listmode data\nheader length: 2 lines \n")?;
         self.dump.write(BEG_MARKER)?;
         self.source.reset()?;
+        if self.is_master {
+            self.command_handler.start()?;
+        }
         Ok(())
     }
 
     fn stop(&mut self) -> UResult<()> {
+        self.command_handler.stop()?;
         self.dump.write(END_MARKER)?;
-        self.dump.stop();
+        if self.is_master {
+            self.dump.stop();
+        }
         Ok(())
     }
 
@@ -92,18 +111,18 @@ impl<S: MesySource> Input for MesyInput<S> {
             lprintln!(WARN, "Mesy: got a nondata buffer?");
             return Ok(Some(vec![]));
         }
-        let nwords = BE::read_u16(&buffer[0..2]) as usize;
-        let nevents = (nwords*2 - 42) / 6;
+        // TODO: check packet a bit more
+        let nevents = (n - HEADER_LEN) / EVENT_SIZE;
         let mcpd_id = buffer[10] as u64;
-        let pkt_ts = read_48bit(&buffer[12..18]);
         let status = buffer[11];
+        let pkt_ts = BE::read_uint(&buffer[12..], 6);
         if status & 1 != 1 {
             lprintln!(WARN, "Mesy: got event buffer but daq stopped?");
         }
 
         let mut events = Vec::with_capacity(nevents);
         for i in 0..nevents {
-            let data = read_48bit(&buffer[42 + 6*i..]);
+            let data = BE::read_uint(&buffer[HEADER_LEN + i*EVENT_SIZE..], 6);
             let ts = pkt_ts + (data & 0x7ffff);    // 19bit
             let event = if data >> 47 == 1 {
                 // trigger event
@@ -142,24 +161,40 @@ impl<S: MesySource> Input for MesyInput<S> {
     }
 }
 
-fn read_48bit(buf: &[u8]) -> u64 {
-    let s3 = BE::read_u16(&buf[4..6]) as u64;
-    let s2 = BE::read_u16(&buf[2..4]) as u64;
-    let s1 = BE::read_u16(&buf[0..2]) as u64;
-    s3 << 32 | s2 << 16 | s1
-}
-
+/// Abstraction for reading Mesytec event packets from either the network
+/// or a dump file.
+///
+/// In the dump file, additional markers are present, and the file header
+/// must be skipped.
 pub trait MesySource: Source {
+    /// Read one packet into the provided buffer, returning the number of bytes
+    /// read.
     fn get_packet(&mut self, buffer: &mut [u8]) -> io::Result<usize>;
 }
 
 impl MesySource for UdpReader {
+    /// On the wire, every packet just comes in as a datagram.
     fn get_packet(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        self.0.recv(buffer)
+        let n = self.0.recv(buffer)?;
+        // Consistency check the packet header.
+        let packet_n = 2 * BE::read_u16(&buffer[..2]) as usize;
+        if packet_n != n {
+            return Err(io::Error::new(io::ErrorKind::InvalidData,
+                                      "Packet too large for buffer or invalid packet"));
+        }
+        Ok(n)
     }
 }
 
 impl MesySource for ReplayFile {
+    /// The Mesytec listmode data format is structured like this:
+    ///
+    /// - File header: some lines of ASCII text (usually 2)
+    /// - 8-byte "beginning marker"
+    /// - Packets, every one followed by 8-byte "packet end marker"
+    /// - 8-byte "end marker"
+    ///
+    /// Here, we read every packet including the following end marker.
     fn get_packet(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         let head = &mut buffer[..8];
         self.read_exact(head)?;
@@ -176,27 +211,29 @@ impl MesySource for ReplayFile {
                     }
                 }
             }
+            // read, check and skip the begin marker
             self.read_exact(head)?;
             if head != BEG_MARKER {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid file header"));
             }
             Ok(0)
         } else if head == END_MARKER {
+            // nothing more to read here
             Ok(0)
         } else {
-            let nwords = BE::read_u16(&buffer[..2]) as usize;
-            if 2*nwords > buffer.len() {
+            let n = 2 * BE::read_u16(&buffer[..2]) as usize;
+            if n > buffer.len() || n < HEADER_LEN {
                 return Err(io::Error::new(io::ErrorKind::InvalidData,
-                                          "Packet too large for buffer or invalid packet"));
+                                          "Packet size too small or too large"));
             }
-            self.read_exact(&mut buffer[8..][..nwords*2 - 8])?;
-            let mut foot = [0; 8];
-            self.read_exact(&mut foot)?; // read the packet end marker
-            if foot != PKT_MARKER {
-                dbg!(foot);
+            self.read_exact(&mut buffer[8..n])?;
+            // read, check and skip the packet end marker
+            let mut pkt_end = [0; 8];
+            self.read_exact(&mut pkt_end)?;
+            if pkt_end != PKT_MARKER {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid packet end marker"));
             }
-            Ok(nwords*2)
+            Ok(n)
         }
     }
 }
