@@ -47,15 +47,16 @@ impl MesyInput<(), ()> {
 }
 
 impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
-    fn start_with_source(source: S, commands: C, config: MesyConfig, common: InputCommon) -> UResult<()> {
-        let mut input = Self {
+    fn start_with_source(source: S, mut commands: C, config: MesyConfig, common: InputCommon) -> UResult<()> {
+        let modules = commands.scan()?;
+        commands.set_up(&modules, &config)?;
+        let input = Self {
             source,
             command_handler: commands,
             module: common.module,
             dump: Default::default(),
             is_master: config.is_master,
         };
-        input.command_handler.scan()?;
         input.start_main_loop(common)?;
         Ok(())
     }

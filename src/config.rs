@@ -31,6 +31,24 @@ pub struct MesyConfig {
     pub remote: String,
     pub is_master: bool,
     pub mcpd_id: u8,
+    pub cells: BTreeMap<usize, MesyCellConfig>,
+    pub modules: BTreeMap<usize, MesyModuleConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MesyCellConfig {
+    // TODO values are more restricted
+    pub source: u16,
+    pub compare: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum MesyModuleConfig {
+    // TODO better types
+    // TODO amp mode, pulser
+    MPSD { threshold: u16, gain: u16 },
+    MSTD { threshold: u16, gain: u16 },
 }
 
 #[derive(Debug, Deserialize)]

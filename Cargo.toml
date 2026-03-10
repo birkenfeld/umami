@@ -19,6 +19,7 @@ itertools = "0.14.0"
 jemallocator = "0.5.4"
 jiff = "0.2.21"
 kanal = { version = "0.1.1", default-features = false }
+num_enum = "0.7.5"
 plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "image", "colormaps", "full_palette", "ttf"] }
 plotters-bitmap = { version = "0.3.7", default-features = false, features = ["image"] }
 rkyv = "0.8.15"

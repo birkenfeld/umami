@@ -7,10 +7,11 @@ use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
 use anyhow::{anyhow, Context};
 use byteorder::{ByteOrder, LE};
+use num_enum::FromPrimitive;
 use zerocopy::{FromBytes, Immutable, IntoBytes, Unaligned};
 use zerocopy::byteorder::little_endian::U16;
 use crate::lprintln;
-use crate::config::MesyConfig;
+use crate::config::{MesyConfig, MesyModuleConfig};
 use crate::error::UResult;
 use crate::util::resolve;
 
@@ -24,10 +25,31 @@ pub enum Cmd {
     Reset = 0,
     Start = 1,
     Stop = 2,
+    SetCell = 9,
+    SetGainMpsd = 13,
+    SetThreshold = 14,
     GetModInfo = 24,
     ReadIds = 36,
     GetMcpdVer = 51,
     ReadPeriReg = 52,
+}
+
+#[repr(u16)]
+#[derive(Clone, Copy, Debug, FromPrimitive)]
+pub enum ModType {
+    None = 0,
+    Mpsd8Old = 1,
+    Mcpd8 = 2,
+    Mdll = 35,
+    Mpsd8SADC = 102,
+    Mpsd8 = 103,
+    Mstd16 = 104,
+    Mpsd8P = 105,
+    Mwpchr = 110,  // Multi wire proportional chamber high resolution (DEL-FRMII)
+    Mstd16P = 204, // MSTD-16+, not official, but for easier handling of different MSTD-16 modules
+    MdllP = 235,   // MDLL+, not official, but for easier handling of different MDLL modules
+    #[num_enum(default)]
+    Unknown,
 }
 
 /// Abstraction for the Mesytec command handler.
@@ -53,7 +75,7 @@ pub trait MesyCommandHandler: Send + 'static {
         Ok(())
     }
 
-    fn scan(&mut self) -> UResult<()> {
+    fn scan(&mut self) -> UResult<[ModType; 8]> {
         let mcpd_ver: [U16; 3] = self.do_command(Cmd::GetMcpdVer, ())?;
         let cpu_major = mcpd_ver[0];
         let cpu_minor = mcpd_ver[1];
@@ -63,11 +85,14 @@ pub trait MesyCommandHandler: Send + 'static {
                   cpu_major, cpu_minor, fpga_major, fpga_minor);
 
         let ids: [U16; 8] = self.do_command(Cmd::ReadIds, U16::new(2))?;
+        let mut mod_types = [ModType::None; 8];
 
         for (i, mod_id) in ids.into_iter().enumerate() {
+            mod_types[i] = ModType::from(mod_id.get());
             if mod_id == 0 {
                 continue;
             }
+
             let peri_reg: [U16; 3] = self.do_command(Cmd::ReadPeriReg,
                                                      [U16::new(i as _), U16::new(2)])?;
             let mod_ver = peri_reg[2];
@@ -79,6 +104,54 @@ pub trait MesyCommandHandler: Send + 'static {
             lprintln!(INFO, "Module {}: ID {}, version {}, xmit cap {}, xmit set {}, firmware {}",
                       i, mod_id, mod_ver, mod_xmit_cap, mod_xmit_set, mod_firmware);
         }
+        Ok(mod_types)
+    }
+
+    fn set_up(&mut self, modules: &[ModType; 8], config: &MesyConfig) -> UResult<()> {
+        for i in 0..8 {
+            if let Some(cfg) = config.cells.get(&i) {
+                lprintln!(INFO, "Setting up cell {} with source {}, compare {}",
+                          i, cfg.source, cfg.compare);
+                let _res: [U16; 3] = self.do_command(
+                    Cmd::SetCell,
+                    [U16::new(i as _), U16::new(cfg.source), U16::new(cfg.compare)],
+                )?;
+            }
+        }
+
+        for i in 0..8 {
+            match modules[i] {
+                ModType::None => continue,
+                ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P => {
+                    if let Some(cfg) = config.modules.get(&i) {
+                        if let MesyModuleConfig::MPSD { threshold, gain } = cfg {
+                            self.set_up_mpsd(i, *threshold, *gain)?;
+                        } else {
+                            lprintln!(WARN, "Module {} is not an MPSD, skipping setup", i);
+                        }
+                    } else {
+                        lprintln!(WARN, "MPSD {} has no assigned configuration, skipping setup", i);
+                    }
+                },
+                _ => {
+                    lprintln!(WARN, "Module {} has unsupported type {:?}, skipping setup",
+                              i, modules[i]);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn set_up_mpsd(&mut self, num: usize, threshold: u16, gain: u16) -> UResult<()> {
+        lprintln!(INFO, "Setting up MPSD {} with threshold {}, gain {}", num, threshold, gain);
+        let _res: [U16; 3] = self.do_command(
+            Cmd::SetGainMpsd,
+            [U16::new(num as _), U16::new(8), U16::new(gain)],
+        )?;   // id 8 = all channels
+        let _res: [U16; 2] = self.do_command(
+            Cmd::SetThreshold,
+            [U16::new(num as _), U16::new(threshold)],
+        )?;
         Ok(())
     }
 }
