@@ -108,11 +108,13 @@ impl MesyCommandHandler for MesyCommandSocket {
         let chksum = data.chunks(2).fold(0, |sum, chunk| sum ^ BE::read_u16(chunk));
         BE::write_u16(&mut self.buffer[18..20], chksum);
         self.buffer.write_u16::<BE>(0xFFFF)?;  // end of packet marker
+        lprintln!(DEBUG, "Mesytec command buffer: {:?}", self.buffer);
 
         // exchange communication
         self.sock.send(&self.buffer)?;
         self.buffer.resize(2048, 0);
         let n = self.sock.recv(&mut self.buffer)?;
+        lprintln!(DEBUG, "Mesytec command reply: {:?}", &self.buffer[..n]);
 
         // validate reply
         if n < HEADERLEN {

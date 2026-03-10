@@ -6,7 +6,7 @@ authors = ["Georg Brandl <g.brandl@fz-juelich.de>",
            "Alexander Zaft <a.zaft@fz-juelich.de>"]
 license = "GPL-3.0-or-later"
 description = "Unified Mechanism for Acquisition of Measured Intensity"
-rust-version = "1.90"
+rust-version = "1.88"
 
 [dependencies]
 anyhow = "1.0.102"
