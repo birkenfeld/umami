@@ -66,7 +66,7 @@ impl MesyCommandHandler for MesyCommandSocket {
         self.buffer.write_u16::<BE>(0)?;
         self.buffer.write_u16::<BE>(0)?;  // checksum - later
         self.buffer.extend_from_slice(data);
-        let chksum = checksum(&self.buffer);
+        let chksum = data.chunks(2).fold(0, |sum, chunk| sum ^ BE::read_u16(chunk));
         BE::write_u16(&mut self.buffer[18..20], chksum);
         self.buffer.write_u16::<BE>(0xFFFF)?;  // end of packet marker
 
@@ -126,16 +126,4 @@ pub fn make_command_socket(local_data_addr: SocketAddr, config: &MesyConfig) -> 
 
 fn data_err<T>(msg: &str) -> Result<T, io::Error> {
     Err(io::Error::new(io::ErrorKind::InvalidData, msg))
-}
-
-fn checksum(data: &[u8]) -> u16 {
-    // Since the checksum is all 16-bit words XORed, we need to calculate
-    // it on the first and second byte separately.
-    let mut sum1 = 0;
-    let mut sum2 = 0;
-    for [b1, b2] in data.array_windows() {
-        sum1 ^= b1;
-        sum2 ^= b2;
-    }
-    (sum1 as u16) << 8 | (sum2 as u16)
 }
