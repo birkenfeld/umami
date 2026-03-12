@@ -9,7 +9,8 @@ use crate::config::Config;
 use crate::error::UResult;
 use crate::event::{Event, ModuleId};
 use crate::input::{InputCommon, InputState};
-use crate::interface::{UdsInterface, ShmInterface, MAX_MODULES};
+use crate::interface::UdsInterface;
+use crate::shm::{ShmInterface, MAX_MODULES};
 use crate::util::wait_for_signal;
 
 const EV_CHANNEL_SIZE: usize = 64; // TODO tune
@@ -31,7 +32,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         Err(anyhow!("Too many modules: {}, max is {}", n_modules, MAX_MODULES))?;
     }
 
-    let mut shm_area = ShmInterface::map(&config.ipc_name)?;
+    let mut shm_area = ShmInterface::create(&config.ipc_name, &config.histogram)?;
     shm_area.reset(n_modules as u32);
 
     let (if_cmd_send, if_cmd_recv) = channel::bounded(1);  // only one command at a time
@@ -109,7 +110,6 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         recipe::from_config(&config.recipes, &config.postprocess.recipe)?,
         postproc_recv,
         shm_area,
-        config.histogram,
     );
 
     uds.start()?;

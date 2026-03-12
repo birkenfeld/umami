@@ -3,48 +3,11 @@
 
 use std::os::unix::net;
 use anyhow::Context;
-use shmem_bind::{ShmemBox, self as shmem};
 use uds::UnixDatagramExt;
 use crate::{ldebug, lprintln};
 use crate::channel::{Sender, Receiver};
 use crate::command::{Command, CommandReply};
 use crate::error::UResult;
-
-pub const MAX_MODULES: usize = 128;
-pub const MAX_HISTO_SIZE: usize = 256 * 1024 * 1024;  // 1 GB shmem
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-// This trait impl is not actually used but ensures that initializing
-// the SHM does not create undefined behavior.
-#[derive(zerocopy::FromBytes)]
-pub struct ShmInterface {
-    pub histo: [u32; MAX_HISTO_SIZE],
-    pub state: [u8; MAX_MODULES],
-    pub modules: u32,
-    pub nx: u32,
-    pub ny: u32,
-    pub nt: u32,
-}
-
-impl ShmInterface {
-    pub fn map(name: &str) -> UResult<ShmemBox<ShmInterface>> {
-        let shared_mem = shmem::Builder::new(name)
-            .with_size(std::mem::size_of::<ShmInterface>() as i64)
-            .open()
-            .context("Failed to map shared memory")?;
-        Ok(unsafe { shared_mem.boxed::<ShmInterface>() })
-    }
-
-    pub fn reset(&mut self, n: u32) {
-        self.histo.fill(0);
-        self.state.fill(0);
-        self.modules = n;
-        self.nx = 0;
-        self.ny = 0;
-        self.nt = 0;
-    }
-}
 
 // TODO combine with CommandHandler
 pub struct UdsInterface {

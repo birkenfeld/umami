@@ -2,34 +2,28 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use anyhow::Context;
-use shmem_bind::ShmemBox;
 use crate::{lprintln, ltrace};
 use crate::channel::{Receiver};
-use crate::config::HistoConfig;
 use crate::error::{UResult};
 use crate::event::{EventData, EventTime};
-use crate::histo::Histogram;
-use crate::interface::ShmInterface;
 use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
+use crate::shm::ShmBox;
 
 pub struct PostProcessor {
     recipe: Box<dyn Recipe>,
     input: Receiver<PipeItem>,
     // output: Sender<PipeItem>,
-    histo: Histogram,
-    shm_data: ShmemBox<ShmInterface>,
+    shm: ShmBox,
 }
 
 impl PostProcessor {
     pub fn new(recipe: Box<dyn Recipe>,
                input: Receiver<PipeItem>,
                // output: Sender<PipeItem>,
-               data: ShmemBox<ShmInterface>,
-               config: HistoConfig,
+               data: ShmBox,
     ) -> Self {
-        let histo = Histogram::new(config.nx, config.ny);
-        Self { recipe, input, histo, shm_data: data }
+        Self { recipe, input, shm: data }
     }
 
     pub fn start(self) -> UResult<()> {
@@ -51,7 +45,7 @@ impl PostProcessor {
             match item {
                 PipeItem::Clear => {
                     lprintln!(INFO, "Clearing histogram");
-                    self.histo.clear();
+                    self.shm.clear_histo();
                 }
                 PipeItem::StartOfRun(run_id) => {
                     lprintln!(INFO, "Starting run {}", run_id);
@@ -61,7 +55,6 @@ impl PostProcessor {
                     println!("Final count: {} events in {} secs, {} out of order", i, stop - start, ooo);
                     i = 0;
                     ooo = 0;
-                    self.histo.plot();
                 }
                 PipeItem::Events(evs) => {
                     i += evs.len();
@@ -79,7 +72,7 @@ impl PostProcessor {
                         ts = nts;
 
                         if let EventData::Neutron { x, y, .. } = ev.data {
-                            self.histo.add(x as usize, y as usize);
+                            self.shm.add_histo(x, y, 0);
                         }
                     }
                 }

@@ -5,12 +5,12 @@ mod command;
 mod config;
 mod error;
 mod event;
-mod histo;
 mod input;
 mod interface;
 mod pipeline;
 mod postproc;
 mod recipe;
+mod shm;
 mod sorter;
 mod util;
 
