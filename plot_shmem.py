@@ -1,5 +1,6 @@
 import mmap
 import cffi
+import time
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets
@@ -27,17 +28,27 @@ mapp.close()
 
 mapp = mmap.mmap(fd, off_size + nx*ny*4, prot=mmap.PROT_READ)
 
+prev = dict()
+
 def update_buffer():
     buf = np.frombuffer(mapp, '<u4', nx*ny, off_size).reshape((ny, nx))
     img.setImage(buf)
-    plot.setTitle(f'{buf.sum()} total counts')
+    total = buf.sum()
+    now = time.monotonic()
+    if prev:
+        rate = (total - prev['total']) / (now - prev['time'])
+        plot.setTitle(f'{total} total counts ({rate:.1f}/sec)')
+    prev['total'] = total
+    prev['time'] = now
 
 pg.setConfigOption('background', 'w')
 pg.setConfigOption('foreground', 'k')
 app = QtWidgets.QApplication([])
 window = pg.GraphicsLayoutWidget()
+window.resize(800, 800)
 window.setWindowTitle(f'UMAMI histogram, {nmod} modules')
 plot = window.addPlot()
+plot.setTitle('starting...')
 
 img = pg.ImageItem(border='w')
 plot.addItem(img)
