@@ -32,7 +32,7 @@ pub struct MesyInput<S, C> {
 
 impl MesyInput<(), ()> {
     pub fn start(config: MesyConfig, common: InputCommon) -> UResult<()> {
-        match &config.source {
+        match &config.local {
             SourceConfig::IP(addr) => {
                 let reader = UdpReader::from_config(addr)?;
                 let local = reader.0.local_addr().context("Getting local address of UDP reader")?;

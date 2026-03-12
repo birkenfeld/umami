@@ -33,7 +33,7 @@ impl Histogram {
         let max = (self.data.iter().cloned().max().unwrap_or(1) as f64).log10();
 
         const OUT_FILE_NAME: &str = "histo.png";
-        let root = BitMapBackend::new(OUT_FILE_NAME, (1600, 1200)).into_drawing_area();
+        let root = BitMapBackend::new(OUT_FILE_NAME, (1600, 1600)).into_drawing_area();
 
         root.fill(&WHITE).unwrap();
 

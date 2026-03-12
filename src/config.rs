@@ -27,7 +27,7 @@ pub struct CanonConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct MesyConfig {
-    pub source: SourceConfig,
+    pub local: SourceConfig,
     pub remote: String,
     pub is_master: bool,
     pub mcpd_id: u8,
