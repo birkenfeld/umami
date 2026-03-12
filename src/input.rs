@@ -72,7 +72,7 @@ pub trait Input: Send {
         let desc = self.description();
         lprintln!(INFO, "Initialized {desc}");
         thread::Builder::new()
-            .name(format!("input-{}", self.description()))
+            .name(format!("Input {}", self.description()))
             .spawn(move || self.main_loop(common))
             .context(format!("Spawning input thread for {desc}"))?;
         Ok(())
