@@ -4,7 +4,7 @@
 use anyhow::Context;
 use shmem_bind::ShmemBox;
 use crate::{lprintln, ltrace};
-use crate::channel::{Sender, Receiver};
+use crate::channel::{Receiver};
 use crate::config::HistoConfig;
 use crate::error::{UResult};
 use crate::event::{EventData, EventTime};
@@ -16,7 +16,7 @@ use crate::recipe::Recipe;
 pub struct PostProcessor {
     recipe: Box<dyn Recipe>,
     input: Receiver<PipeItem>,
-    output: Sender<PipeItem>,
+    // output: Sender<PipeItem>,
     histo: Histogram,
     shm_data: ShmemBox<ShmInterface>,
 }
@@ -24,12 +24,12 @@ pub struct PostProcessor {
 impl PostProcessor {
     pub fn new(recipe: Box<dyn Recipe>,
                input: Receiver<PipeItem>,
-               output: Sender<PipeItem>,
+               // output: Sender<PipeItem>,
                data: ShmemBox<ShmInterface>,
                config: HistoConfig,
     ) -> Self {
         let histo = Histogram::new(config.nx, config.ny);
-        Self { recipe, input, output, histo, shm_data: data }
+        Self { recipe, input, histo, shm_data: data }
     }
 
     pub fn start(self) -> UResult<()> {

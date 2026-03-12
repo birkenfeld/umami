@@ -34,11 +34,18 @@ pub struct InputCommon {
     pub needs_reset: bool,
     pub running: bool,
     pub module: ModuleId,
-    pub state: Sender<InputState>,
+    pub state: Sender<PipeItem>,
     pub events: Sender<PipeItem>,
     pub command: Receiver<Command>,
     pub command_reply: Sender<CommandReply>,
     pub recipe: Box<dyn Recipe>,
+}
+
+impl InputCommon {
+    fn update_state(&self, state: InputState) {
+        self.state.send(PipeItem::State(state))
+                  .expect("state channel closed");
+    }
 }
 
 pub fn start(config: SpecificModuleConfig, common: InputCommon) -> UResult<()> {
@@ -77,14 +84,14 @@ pub trait Input: Send {
             Command::Start { run_id } => {
                 if let Err(e) = self.start(run_id) {
                     common.needs_reset = true;
-                    common.state.send(InputState::Errored(mid)).expect("state channel closed");
+                    common.update_state(InputState::Errored(mid));
                     CommandReply::new_error(
                         Some(mid), format!("Failed to start input: {}", e)
                     )
                 } else {
                     common.needs_reset = false;
                     common.running = true;
-                    common.state.send(InputState::Running(mid)).expect("state channel closed");
+                    common.update_state(InputState::Running(mid));
                     CommandReply::Ok
                 }
             }
@@ -93,12 +100,12 @@ pub trait Input: Send {
                 common.events.send(PipeItem::EndOfRun).expect("event channel closed");
                 if let Err(e) = self.stop() {
                     common.needs_reset = true;
-                    common.state.send(InputState::Errored(mid)).expect("state channel closed");
+                    common.update_state(InputState::Errored(mid));
                     CommandReply::new_error(
                         Some(mid), format!("Failed to stop input: {}", e)
                     )
                 } else {
-                    common.state.send(InputState::Stopped(mid)).expect("state channel closed");
+                    common.update_state(InputState::Stopped(mid));
                     CommandReply::Ok
                 }
             }
@@ -142,12 +149,12 @@ pub trait Input: Send {
                         lprintln!(ERROR, "Cannot read events for {}: {}", desc, e);
                         common.needs_reset = true;
                         common.events.send(PipeItem::EndOfRun).expect("event channel closed");
-                        common.state.send(InputState::Errored(mid)).expect("state channel closed");
+                        common.update_state(InputState::Errored(mid));
                     }
                     Err(UError::InputEnded) => {
                         common.needs_reset = true;
                         common.events.send(PipeItem::EndOfRun).expect("event channel closed");
-                        common.state.send(InputState::Ended(mid)).expect("state channel closed");
+                        common.update_state(InputState::Ended(mid));
                         // wait for commands below
                     }
                 }
