@@ -18,7 +18,7 @@ pub enum Command {
     Start { run_id: String },
     Stop,
     SetRawDump { enable: bool, path: String },
-    SetTofParams { nt: usize, dt: f64, t0: f64 },
+    SetTofParams { nt: usize, dt: u64, t0: u64 },
     Config { module: ModuleId, name: String, value: Value },
     GetConfig { module: ModuleId, name: String },
 }

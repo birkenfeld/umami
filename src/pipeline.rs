@@ -21,7 +21,7 @@ pub enum PipeItem {
     StartOfRun(String),
     EndOfRun,
     State(InputState),
-    TofParams { nt: usize, dt: f64, t0: f64 },
+    TofParams { nt: usize, dt: u64, t0: u64 },
 }
 
 pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
@@ -32,8 +32,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         Err(anyhow!("Too many modules: {}, max is {}", n_modules, MAX_MODULES))?;
     }
 
-    let mut shm_area = ShmInterface::create(&config.ipc_name, &config.histogram)?;
-    shm_area.reset(n_modules as u32);
+    let shm_area = ShmInterface::create(&config.ipc_name, &config.histogram, n_modules)?;
 
     let (if_cmd_send, if_cmd_recv) = channel::bounded(1);  // only one command at a time
     let (if_reply_send, if_reply_recv) = channel::bounded(1);
@@ -42,7 +41,6 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     lprintln!(INFO, "IPC interfaces are available under the name {:?}", config.ipc_name);
 
     let (cmd_reply_send, cmd_reply_recv) = channel::bounded(n_modules + 1);
-
     let (postproc_send, postproc_recv) = channel::bounded(EV_CHANNEL_SIZE);
 
     let mut init_errors = false;

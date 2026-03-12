@@ -3,21 +3,22 @@
 
 use std::num::NonZeroUsize;
 use std::ops::{Deref, DerefMut};
-use std::ptr::NonNull;
+use std::ptr::{self, NonNull};
 use anyhow::{anyhow, Context};
 use nix::{fcntl::OFlag, unistd::ftruncate};
 use nix::sys::{mman::{shm_open, mmap, MapFlags, ProtFlags}, stat::Mode};
 use crate::config::HistoConfig;
 use crate::error::UResult;
+use crate::input::InputState;
 
 pub const MAX_MODULES: usize = 128;
 pub const MAX_HISTO_SIZE: usize = 1024 * 1024 * 1024;  // 1 GB shmem
 
 pub struct ShmBox {
     ptr: NonNull<ShmInterface>,
+    max_nt: u32,
 }
 
-unsafe impl Sync for ShmBox {}
 unsafe impl Send for ShmBox {}
 
 impl Deref for ShmBox {
@@ -36,21 +37,27 @@ impl DerefMut for ShmBox {
 
 impl ShmBox {
     pub fn clear_histo(&mut self) {
-        let histo_ptr = unsafe { self.ptr.as_ptr().add(1) as *mut u32 };
-        let histo_slice = unsafe {
-            std::slice::from_raw_parts_mut(histo_ptr, (self.nx * self.ny * self.nt) as usize)
+        let size = (self.nx * self.ny * self.max_nt) as usize;
+        unsafe {
+            let histo_ptr = self.ptr.as_ptr().add(1) as *mut u32;
+            std::slice::from_raw_parts_mut(histo_ptr, size).fill(0);
         };
-        histo_slice.fill(0);
     }
 
-    pub fn add_histo(&mut self, x: u32, y: u32, t: u32) {
-        if x < self.nx && y < self.ny && t < self.nt {
-            let histo_ptr = unsafe { self.ptr.as_ptr().add(1) as *mut u32 };
-            let histo_slice = unsafe {
-                std::slice::from_raw_parts_mut(histo_ptr, (self.nx * self.ny * self.nt) as usize)
-            };
-            let idx = (t * (self.nx * self.ny) + y * self.nx + x) as usize;
-            histo_slice[idx] += 1;
+    pub fn add_histo(&mut self, x: u32, y: u32, mut t: u32) {
+        if self.nt > 0 && t >= self.nt {
+            return;
+        }
+        if self.nt == 0 {
+            t = 0;
+        }
+        if x < self.nx && y < self.ny {
+            let off = t * (self.nx * self.ny) + y * self.nx + x;
+            unsafe {
+                let histo_ptr = self.ptr.as_ptr().add(1) as *mut u32;
+                let place_ptr = histo_ptr.add(off as usize);
+                ptr::write(place_ptr, place_ptr.read() + 1);
+            }
         }
     }
 }
@@ -68,15 +75,16 @@ pub struct ShmInterface {
 }
 
 impl ShmInterface {
-    pub fn reset(&mut self, n: u32) {
-        self.state.fill(0);
-        self.modules = n;
-        self.nx = 0;
-        self.ny = 0;
-        self.nt = 0;
+    pub fn set_state(&mut self, state: crate::input::InputState) {
+        match state {
+            InputState::Stopped(mid) => self.state[mid.0 as usize] = 0,
+            InputState::Running(mid) => self.state[mid.0 as usize] = 1,
+            InputState::Ended(mid) => self.state[mid.0 as usize] = 2,
+            InputState::Errored(mid) => self.state[mid.0 as usize] = 3,
+        }
     }
 
-    pub fn create(name: &str, config: &HistoConfig) -> UResult<ShmBox> {
+    pub fn create(name: &str, config: &HistoConfig, modules: usize) -> UResult<ShmBox> {
         let max_size = config.nx * config.ny * config.max_nt;
         if max_size == 0 {
             Err(anyhow!("Requested histogram size is zero"))?;
@@ -96,7 +104,12 @@ impl ShmInterface {
                  ProtFlags::PROT_WRITE, MapFlags::MAP_SHARED, fd, 0)
                 .context("Mapping shared memory block")?
         };
-        let shmbox = ShmBox { ptr: ptr.cast() };
+        let mut shmbox = ShmBox { ptr: ptr.cast(), max_nt: config.max_nt as u32 };
+        shmbox.state.fill(0);
+        shmbox.modules = modules as u32;
+        shmbox.nx = config.nx as u32;
+        shmbox.ny = config.ny as u32;
+        shmbox.nt = 0;
         Ok(shmbox)
     }
 

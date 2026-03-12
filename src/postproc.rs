@@ -79,8 +79,8 @@ impl PostProcessor {
                 PipeItem::TofParams { .. } => {
                     // TODO self.recipe.set_tof_params(nt, dt, t0);
                 }
-                PipeItem::State(_) => {
-                    // TODO
+                PipeItem::State(state) => {
+                    self.shm.set_state(state);
                 }
             }
             // self.output.send(()).unwrap();
