@@ -10,7 +10,7 @@ use byteorder::{ByteOrder, LE};
 use num_enum::FromPrimitive;
 use zerocopy::{FromBytes, Immutable, IntoBytes, Unaligned};
 use zerocopy::byteorder::little_endian::U16;
-use crate::lprintln;
+use crate::{ldebug, lprintln};
 use crate::config::{MesyConfig, MesyModuleConfig};
 use crate::error::UResult;
 use crate::util::resolve;
@@ -58,7 +58,7 @@ pub enum ModType {
 pub trait MesyCommandHandler: Send + 'static {
     /// Send a command with given ID and data, expecting a return data of given length.
     fn do_command<Din, Dout>(&mut self, cmd: Cmd, data: Din) -> UResult<Dout>
-        where Din: IntoBytes + Immutable + Unaligned, Dout: FromBytes + Debug;
+        where Din: IntoBytes + Immutable + Unaligned + Debug, Dout: FromBytes + Debug;
 
     fn do_noarg_cmd(&mut self, cmd: Cmd) -> UResult<()> {
         self.do_command(cmd, ())
@@ -158,7 +158,7 @@ pub trait MesyCommandHandler: Send + 'static {
 
 impl MesyCommandHandler for () {
     fn do_command<Din, Dout>(&mut self, _cmd: Cmd, _data: Din) -> UResult<Dout>
-        where Din: IntoBytes + Immutable, Dout: FromBytes + Debug
+        where Din: IntoBytes + Immutable + Unaligned + Debug, Dout: FromBytes + Debug
     {
         Ok(Dout::new_zeroed())
     }
@@ -174,14 +174,14 @@ pub struct CommandSocket {
 #[repr(C)]
 #[derive(Debug, Default, FromBytes, IntoBytes, Immutable, Unaligned)]
 struct Header {
+    // does not include the 0xFFFF terminator
+    buf_len: U16,
     buf_type: U16,
     hdr_len: U16,
     serial: U16,
-    // does not include the 0xFFFF terminator
-    buf_len: U16,
     cmd_id: U16,
-    mcpd_id: u8,
     status: u8,
+    mcpd_id: u8,
     ts_1: U16,
     ts_2: U16,
     ts_3: U16,
@@ -198,7 +198,7 @@ struct Packet<Data> {
 
 impl MesyCommandHandler for CommandSocket {
     fn do_command<Din, Dout>(&mut self, cmd: Cmd, data: Din) -> UResult<Dout>
-        where Din: IntoBytes + Immutable + Unaligned, Dout: FromBytes + Debug
+        where Din: IntoBytes + Immutable + Unaligned + Debug, Dout: FromBytes + Debug
     {
         let cmd_id = cmd as u16;
         let serial = self.buf_count;
@@ -222,20 +222,21 @@ impl MesyCommandHandler for CommandSocket {
                                       .fold(0, |sum, chunk| sum ^ LE::read_u16(chunk));
         packet.hdr.checksum.set(chksum);
         packet.trailer.set(0xFFFF);
-        lprintln!(DEBUG, "Mesytec command buffer: {:?}", packet.as_bytes());
+        ldebug!("Mesytec command: {:?}", packet);
+        // ldebug!("Mesytec command buffer: {:?}", packet.as_bytes());
 
         // exchange communication
         self.sock.send(packet.as_bytes())
                  .with_context(|| format!("Sending command {:?} to command socket", cmd))?;
         let nrecv = self.sock.recv(&mut self.buffer)
                              .with_context(|| format!("Receiving reply to command {:?}", cmd))?;
-        lprintln!(DEBUG, "Mesytec command reply: {:?}", &self.buffer[..nrecv]);
+        // ldebug!("Mesytec reply buffer: {:?}", &self.buffer[..nrecv]);
 
         let ret = Packet::<Dout>::read_from_bytes(&self.buffer[..nrecv])
             .map_err(|_| anyhow!("Reply packet has wrong length (expected {}, got {})",
                                  size_of::<Packet<Dout>>(), nrecv))
             .with_context(|| format!("Sending command {:?}", cmd))?;
-        lprintln!(DEBUG, "Mesytec command reply: {:?}", ret);
+        ldebug!("Mesytec reply: {:?}", ret);
 
         // consistency checks
         if ret.hdr.buf_len != nrecv as u16 / 2 - 1 {

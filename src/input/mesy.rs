@@ -115,8 +115,9 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
         }
         // TODO: check packet a bit more
         let nevents = (n - HEADER_LEN) / EVENT_SIZE;
-        let mcpd_id = buffer[10] as u64;
-        let status = buffer[11];
+        let id_status = S::E::read_u16(&buffer[10..12]);
+        let status = id_status & 0xFF;
+        let mcpd_id = id_status as u64 >> 8;
         let pkt_ts = read_48bit::<S::E>(&buffer[12..]);
         if status & 1 != 1 {
             lprintln!(WARN, "Mesy: got event buffer but daq stopped?");
