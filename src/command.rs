@@ -79,7 +79,8 @@ impl CommandHandler {
     fn handle(&mut self, cmd: Command) -> UResult<CommandReply> {
         match cmd {
             Command::Clear => {
-                // TODO implement
+                self.post_send.send(PipeItem::Clear)
+                              .expect("postprocessor command receiver died");
                 Ok(CommandReply::Ok)
             }
             Command::SetTofParams { nt, dt, t0 } => {
@@ -88,6 +89,10 @@ impl CommandHandler {
                 Ok(CommandReply::Ok)
             }
             Command::Start { .. } | Command::Stop | Command::SetRawDump { .. } => {
+                if matches!(cmd, Command::Start { .. }) {
+                    self.post_send.send(PipeItem::StartOfRun("".into()))
+                                  .expect("postprocessor command receiver died");
+                }
                 for mod_send in self.mod_send.values() {
                     mod_send.send(cmd.clone()).expect("module command receiver died");
                 }

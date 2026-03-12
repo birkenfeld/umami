@@ -15,6 +15,8 @@ const EV_CHANNEL_SIZE: usize = 64; // TODO tune
 
 pub enum PipeItem {
     Events(Vec<Event>),
+    Clear,
+    StartOfRun(String),
     EndOfRun,
     State(InputState),
     TofParams { nt: usize, dt: f64, t0: f64 },

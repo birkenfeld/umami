@@ -16,6 +16,10 @@ impl Histogram {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.data.fill(0);
+    }
+
     pub fn add(&mut self, x: usize, y: usize) {
         if x < self.nx && y < self.ny {
             self.data[y * self.nx + x] += 1;

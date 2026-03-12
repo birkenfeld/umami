@@ -21,8 +21,8 @@ impl Recipe for MesyTest {
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
         for event in &mut events {
             match event.data {
-                EventData::RawDigital { value1, .. } => {
-                    event.data = EventData::Neutron { x: event.input.0, y: value1, t: 0 };
+                EventData::RawDigital { value1: y, value2: x, .. } => {
+                    event.data = EventData::Neutron { x, y, t: 0 };
                 }
                 EventData::RawEdge { .. } => {
                     event.data = EventData::Tzero;

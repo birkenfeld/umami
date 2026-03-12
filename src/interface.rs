@@ -58,7 +58,7 @@ impl UdsInterface {
         let addr = uds::UnixSocketAddr::from_abstract(name.as_bytes())
             .context("Creating abstract socket address")?;
         let sock = net::UnixDatagram::bind_unix_addr(&addr)
-            .context("Binding socket listener")?;
+            .with_context(|| format!("Binding command listener to {}", addr))?;
         Ok(Self { sock, req_write, rep_read })
     }
 

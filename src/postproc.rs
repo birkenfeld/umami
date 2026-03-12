@@ -3,7 +3,7 @@
 
 use anyhow::Context;
 use shmem_bind::ShmemBox;
-use crate::{ltrace};
+use crate::{lprintln, ltrace};
 use crate::channel::{Sender, Receiver};
 use crate::config::HistoConfig;
 use crate::error::{UResult};
@@ -49,6 +49,13 @@ impl PostProcessor {
 
         while let Ok(item) = self.input.recv() {
             match item {
+                PipeItem::Clear => {
+                    lprintln!(INFO, "Clearing histogram");
+                    self.histo.clear();
+                }
+                PipeItem::StartOfRun(run_id) => {
+                    lprintln!(INFO, "Starting run {}", run_id);
+                }
                 PipeItem::EndOfRun => {
                     let stop = jiff::Timestamp::now();
                     println!("Final count: {} events in {} secs, {} out of order", i, stop - start, ooo);
