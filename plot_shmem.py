@@ -1,8 +1,8 @@
 import mmap
-import time
 import cffi
 import numpy as np
-import matplotlib.pyplot as plt
+import pyqtgraph as pg
+from pyqtgraph.Qt import QtCore, QtWidgets
 
 ffi = cffi.FFI()
 ffi.cdef("""
@@ -19,7 +19,6 @@ if fd < 0:
     raise RuntimeError('Could not open shared memory')
 mapp = mmap.mmap(fd, off_size)
 header_values = np.frombuffer(mapp, '<u4')
-
 nmod = header_values[32]
 nx = header_values[33]
 ny = header_values[34]
@@ -28,17 +27,26 @@ mapp.close()
 
 mapp = mmap.mmap(fd, off_size + nx*ny*4, prot=mmap.PROT_READ)
 
-fig = plt.figure(f'UMAMI histogram, {nmod} modules')
-plt.ion()
-plt.show()
-
-buf = np.frombuffer(mapp, '<u4', nx*ny, off_size).reshape((ny, nx))
-axes_img = plt.imshow(buf, aspect='auto', origin='lower')
-
-while True:
-    time.sleep(0.25)
+def update_buffer():
     buf = np.frombuffer(mapp, '<u4', nx*ny, off_size).reshape((ny, nx))
-    fig.gca().set_title(f'Total events: {buf.sum()}')
-    axes_img.set_data(buf)
-    axes_img.set_clim(0, buf.max())
-    fig.canvas.flush_events()
+    img.setImage(buf)
+    plot.setTitle(f'{buf.sum()} total counts')
+
+pg.setConfigOption('background', 'w')
+pg.setConfigOption('foreground', 'k')
+app = QtWidgets.QApplication([])
+window = pg.GraphicsLayoutWidget()
+window.setWindowTitle(f'UMAMI histogram, {nmod} modules')
+plot = window.addPlot()
+
+img = pg.ImageItem(border='w')
+plot.addItem(img)
+img.setColorMap(pg.colormap.get('viridis'))
+plot.enableAutoRange('xy', True)
+window.show()
+
+timer = QtCore.QTimer()
+timer.timeout.connect(update_buffer)
+timer.start(250)
+
+app.exec()
