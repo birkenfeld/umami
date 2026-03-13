@@ -49,6 +49,7 @@ impl PostProcessor {
                 }
                 PipeItem::StartOfRun(run_id) => {
                     lprintln!(INFO, "Starting run {}", run_id);
+                    self.shm.set_run_id(&run_id);
                 }
                 PipeItem::EndOfRun => {
                     let stop = jiff::Timestamp::now();

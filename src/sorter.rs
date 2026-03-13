@@ -9,14 +9,14 @@ use crate::event::Event;
 use crate::pipeline::PipeItem;
 
 pub struct Sorter {
-    pub rcv1: Receiver<PipeItem>,
-    pub rcv2: Receiver<PipeItem>,
+    pub recv1: Receiver<PipeItem>,
+    pub recv2: Receiver<PipeItem>,
     pub send: Sender<PipeItem>,
 }
 
 impl Sorter {
-    pub fn new(rcv1: Receiver<PipeItem>, rcv2: Receiver<PipeItem>, send: Sender<PipeItem>) -> Self {
-        Sorter { rcv1, rcv2, send }
+    pub fn new(recv1: Receiver<PipeItem>, recv2: Receiver<PipeItem>, send: Sender<PipeItem>) -> Self {
+        Sorter { recv1, recv2, send }
     }
 
     pub fn start(self) -> UResult<()> {
@@ -27,31 +27,33 @@ impl Sorter {
         Ok(())
     }
 
-    fn refill_buffer(rcv_a: &Receiver<PipeItem>,
-                     rcv_b: &Receiver<PipeItem>,
-                     snd: &Sender<PipeItem>,
-                     buf_b: &mut Vec<Event>) -> Option<Vec<Event>> {
-        match rcv_a.recv() {
+    fn refill_buffer(
+        &self,
+        fill_recv: &Receiver<PipeItem>,
+        other_recv: &Receiver<PipeItem>,
+        other_buf: &mut Vec<Event>,
+    ) -> Option<Vec<Event>> {
+        match fill_recv.recv() {
             Ok(PipeItem::EndOfRun) => {
-                snd.send(PipeItem::Events(std::mem::take(buf_b))).unwrap();
+                self.send.send(PipeItem::Events(std::mem::take(other_buf))).ok()?;
                 ltrace!("Sorter received end from one channel");
-                while let Ok(item_b) = rcv_b.recv() {
+                while let Ok(item_b) = other_recv.recv() {
                     match item_b {
                         PipeItem::EndOfRun => {
                             ltrace!("Sorter received end from other channel");
                             // send on one of the end events
-                            snd.send(PipeItem::EndOfRun).unwrap();
+                            self.send.send(PipeItem::EndOfRun).ok()?;
                             return Some(vec![]);
                         }
-                        _ => snd.send(item_b).unwrap(),
+                        _ => self.send.send(item_b).ok()?,
                     }
                 }
                 None  // input channel closed
             }
             Ok(PipeItem::Events(evs_a)) => Some(evs_a),
             Ok(item) => {
-                snd.send(item).unwrap();
-                Self::refill_buffer(rcv_a, rcv_b, snd, buf_b)  // try again
+                self.send.send(item).ok()?;
+                self.refill_buffer(fill_recv, other_recv, other_buf)  // try again
             }
             Err(_) => None,
         }
@@ -64,13 +66,13 @@ impl Sorter {
 
         loop {
             if buffer1.is_empty() {
-                match Self::refill_buffer(&self.rcv1, &self.rcv2, &self.send, &mut buffer2) {
+                match self.refill_buffer(&self.recv1, &self.recv2, &mut buffer2) {
                     Some(evs) => buffer1 = evs,
                     None => return,
                 }
             }
             if buffer2.is_empty() {
-                match Self::refill_buffer(&self.rcv2, &self.rcv1, &self.send, &mut buffer1) {
+                match self.refill_buffer(&self.recv2, &self.recv1, &mut buffer1) {
                     Some(evs) => buffer2 = evs,
                     None => return,
                 }
@@ -106,7 +108,9 @@ impl Sorter {
             //              batch[0].time, ts);
             // }
             // ts = batch.last().unwrap().time;
-            self.send.send(PipeItem::Events(batch)).unwrap();
+            if self.send.send(PipeItem::Events(batch)).is_err() {
+                return;
+            }
         }
     }
 }

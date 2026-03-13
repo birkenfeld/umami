@@ -67,6 +67,7 @@ impl ShmBox {
 // the SHM does not create undefined behavior.
 #[derive(zerocopy::FromBytes)]
 pub struct ShmInterface {
+    pub run_id: [u8; 128],
     pub state: [u8; MAX_MODULES],
     pub modules: u32,
     pub nx: u32,
@@ -82,6 +83,13 @@ impl ShmInterface {
             InputState::Ended(mid) => self.state[mid.0 as usize] = 2,
             InputState::Errored(mid) => self.state[mid.0 as usize] = 3,
         }
+    }
+
+    pub fn set_run_id(&mut self, run_id: &str) {
+        let bytes = run_id.as_bytes();
+        let len = bytes.len().min(self.run_id.len() - 1);
+        self.run_id[..len].copy_from_slice(&bytes[..len]);
+        self.run_id[len..128].fill(0);
     }
 
     pub fn create(name: &str, config: &HistoConfig, modules: usize) -> UResult<ShmBox> {
@@ -105,6 +113,7 @@ impl ShmInterface {
                 .context("Mapping shared memory block")?
         };
         let mut shmbox = ShmBox { ptr: ptr.cast(), max_nt: config.max_nt as u32 };
+        shmbox.run_id.fill(0);
         shmbox.state.fill(0);
         shmbox.modules = modules as u32;
         shmbox.nx = config.nx as u32;
