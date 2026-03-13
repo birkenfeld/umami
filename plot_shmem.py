@@ -1,3 +1,4 @@
+import os
 import mmap
 import cffi
 import time
@@ -9,18 +10,17 @@ ffi = cffi.FFI()
 ffi.cdef("""
 int shm_open(const char *name, int flags, unsigned int mode);
 int shm_unlink(const char *name);
-#define O_RDWR  0002
 """)
 
 off_size = 128 + 128 + 4*4
 
 lib = ffi.dlopen('rt')
-fd = lib.shm_open(b"umami", lib.O_RDWR, 0o666)
+fd = lib.shm_open(b"umami", os.O_RDONLY, 0o666)
 if fd < 0:
     raise RuntimeError('Could not open shared memory')
-mapp = mmap.mmap(fd, off_size)
+mapp = mmap.mmap(fd, off_size, prot=mmap.PROT_READ)
 header_values = np.frombuffer(mapp, '<u4')
-nmod = header_values[64]
+nmod = header_values[64] >> 16
 nx = header_values[65]
 ny = header_values[66]
 del header_values
@@ -34,10 +34,11 @@ def update_buffer():
     # run id is encoded as a c string in the first 128 bytes
     run_id = np.frombuffer(mapp, 'S128', 1)[0].decode('ascii').rstrip('\x00')
     buf = np.frombuffer(mapp, '<u4', nx*ny, off_size).reshape((ny, nx))
-    img.setImage(buf)
+    lbuf = np.log10(buf.astype(float) + 0.1)
+    img.setImage(lbuf)
     total = buf.sum()
     now = time.monotonic()
-    if prev:
+    if prev and total >= prev['total']:
         rate = (total - prev['total']) / (now - prev['time'])
         plot.setTitle(f'Run {run_id}: {total} total counts ({rate:.1f}/sec)')
     prev['total'] = total
@@ -52,7 +53,7 @@ window.setWindowTitle(f'UMAMI histogram, {nmod} modules')
 plot = window.addPlot()
 plot.setTitle('starting...')
 
-img = pg.ImageItem(border='w')
+img = pg.ImageItem(border='w', axisOrder='row-major')
 plot.addItem(img)
 img.setColorMap(pg.colormap.get('viridis'))
 plot.enableAutoRange('xy', True)
