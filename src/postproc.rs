@@ -43,7 +43,7 @@ impl PostProcessor {
     }
 
     pub fn main(mut self) {
-        let mut start = Instant::now();
+        let mut started = None;
         let mut debug_at = 0;
         let mut last_ts = EventTime::zero();
         let mut ev_count: usize = 0;
@@ -64,11 +64,14 @@ impl PostProcessor {
                     ev_count = 0;
                     out_of_order = 0;
                     debug_at = 0;
-                    start = Instant::now();
+                    started = Some(Instant::now());
                 }
                 PipeItem::EndOfRun => {
-                    lprintln!(INFO, "Run finished: {} events in {:.3} s, {} out of order",
-                              ev_count, start.elapsed().as_secs_f32(), out_of_order);
+                    if let Some(ts) = started {
+                        lprintln!(INFO, "Run finished: {} events in {:.3} s, {} out of order",
+                                  ev_count, ts.elapsed().as_secs_f32(), out_of_order);
+                        started = None;
+                    }
                 }
                 PipeItem::Events(evs) => {
                     ev_count += evs.len();

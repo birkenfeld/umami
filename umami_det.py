@@ -101,15 +101,17 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         self.init_fd_log('umami')
         self._proc = subprocess.Popen(
             [self.umami, self.config],
+            cwd=os.path.dirname(self.config),
             close_fds=True,
             stderr=self.get_log_fd(),
         )
         while not (self._init[0] and
-                   all(st == STATE_INIT for st in self._state[:self._nmod])):
+                   all(st >= STATE_INIT for st in self._state[:self._nmod])):
             if not (self._proc and self._proc.poll() is None):
                 raise HardwareFailure('UMAMI process failed to start')
             time.sleep(0.1)
         self._cmdsock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self._cmdsock.settimeout(2)
         self._cmdsock.bind('\0tango-umami-cmd-' + self._worker_name)
         self._cmdsock.connect('\0' + shm_name)
         self._send_cmd('set_raw_dump', enable=True, path=self.rawdatadir)
@@ -119,6 +121,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
             self._cmdsock.close()
         if self._proc and self._proc.poll() is None:
             self._proc.kill()
+        self.delete_fd_log()
         if self._shm:
             self._state = self._init = self._data = None
             self._shm.close()
