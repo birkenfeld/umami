@@ -83,7 +83,6 @@ impl PostProcessor {
                     self.shm.set_state(state);
                 }
             }
-            // self.output.send(()).unwrap();
         }
     }
 }

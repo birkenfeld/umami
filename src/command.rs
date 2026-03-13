@@ -89,8 +89,8 @@ impl CommandHandler {
                 Ok(CommandReply::Ok)
             }
             Command::Start { .. } | Command::Stop | Command::SetRawDump { .. } => {
-                if matches!(cmd, Command::Start { .. }) {
-                    self.post_send.send(PipeItem::StartOfRun("".into()))
+                if let Command::Start { run_id } = &cmd {
+                    self.post_send.send(PipeItem::StartOfRun(run_id.into()))
                                   .expect("postprocessor command receiver died");
                 }
                 for mod_send in self.mod_send.values() {

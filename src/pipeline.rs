@@ -13,7 +13,7 @@ use crate::interface::UdsInterface;
 use crate::shm::{ShmInterface, MAX_MODULES};
 use crate::util::wait_for_signal;
 
-const EV_CHANNEL_SIZE: usize = 64; // TODO tune
+const EV_CHANNEL_SIZE: usize = 128; // TODO tune more
 
 pub enum PipeItem {
     Events(Vec<Event>),
