@@ -2,6 +2,7 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use anyhow::Context;
+use std::time::Instant;
 use crate::{lprintln, ltrace};
 use crate::channel::{Receiver, Sender};
 use crate::command::CommandReply;
@@ -42,11 +43,11 @@ impl PostProcessor {
     }
 
     pub fn main(mut self) {
-        let mut limit = 0;
+        let mut start = Instant::now();
+        let mut debug_at = 0;
         let mut last_ts = EventTime::zero();
         let mut ev_count: usize = 0;
         let mut out_of_order = 0;
-        let start = jiff::Timestamp::now();
 
         self.shm.set_initialized();
 
@@ -62,20 +63,20 @@ impl PostProcessor {
                     last_ts = EventTime::zero();
                     ev_count = 0;
                     out_of_order = 0;
-                    limit = 0;
+                    debug_at = 0;
+                    start = Instant::now();
                 }
                 PipeItem::EndOfRun => {
-                    let stop = jiff::Timestamp::now();
-                    println!("Final count: {} events in {} secs, {} out of order",
-                             ev_count, stop - start, out_of_order);
+                    lprintln!(INFO, "Run finished: {} events in {:.3} s, {} out of order",
+                              ev_count, start.elapsed().as_secs_f32(), out_of_order);
                 }
                 PipeItem::Events(evs) => {
                     ev_count += evs.len();
                     let evs = self.recipe.process(evs);
                     ltrace!("Postprocessed events: {:?}", evs);
-                    if ev_count > limit {
-                        println!("Received {} events", ev_count);
-                        limit += 1000000;
+                    if ev_count > debug_at {
+                        lprintln!(DEBUG, "Received {} events", ev_count);
+                        debug_at += 1000000;
                     }
                     for ev in &evs {
                         let ev_ts = ev.time;
