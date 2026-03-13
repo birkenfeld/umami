@@ -82,6 +82,19 @@ pub trait Input: Send {
         let mid = common.module;
         let reply = match cmd {
             Command::Start { run_id } => {
+                if common.running {
+                    if let Err(e) = self.stop() {
+                        common.needs_reset = true;
+                        common.update_state(InputState::Errored(mid));
+                        common.command_reply.send(CommandReply::new_error(
+                            Some(mid), format!("Failed to stop input for restart: {}", e)
+                        )).expect("command channel closed");
+                        return;
+                    } else {
+                        common.running = false;
+                    }
+                }
+
                 if let Err(e) = self.start(run_id) {
                     common.needs_reset = true;
                     common.update_state(InputState::Errored(mid));

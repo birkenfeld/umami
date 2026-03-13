@@ -21,6 +21,7 @@ const BEG_MARKER: &[u8] = b"\x00\x00\x55\x55\xaa\xaa\xff\xff";
 const PKT_MARKER: &[u8] = b"\x00\x00\xff\xff\x55\x55\xaa\xaa";
 const END_MARKER: &[u8] = b"\xff\xff\xaa\xaa\x55\x55\x00\x00";
 const FILE_START: &[u8] = b"mesytec ";
+const FULL_HEADER: &[u8] = b"mesytec psd listmode data\nheader length: 2 lines \n";
 
 pub struct MesyInput<S, C> {
     source: S,
@@ -77,7 +78,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
 
     fn start(&mut self, run_id: String) -> UResult<()> {
         self.dump.start(self.module, &run_id)?;
-        self.dump.write(b"mesytec psd listmode data\nheader length: 2 lines \n")?;
+        self.dump.write(FULL_HEADER)?;
         self.dump.write(BEG_MARKER)?;
         self.source.reset()?;
         if self.is_master {
@@ -87,10 +88,10 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
     }
 
     fn stop(&mut self) -> UResult<()> {
-        self.command_handler.stop()?;
         self.dump.write(END_MARKER)?;
+        self.dump.stop();
         if self.is_master {
-            self.dump.stop();
+            self.command_handler.stop()?;
         }
         Ok(())
     }
