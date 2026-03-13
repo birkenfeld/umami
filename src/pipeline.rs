@@ -40,7 +40,6 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
 
     lprintln!(INFO, "IPC interfaces are available under the name {:?}", config.ipc_name);
 
-    let (cmd_reply_send, cmd_reply_recv) = channel::bounded(n_modules + 1);
     let (postproc_send, postproc_recv) = channel::bounded(EV_CHANNEL_SIZE);
 
     let mut init_errors = false;
@@ -61,12 +60,11 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         let (command_send, command_recv) = channel::bounded(1);
         let common = InputCommon {
             needs_reset: false,
-            running: immediate_start,
+            running: false,
             module: mid,
             events: event_send,
             state: postproc_send.clone(),
             command: command_recv,
-            command_reply: cmd_reply_send.clone(),
             recipe: recipe::from_config(&config.recipes, &module_config.recipe)?,
         };
         command_sends.insert(mid, command_send);
@@ -76,7 +74,6 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
             init_errors = true;
         }
     }
-    drop(cmd_reply_send);  // leftover sender
     if init_errors {
         Err(anyhow!("Some modules failed to initialize"))?;
     }
@@ -96,13 +93,16 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     }
 
     // create command handler
-    command::CommandHandler::start(
+    let mut handler = command::CommandHandler::new(
         if_cmd_recv,
         command_sends,
-        cmd_reply_recv,
         if_reply_send,
         postproc_send.clone(),
-    )?;
+    );
+
+    if immediate_start {
+        handler.handle(command::Command::Start { run_id: "auto".to_string() })?;
+    }
 
     let postproc = postproc::PostProcessor::new(
         recipe::from_config(&config.recipes, &config.postprocess.recipe)?,
@@ -112,6 +112,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
 
     uds.start()?;
     postproc.start()?;
+    handler.start()?;
 
     wait_for_signal().context("Setting signal handler")?;
 

@@ -43,31 +43,32 @@ impl CommandReply {
 
 
 pub struct CommandHandler {
-    if_rcv: Receiver<Command>,
-    mod_send: BTreeMap<ModuleId, Sender<Command>>,
-    mod_rcv: Receiver<CommandReply>,
+    if_recv: Receiver<Command>,
+    mod_send: BTreeMap<ModuleId, Sender<(Command, Sender<CommandReply>)>>,
     post_send: Sender<PipeItem>,
     if_send: Sender<CommandReply>,
 }
 
 impl CommandHandler {
-    pub fn start(
-        if_rcv: Receiver<Command>,
-        mod_send: BTreeMap<ModuleId, Sender<Command>>,
-        mod_rcv: Receiver<CommandReply>,
+    pub fn new(
+        if_recv: Receiver<Command>,
+        mod_send: BTreeMap<ModuleId, Sender<(Command, Sender<CommandReply>)>>,
         if_send: Sender<CommandReply>,
         post_send: Sender<PipeItem>,
-    ) -> anyhow::Result<()> {
-        let mut handler = CommandHandler { if_rcv, mod_send, mod_rcv, if_send, post_send };
+    ) -> Self {
+        Self { if_recv, mod_send, if_send, post_send }
+    }
+
+    pub fn start(mut self) -> anyhow::Result<()> {
         std::thread::Builder::new()
             .name("Command handler".into())
-            .spawn(move || handler.main())
+            .spawn(move || self.main())
             .context("Spawning command handler thread")?;
         Ok(())
     }
 
     fn main(&mut self) {
-        while let Ok(cmd) = self.if_rcv.recv() {
+        while let Ok(cmd) = self.if_recv.recv() {
             let reply = match self.handle(cmd) {
                 Ok(reply) => reply,
                 Err(e) => CommandReply::new_error(None, format!("Failed to handle command: {}", e)),
@@ -76,8 +77,10 @@ impl CommandHandler {
         }
     }
 
-    fn handle(&mut self, cmd: Command) -> UResult<CommandReply> {
-        match cmd {
+    pub fn handle(&mut self, cmd: Command) -> UResult<CommandReply> {
+        let (rep_send, rep_recv) = crate::channel::bounded(self.mod_send.len());
+        let cmd_and_chan = (cmd, rep_send);
+        match cmd_and_chan.0 {
             Command::Clear => {
                 self.post_send.send(PipeItem::Clear)
                               .expect("postprocessor command receiver died");
@@ -89,15 +92,15 @@ impl CommandHandler {
                 Ok(CommandReply::Ok)
             }
             Command::Start { .. } | Command::Stop | Command::SetRawDump { .. } => {
-                if let Command::Start { run_id } = &cmd {
+                if let Command::Start { run_id } = &cmd_and_chan.0 {
                     self.post_send.send(PipeItem::StartOfRun(run_id.into()))
                                   .expect("postprocessor command receiver died");
                 }
                 for mod_send in self.mod_send.values() {
-                    mod_send.send(cmd.clone()).expect("module command receiver died");
+                    mod_send.send(cmd_and_chan.clone()).expect("module command receiver died");
                 }
                 let replies = (0..self.mod_send.len()).map(
-                    |_| self.mod_rcv.recv().expect("module command sender died")
+                    |_| rep_recv.recv().expect("module command sender died")
                 ).collect_vec();
                 if let Some(err) = replies.into_iter().find(|r| r.is_error()) {
                     return Ok(err);
@@ -106,8 +109,8 @@ impl CommandHandler {
             }
             Command::Config { module, .. } | Command::GetConfig { module, .. } => {
                 if let Some(mod_send) = self.mod_send.get(&module) {
-                    mod_send.send(cmd).expect("module command receiver died");
-                    let reply = self.mod_rcv.recv().expect("module command sender died");
+                    mod_send.send(cmd_and_chan).expect("module command receiver died");
+                    let reply = rep_recv.recv().expect("module command sender died");
                     Ok(reply)
                 } else {
                     Ok(CommandReply::new_error(

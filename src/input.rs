@@ -36,8 +36,7 @@ pub struct InputCommon {
     pub module: ModuleId,
     pub state: Sender<PipeItem>,
     pub events: Sender<PipeItem>,
-    pub command: Receiver<Command>,
-    pub command_reply: Sender<CommandReply>,
+    pub command: Receiver<(Command, Sender<CommandReply>)>,
     pub recipe: Box<dyn Recipe>,
 }
 
@@ -78,7 +77,7 @@ pub trait Input: Send {
         Ok(())
     }
 
-    fn main_loop_command(&mut self, cmd: Command, common: &mut InputCommon) {
+    fn main_loop_command(&mut self, cmd: Command, rep: Sender<CommandReply>, common: &mut InputCommon) {
         let mid = common.module;
         let reply = match cmd {
             Command::Start { run_id } => {
@@ -86,7 +85,7 @@ pub trait Input: Send {
                     if let Err(e) = self.stop() {
                         common.needs_reset = true;
                         common.update_state(InputState::Errored(mid));
-                        common.command_reply.send(CommandReply::new_error(
+                        rep.send(CommandReply::new_error(
                             Some(mid), format!("Failed to stop input for restart: {}", e)
                         )).expect("command channel closed");
                         return;
@@ -128,7 +127,7 @@ pub trait Input: Send {
                                                   format!("Failed to handle command: {}", e)),
             }
         };
-        common.command_reply.send(reply).expect("command channel closed");
+        rep.send(reply).expect("command channel closed");
     }
 
     fn main_loop(mut self, mut common: InputCommon)
@@ -140,7 +139,7 @@ pub trait Input: Send {
         loop {
             match common.command.try_recv() {
                 Err(TryRecvError::Empty) => (),
-                Ok(cmd) => self.main_loop_command(cmd, &mut common),
+                Ok((cmd, rep)) => self.main_loop_command(cmd, rep, &mut common),
                 Err(e) => {
                     lprintln!(ERROR, "Cannot read command for {}: {}, exiting input", desc, e);
                     return;
@@ -175,7 +174,7 @@ pub trait Input: Send {
 
             // no events can be collected; wait for commands
             match common.command.recv() {
-                Ok(cmd) => self.main_loop_command(cmd, &mut common),
+                Ok((cmd, rep)) => self.main_loop_command(cmd, rep, &mut common),
                 Err(e) => {
                     lprintln!(ERROR, "Cannot read command for {}: {}, exiting input", desc, e);
                     return;
