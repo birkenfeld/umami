@@ -13,12 +13,10 @@ anyhow = "1.0.102"
 bitflag-attr = "0.13.0"
 byteorder = "1.5.0"
 clap = { version = "4.5.60", features = ["derive"] }
-crossbeam-channel = "0.5.15"
 flume = { version = "0.12.0", default-features = false }
 itertools = "0.14.0"
 jemallocator = "0.5.4"
 jiff = "0.2.21"
-kanal = { version = "0.1.1", default-features = false }
 nix = { version = "0.31.2", features = ["fs", "mman"] }
 num_enum = "0.7.5"
 rkyv = "0.8.15"

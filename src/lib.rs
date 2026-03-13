@@ -14,7 +14,7 @@ mod shm;
 mod sorter;
 mod util;
 
-use kanal as channel;
+use flume as channel;
 
 use anyhow::anyhow;
 use std::sync::atomic::{AtomicBool, Ordering};

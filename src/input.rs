@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use anyhow::Context;
 use crate::{lprintln, ltrace};
-use crate::channel::{Sender, Receiver};
+use crate::channel::{Sender, Receiver, TryRecvError};
 use crate::command::{Command, CommandReply};
 use crate::config::SpecificModuleConfig;
 use crate::error::{UError, UResult};
@@ -126,8 +126,8 @@ pub trait Input: Send {
 
         loop {
             match common.command.try_recv() {
-                Ok(None) => (),
-                Ok(Some(cmd)) => self.main_loop_command(cmd, &mut common),
+                Err(TryRecvError::Empty) => (),
+                Ok(cmd) => self.main_loop_command(cmd, &mut common),
                 Err(e) => {
                     lprintln!(ERROR, "Cannot read command for {}: {}, exiting input", desc, e);
                     return;
