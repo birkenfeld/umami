@@ -69,9 +69,8 @@ impl<S: Source> Input for GeInput<S> {
     }
 
     fn handle(&mut self, cmd: Command) -> UResult<CommandReply> {
-        match cmd {
-            Command::SetRawDump { enable, path } => self.dump.configure(enable, path)?,
-            _ => ()
+        if let Command::SetRawDump { enable, path } = cmd {
+            self.dump.configure(enable, path)?;
         }
         Ok(CommandReply::Ok)
     }

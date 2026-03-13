@@ -26,9 +26,10 @@ pub fn wait_for_signal() -> io::Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(untagged)]
 pub enum FalseOr<T> {
+    #[default]
     #[serde(deserialize_with = "deserialize_false")]
     False,
     Value(T),
@@ -37,12 +38,6 @@ pub enum FalseOr<T> {
 impl<T> FalseOr<T> {
     pub fn is_false(&self) -> bool {
         matches!(self, FalseOr::False)
-    }
-}
-
-impl<T> Default for FalseOr<T> {
-    fn default() -> Self {
-        FalseOr::False
     }
 }
 
