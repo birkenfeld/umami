@@ -76,7 +76,7 @@ pub struct ShmInterface {
 }
 
 impl ShmInterface {
-    pub fn set_state(&mut self, state: crate::input::InputState) {
+    pub fn set_state(&mut self, state: &InputState) {
         match state {
             InputState::Stopped(mid) => self.state[mid.0 as usize] = 0,
             InputState::Running(mid) => self.state[mid.0 as usize] = 1,

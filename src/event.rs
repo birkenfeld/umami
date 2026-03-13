@@ -32,8 +32,17 @@ impl EventTime {
         Self(sec as i64 * 1_000_000_000 + nsec as i64)
     }
 
+    pub const fn from_floating_sec(sec: f64) -> Self {
+        Self((sec * 1_000_000_000.0) as i64)
+    }
+
     pub fn from_clock<T>(freq: i64, ticks: T) -> Self where i64: From<T> {
         Self(i64::from(ticks) * 1_000_000_000 / freq)
+    }
+
+    pub fn time_bin(&self, dt: Self, t0: Self) -> u32 {
+        // TODO: over-underflow?
+        (self.0.saturating_sub(t0.0) / dt.0) as u32
     }
 }
 

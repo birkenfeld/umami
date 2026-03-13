@@ -8,7 +8,7 @@ use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use crate::channel::{Sender, Receiver};
 use crate::error::UResult;
-use crate::event::ModuleId;
+use crate::event::{EventTime, ModuleId};
 use crate::pipeline::PipeItem;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -18,7 +18,7 @@ pub enum Command {
     Start { run_id: String },
     Stop,
     SetRawDump { enable: bool, path: String },
-    SetTofParams { nt: usize, dt: u64, t0: u64 },
+    SetTofParams { nt: usize, tbin: f64, tdelay: f64 },
     Config { module: ModuleId, name: String, value: Value },
     GetConfig { module: ModuleId, name: String },
 }
@@ -86,9 +86,12 @@ impl CommandHandler {
                               .expect("postprocessor command receiver died");
                 Ok(CommandReply::Ok)
             }
-            Command::SetTofParams { nt, dt, t0 } => {
-                self.post_send.send(PipeItem::TofParams { nt, dt, t0 })
-                              .expect("postprocessor command receiver died");
+            Command::SetTofParams { nt, tbin, tdelay } => {
+                self.post_send.send(PipeItem::TofParams {
+                    nt,
+                    dt: EventTime::from_floating_sec(tbin),
+                    t0: EventTime::from_floating_sec(tdelay),
+                }).expect("postprocessor command receiver died");
                 Ok(CommandReply::Ok)
             }
             Command::Start { .. } | Command::Stop | Command::SetRawDump { .. } => {

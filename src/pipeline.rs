@@ -7,7 +7,7 @@ use crate::{channel, lprintln, ldebug};
 use crate::{command, input, postproc, recipe, sorter};
 use crate::config::Config;
 use crate::error::UResult;
-use crate::event::{Event, ModuleId};
+use crate::event::{Event, EventTime, ModuleId};
 use crate::input::{InputCommon, InputState};
 use crate::interface::UdsInterface;
 use crate::shm::{ShmInterface, MAX_MODULES};
@@ -21,7 +21,7 @@ pub enum PipeItem {
     StartOfRun(String),
     EndOfRun,
     State(InputState),
-    TofParams { nt: usize, dt: u64, t0: u64 },
+    TofParams { nt: usize, dt: EventTime, t0: EventTime },
 }
 
 pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
@@ -104,11 +104,21 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         handler.handle(command::Command::Start { run_id: "auto".to_string() })?;
     }
 
+    let (output_send, output_recv) = channel::bounded(EV_CHANNEL_SIZE);
+
     let postproc = postproc::PostProcessor::new(
         recipe::from_config(&config.recipes, &config.postprocess.recipe)?,
         postproc_recv,
+        output_send,
         shm_area,
+        &config.histogram,
     );
+
+    // TODO: for now, just absorb everything
+    std::thread::Builder::new()
+        .name("Output thread".into())
+        .spawn(move || while let Ok(_) = output_recv.recv() {})
+        .context("Spawning output thread")?;
 
     uds.start()?;
     postproc.start()?;
