@@ -5,9 +5,10 @@ use std::collections::BTreeMap;
 use anyhow::{anyhow, Context};
 use crate::{channel, lprintln, ldebug};
 use crate::{command, input, postproc, recipe, sorter};
+use crate::command::CommandReply;
 use crate::config::Config;
 use crate::error::UResult;
-use crate::event::{Event, EventTime, ModuleId};
+use crate::event::{Event, ModuleId};
 use crate::input::{InputCommon, InputState};
 use crate::interface::UdsInterface;
 use crate::shm::{ShmInterface, MAX_MODULES};
@@ -21,7 +22,7 @@ pub enum PipeItem {
     StartOfRun(String),
     EndOfRun,
     State(ModuleId, InputState),
-    TofParams { nt: usize, dt: EventTime, t0: EventTime },
+    Params(toml::Table, channel::Sender<CommandReply>),
 }
 
 pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
@@ -111,13 +112,12 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         postproc_recv,
         output_send,
         shm_area,
-        &config.histogram,
     );
 
     // TODO: for now, just absorb everything
     std::thread::Builder::new()
-        .name("Output thread".into())
-        .spawn(move || while let Ok(_) = output_recv.recv() {})
+        .name("Output".into())
+        .spawn(move || while output_recv.recv().is_ok() {})
         .context("Spawning output thread")?;
 
     handler.start()?;

@@ -34,7 +34,7 @@ enum Cmd {
     /// Disable raw dump files.
     NoRaw,
     /// Set TOF parameters for histogramming.
-    Tof { nt: usize, tbin: f64, tdelay: f64 },
+    Params { params: serde_json::value::Map<String, serde_json::value::Value> },
 }
 
 fn inner_main(args: Options) -> anyhow::Result<()> {
@@ -55,7 +55,7 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
         Cmd::Clear => Command::Clear,
         Cmd::Raw { path } => Command::SetRawDump { enable: true, path },
         Cmd::NoRaw => Command::SetRawDump { enable: false, path: String::new() },
-        Cmd::Tof { nt, tbin, tdelay } => Command::SetTofParams { nt, tbin, tdelay },
+        Cmd::Params { params } => Command::SetParams { params: toml::Table::try_from(params)? },
     };
 
     let cmd_json = serde_json::to_string(&cmd).context("Serializing command to JSON")?;

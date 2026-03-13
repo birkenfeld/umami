@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use serde::Deserialize;
 use crate::config::RecipeConfig;
+use crate::error::UResult;
 use crate::event::{Event, EventData};
 use super::Recipe;
 
@@ -12,10 +13,12 @@ pub struct MesyTest {
 }
 
 impl Recipe for MesyTest {
-    type Config = ();
+    fn from_config(_: toml::Table, _: &BTreeMap<String, RecipeConfig>) -> UResult<Self> {
+        Ok(Self {})
+    }
 
-    fn from_config(_config: Self::Config, _: &BTreeMap<String, RecipeConfig>) -> Self {
-        Self {}
+    fn update_config(&mut self, _: toml::Table) -> UResult<()> {
+        Ok(())
     }
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {

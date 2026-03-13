@@ -8,7 +8,7 @@ use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use crate::channel::{Sender, Receiver};
 use crate::error::UResult;
-use crate::event::{EventTime, ModuleId};
+use crate::event::ModuleId;
 use crate::pipeline::PipeItem;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -18,7 +18,7 @@ pub enum Command {
     Start { run_id: String },
     Stop,
     SetRawDump { enable: bool, path: String },
-    SetTofParams { nt: usize, tbin: f64, tdelay: f64 },
+    SetParams { params: toml::Table },
     Config { module: ModuleId, name: String, value: Value },
     GetConfig { module: ModuleId, name: String },
 }
@@ -79,28 +79,25 @@ impl CommandHandler {
 
     pub fn handle(&mut self, cmd: Command) -> UResult<CommandReply> {
         let (rep_send, rep_recv) = crate::channel::bounded(self.mod_send.len());
-        let cmd_and_chan = (cmd, rep_send);
-        match cmd_and_chan.0 {
+        match cmd {
             Command::Clear => {
                 self.post_send.send(PipeItem::Clear)
                               .expect("postprocessor command receiver died");
                 Ok(CommandReply::Ok)
             }
-            Command::SetTofParams { nt, tbin, tdelay } => {
-                self.post_send.send(PipeItem::TofParams {
-                    nt,
-                    dt: EventTime::from_floating_sec(tbin),
-                    t0: EventTime::from_floating_sec(tdelay),
-                }).expect("postprocessor command receiver died");
-                Ok(CommandReply::Ok)
+            Command::SetParams { params } => {
+                self.post_send.send(PipeItem::Params(params, rep_send))
+                              .expect("postprocessor command receiver died");
+                Ok(rep_recv.recv().expect("postprocessor command sender died"))
             }
             Command::Start { .. } | Command::Stop | Command::SetRawDump { .. } => {
-                if let Command::Start { run_id } = &cmd_and_chan.0 {
+                if let Command::Start { run_id } = &cmd {
                     self.post_send.send(PipeItem::StartOfRun(run_id.into()))
                                   .expect("postprocessor command receiver died");
                 }
+                let cmd_and_send = (cmd, rep_send);
                 for mod_send in self.mod_send.values() {
-                    mod_send.send(cmd_and_chan.clone()).expect("module command receiver died");
+                    mod_send.send(cmd_and_send.clone()).expect("module command receiver died");
                 }
                 let replies = (0..self.mod_send.len()).map(
                     |_| rep_recv.recv().expect("module command sender died")
@@ -112,7 +109,7 @@ impl CommandHandler {
             }
             Command::Config { module, .. } | Command::GetConfig { module, .. } => {
                 if let Some(mod_send) = self.mod_send.get(&module) {
-                    mod_send.send(cmd_and_chan).expect("module command receiver died");
+                    mod_send.send((cmd, rep_send)).expect("module command receiver died");
                     let reply = rep_recv.recv().expect("module command sender died");
                     Ok(reply)
                 } else {

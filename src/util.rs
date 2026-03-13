@@ -4,6 +4,7 @@
 use std::io;
 use std::net::ToSocketAddrs;
 use anyhow::anyhow;
+use serde::Deserialize;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 use crate::error::UResult;
@@ -20,7 +21,38 @@ pub fn resolve(addr: &str) -> UResult<std::net::SocketAddr> {
 
 /// Wait for termination signals.
 pub fn wait_for_signal() -> io::Result<()> {
-    let mut signals = Signals::new(&[SIGINT, SIGTERM])?;
+    let mut signals = Signals::new([SIGINT, SIGTERM])?;
     signals.wait();
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub enum FalseOr<T> {
+    #[serde(deserialize_with = "deserialize_false")]
+    False,
+    Value(T),
+}
+
+impl<T> FalseOr<T> {
+    pub fn is_false(&self) -> bool {
+        matches!(self, FalseOr::False)
+    }
+}
+
+impl<T> Default for FalseOr<T> {
+    fn default() -> Self {
+        FalseOr::False
+    }
+}
+
+fn deserialize_false<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    if bool::deserialize(deserializer)? {
+        Err(serde::de::Error::custom("Expected 'false'"))
+    } else {
+        Ok(())
+    }
 }

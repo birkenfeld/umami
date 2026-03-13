@@ -4,7 +4,7 @@
 use anyhow::Context;
 use crate::{lprintln, ltrace};
 use crate::channel::{Receiver, Sender};
-use crate::config::HistoConfig;
+use crate::command::CommandReply;
 use crate::error::{UResult};
 use crate::event::{EventData, EventTime};
 use crate::pipeline::PipeItem;
@@ -16,9 +16,6 @@ pub struct PostProcessor {
     input: Receiver<PipeItem>,
     output: Sender<PipeItem>,
     shm: ShmBox,
-    nt: usize,
-    dt: EventTime,
-    t0: EventTime,
 }
 
 impl PostProcessor {
@@ -27,16 +24,12 @@ impl PostProcessor {
         input: Receiver<PipeItem>,
         output: Sender<PipeItem>,
         data: ShmBox,
-        config: &HistoConfig,
     ) -> Self {
         Self {
             recipe,
             input,
             output,
             shm: data,
-            nt: 0,
-            dt: EventTime::from_floating_sec(config.default_tbin),
-            t0: EventTime::from_floating_sec(config.default_tdelay),
         }
     }
 
@@ -78,37 +71,33 @@ impl PostProcessor {
                 }
                 PipeItem::Events(evs) => {
                     ev_count += evs.len();
-                    let mut evs = self.recipe.process(evs);
+                    let evs = self.recipe.process(evs);
                     ltrace!("Postprocessed events: {:?}", evs);
                     if ev_count > limit {
                         println!("Received {} events", ev_count);
                         limit += 1000000;
                     }
-                    for ev in &mut evs {
+                    for ev in &evs {
                         let ev_ts = ev.time;
                         if ev_ts < last_ts {
                             out_of_order += 1;
                         }
                         last_ts = ev_ts;
 
-                        if let EventData::Neutron { x, y, ref mut t } = ev.data {
-                            if self.nt == 0 {
-                                self.shm.add_histo(x, y, 0);
-                            } else {
-                                let tbin = ev_ts.time_bin(self.dt, self.t0);
-                                if tbin < self.nt as u32 {
-                                    self.shm.add_histo(x, y, tbin);
-                                    *t = tbin;
-                                }
-                            };
+                        if let EventData::Neutron { x, y, t } = ev.data {
+                            self.shm.add_histo(x, y, t);
                         };
                     }
                     item = PipeItem::Events(evs);
                 }
-                PipeItem::TofParams { nt, dt, t0 } => {
-                    self.nt = nt;
-                    self.dt = dt;
-                    self.t0 = t0;
+                PipeItem::Params(params, send) => {
+                    lprintln!(INFO, "Updating postproc recipe with {:?}", params);
+                    send.send(match self.recipe.update_config(params) {
+                        Ok(_) => CommandReply::Ok,
+                        Err(e) => CommandReply::new_error(
+                            None, format!("Failed to update recipe config: {}", e)),
+                    }).expect("param reply receiver died");
+                    continue;
                 }
                 PipeItem::State(ref module, ref state) => {
                     self.shm.set_state(*module, *state);

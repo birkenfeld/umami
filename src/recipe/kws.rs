@@ -2,9 +2,11 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use std::collections::BTreeMap;
+use anyhow::Context;
 use serde::Deserialize;
 use crate::config::RecipeConfig;
 use crate::event::{Event, EventData};
+use crate::error::UResult;
 use super::Recipe;
 
 const TUBE_RESOLUTION:  u32 = 256;
@@ -17,6 +19,7 @@ const PIXEL_PER_PACK:   u32 = 8192;
 const EXT_START: u32 = 1;
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct KWSGERecipe {
     #[serde(default)]
     reso_1024: bool,
@@ -27,10 +30,14 @@ pub struct KWSGERecipe {
 }
 
 impl Recipe for KWSGERecipe {
-    type Config = Self;
+    fn from_config(config: toml::Table, _: &BTreeMap<String, RecipeConfig>) -> UResult<Self> {
+        let this = config.try_into()
+            .context("parsing config for tof_std recipe")?;
+        Ok(this)
+    }
 
-    fn from_config(config: Self::Config, _: &BTreeMap<String, RecipeConfig>) -> Self {
-        config
+    fn update_config(&mut self, _: toml::Table) -> UResult<()> {
+        Ok(())
     }
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
@@ -79,9 +86,9 @@ impl Recipe for KWSGERecipe {
                         1 if up ^ self.invert_ts =>
                             event.data = EventData::Tzero,
                         3 if up ^ self.invert_ts =>
-                            event.data = EventData::Tzero,  // TODO why?
+                            event.data = EventData::Tzero,
                         2 if up ^ self.invert_ts =>
-                            event.data = EventData::AuxSignal { value: EXT_START, up: true },
+                            event.data = EventData::AuxSignal { number: EXT_START, up: true },
                         _ => ()
                     }
                 }

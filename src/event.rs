@@ -39,11 +39,6 @@ impl EventTime {
     pub fn from_clock<T>(freq: i64, ticks: T) -> Self where i64: From<T> {
         Self(i64::from(ticks) * 1_000_000_000 / freq)
     }
-
-    pub fn time_bin(&self, dt: Self, t0: Self) -> u32 {
-        // TODO: over-underflow?
-        (self.0.saturating_sub(t0.0) / dt.0) as u32
-    }
 }
 
 impl std::ops::Add for EventTime {
@@ -99,7 +94,9 @@ pub enum EventData {
     /// Gate signal.
     Gate { up: bool } = 0x92,
     /// Auxiliary signal.
-    AuxSignal { value: u32, up: bool } = 0x93,
+    AuxSignal { number: u32, up: bool } = 0x93,
+    /// Sorted-out event.
+    Void = 0x94,
 }
 
 impl Eq for EventData {}

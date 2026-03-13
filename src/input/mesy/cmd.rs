@@ -119,12 +119,12 @@ pub trait MesyCommandHandler: Send + 'static {
             }
         }
 
-        for i in 0..8 {
-            match modules[i] {
+        for (i, modtype) in modules.iter().enumerate() {
+            match modtype {
                 ModType::None => continue,
                 ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P => {
                     if let Some(cfg) = config.modules.get(&i) {
-                        if let MesyModuleConfig::MPSD { threshold, gain } = cfg {
+                        if let MesyModuleConfig::Mpsd { threshold, gain } = cfg {
                             self.set_up_mpsd(i, *threshold, *gain)?;
                         } else {
                             lprintln!(WARN, "Module {} is not an MPSD, skipping setup", i);

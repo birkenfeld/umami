@@ -47,8 +47,8 @@ pub struct MesyCellConfig {
 pub enum MesyModuleConfig {
     // TODO better types
     // TODO amp mode, pulser
-    MPSD { threshold: u16, gain: u16 },
-    MSTD { threshold: u16, gain: u16 },
+    Mpsd { threshold: u16, gain: u16 },
+    Mstd { threshold: u16, gain: u16 },
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,10 +85,6 @@ pub struct HistoConfig {
     pub nx: usize,
     pub ny: usize,
     pub max_nt: usize,
-    #[serde(default = "default_tbin")]
-    pub default_tbin: f64,
-    #[serde(default)]
-    pub default_tdelay: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,8 +113,4 @@ where
 
 fn default_ipc_name() -> String {
     "umami".into()
-}
-
-fn default_tbin() -> f64 {
-    1e-6 // seconds
 }
