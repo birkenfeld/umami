@@ -133,6 +133,9 @@ pub trait MesyCommandHandler: Send + 'static {
                         lprintln!(WARN, "MPSD {} has no assigned configuration, skipping setup", i);
                     }
                 },
+                ModType::Mwpchr => {
+                    lprintln!(INFO, "Module {} is a MWPCHR, no setup necessary", i);
+                }
                 _ => {
                     lprintln!(WARN, "Module {} has unsupported type {:?}, skipping setup",
                               i, modules[i]);
