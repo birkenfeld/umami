@@ -5,27 +5,41 @@ use std::io;
 use std::os::unix::net;
 use std::time::Duration;
 use anyhow::{bail, Context};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use uds::UnixDatagramExt;
 use umami::{Command, CommandReply};
 
 #[derive(Parser)]
+#[clap(disable_help_subcommand = true)]
 #[clap(version, author, about)]
+/// A utility for managing UMAMI data acquisition.
 pub struct Options {
-    #[clap(long="ipc", default_value="umami",
-           help="Name of the instance for IPC")]
+    #[clap(long="ipc", default_value="umami")]
+    /// Name of the instance for IPC.
     ipc_name: String,
-    #[clap(help="Command to send")]
-    command: String,
-    #[clap(help="Command argument")]
-    arg: Option<String>,
+    #[clap(subcommand)]
+    cmd: Cmd,
 }
 
-// TODO subcommands
+#[derive(Subcommand, Debug)]
+enum Cmd {
+    /// Start a new run with the given run ID.  Does not clear the histogram!
+    Start { run_id: String },
+    /// Stop the current run.
+    Stop,
+    /// Clear the histogram.  Can be called while running.
+    Clear,
+    /// Enable and set the path to the raw dump files.
+    Raw { path: String },
+    /// Disable raw dump files.
+    NoRaw,
+    /// Set TOF parameters for histogramming.
+    Tof { nt: usize, tbin: f64, tdelay: f64 },
+}
 
 fn inner_main(args: Options) -> anyhow::Result<()> {
-    // TODO: needs a unique name
-    let my_addr = uds::UnixSocketAddr::from_abstract("umamictl")
+    let unique_name = format!("umamictl-{}", std::process::id());
+    let my_addr = uds::UnixSocketAddr::from_abstract(&unique_name)
         .context("Creating abstract socket address")?;
     let target_addr = uds::UnixSocketAddr::from_abstract(args.ipc_name.as_bytes())
         .context("Creating abstract socket address")?;
@@ -35,15 +49,13 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
         .context("Setting socket read timeout")?;
     sock.connect_to_unix_addr(&target_addr).context("Connecting Unix socket")?;
 
-    let cmd = match &*args.command {
-        "start" => Command::Start { run_id: args.arg.expect("cmdarg") }, // TODO
-        "stop" => Command::Stop,
-        "clear" => Command::Clear,
-        "raw" => Command::SetRawDump {
-            enable: true,
-            path: args.arg.expect("cmdarg"),
-        },
-        other => bail!("Unknown command: {other}"),
+    let cmd = match args.cmd {
+        Cmd::Start { run_id } => Command::Start { run_id },
+        Cmd::Stop => Command::Stop,
+        Cmd::Clear => Command::Clear,
+        Cmd::Raw { path } => Command::SetRawDump { enable: true, path },
+        Cmd::NoRaw => Command::SetRawDump { enable: false, path: String::new() },
+        Cmd::Tof { nt, tbin, tdelay } => Command::SetTofParams { nt, tbin, tdelay },
     };
 
     let cmd_json = serde_json::to_string(&cmd).context("Serializing command to JSON")?;
