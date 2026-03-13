@@ -20,7 +20,7 @@ pub enum PipeItem {
     Clear,
     StartOfRun(String),
     EndOfRun,
-    State(InputState),
+    State(ModuleId, InputState),
     TofParams { nt: usize, dt: EventTime, t0: EventTime },
 }
 
@@ -120,9 +120,9 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         .spawn(move || while let Ok(_) = output_recv.recv() {})
         .context("Spawning output thread")?;
 
+    handler.start()?;
     uds.start()?;
     postproc.start()?;
-    handler.start()?;
 
     wait_for_signal().context("Setting signal handler")?;
 

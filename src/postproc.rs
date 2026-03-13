@@ -55,6 +55,8 @@ impl PostProcessor {
         let mut out_of_order = 0;
         let start = jiff::Timestamp::now();
 
+        self.shm.set_initialized();
+
         while let Ok(mut item) = self.input.recv() {
             match item {
                 PipeItem::Clear => {
@@ -108,8 +110,8 @@ impl PostProcessor {
                     self.dt = dt;
                     self.t0 = t0;
                 }
-                PipeItem::State(ref state) => {
-                    self.shm.set_state(state);
+                PipeItem::State(ref module, ref state) => {
+                    self.shm.set_state(*module, *state);
                 }
             }
             self.output.send(item).expect("output sender closed");
