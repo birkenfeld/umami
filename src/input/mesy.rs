@@ -222,14 +222,32 @@ impl MesySource for ReplayFile {
         let head = &mut buffer[..8];
         self.read_exact(head)?;
         if head == FILE_START {
-            // skip header, TODO hardcoded for two lines
             let mut linebreaks = 0;
             loop {
+                let mut header_lines = 2;
                 let mut byte = [0_u8; 1];
+                let mut buffer = Vec::new();
                 self.read_exact(&mut byte)?;
+                buffer.push(byte[0]);
                 if byte[0] == b'\n' {
                     linebreaks += 1;
+
                     if linebreaks == 2 {
+                        // this line should contain the number of header lines
+                        if let Some(pos) = buffer.windows(15).position(|w| w == b"header length: ") {
+                            let start_num = pos + 15;
+                            if let Some(end_num) = buffer[start_num..].windows(6).position(|w| w == b" lines") {
+                                if let Some(num) = std::str::from_utf8(&buffer[start_num..][..end_num])
+                                    .ok()
+                                    .and_then(|s| s.trim().parse::<usize>().ok())
+                                {
+                                    header_lines = num;
+                                }
+                            }
+                        }
+                    }
+
+                    if linebreaks == header_lines {
                         break;
                     }
                 }
