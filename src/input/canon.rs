@@ -4,8 +4,9 @@
 use std::{io, fmt, thread};
 use std::net::TcpStream;
 use std::time::Duration;
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use byteorder::{ByteOrder, ReadBytesExt, WriteBytesExt, BE};
+use crate::lprintln;
 use crate::command::{Command, CommandReply};
 use crate::config::{CanonConfig, SourceConfig};
 use crate::error::{UError, UResult};
@@ -152,8 +153,10 @@ impl<S: CanonSource> Input for CanonInput<S> {
                 },
                 EventType::External =>
                     continue,
-                // TODO log instead?
-                _ => return Err(anyhow!("Unsupported packet type {:?}", cev.evtype()).into()),
+                _ => {
+                    lprintln!(WARN, "Canon source: unknown event type: {}", cev);
+                    continue;
+                }
             };
             events.push(event);
         };

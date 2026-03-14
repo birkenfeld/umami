@@ -10,7 +10,6 @@ use crate::config::Config;
 use crate::error::UResult;
 use crate::event::{Event, ModuleId};
 use crate::input::{InputCommon, InputState};
-use crate::interface::UdsInterface;
 use crate::shm::{ShmInterface, MAX_MODULES};
 use crate::util::wait_for_signal;
 
@@ -35,10 +34,6 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     }
 
     let shm_area = ShmInterface::create(&config.ipc_name, &config.histogram, n_modules)?;
-
-    let (if_cmd_send, if_cmd_recv) = channel::bounded(1);  // only one command at a time
-    let (if_reply_send, if_reply_recv) = channel::bounded(1);
-    let uds = UdsInterface::new(&config.ipc_name, if_cmd_send, if_reply_recv)?;
 
     lprintln!(INFO, "IPC interfaces are available under the name {:?}", config.ipc_name);
 
@@ -95,15 +90,14 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     }
 
     // create command handler
-    let mut handler = command::CommandHandler::new(
-        if_cmd_recv,
+    let handler = command::CommandHandler::new(
+        &config.ipc_name,
         command_sends,
-        if_reply_send,
         postproc_send.clone(),
-    );
+    ).context("Creating command handler")?;
 
     if immediate_start {
-        handler.handle(command::Command::Start { run_id: "auto".to_string() })?;
+        handler.handle(command::Command::Start { run_id: "auto".to_string() });
     }
 
     let (output_send, output_recv) = channel::bounded(EV_CHANNEL_SIZE);
@@ -130,7 +124,6 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         .context("Spawning output thread")?;
 
     handler.start()?;
-    uds.start()?;
     postproc.start()?;
 
     wait_for_signal().context("Setting signal handler")?;
