@@ -41,7 +41,7 @@ impl UdsInterface {
                     let reply = self.handle_message(&buf[..n]);
                     let serialized = serde_json::to_string(&reply).expect("serializable");
                     if self.sock.send_to_addr(serialized.as_bytes(), &addr).is_err() {
-                        lprintln!(ERROR, "Failed to send command reply to {:?}", addr);
+                        lprintln!(ERROR, "Failed to send command reply to {addr:?}");
                     }
                 }
                 Err(e) => {
@@ -54,19 +54,21 @@ impl UdsInterface {
     fn handle_message(&self, buf: &[u8]) -> CommandReply {
         match str::from_utf8(buf) {
             Err(_) => {
-                CommandReply::new_error(None, format!("Invalid UTF-8 in telegram"))
+                CommandReply::new_error(None, "Invalid UTF-8 in telegram".into())
             }
             Ok(s) => match serde_json::from_str::<Command>(s) {
                 Err(e) => {
+                    lprintln!(ERROR, "Received invalid command {s:?}: {e:?}");
                     CommandReply::new_error(None, format!("Invalid JSON or invalid command: {e:#}"))
                 }
                 Ok(cmd) => {
-                    ldebug!("Received command {:?}", cmd);
-                    self.req_write.send(cmd).unwrap();
+                    ldebug!("Received command {cmd:?}");
+                    self.req_write.send(cmd).expect("command sender died");
                     if let Ok(reply) = self.rep_read.recv() {
+                        ldebug!("Command reply: {reply:?}");
                         reply
                     } else {
-                        CommandReply::new_error(None, "Failed to receive command reply".to_string())
+                        CommandReply::new_error(None, "Failed to receive command reply".into())
                     }
                 }
             },

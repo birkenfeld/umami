@@ -50,7 +50,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
 
     for (module_name, module_config) in config.modules {
         let mid = ModuleId(module_config.id);
-        ldebug!("Initializing module {}: {:?}", module_name, module_config);
+        ldebug!("Initializing module {module_name}: {:?}", module_config);
 
         let event_send = if n_modules == 1 {
             postproc_send.clone()

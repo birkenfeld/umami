@@ -63,7 +63,7 @@ impl PostProcessor {
                     let evs = recipe.process(evs);
                     ltrace!("Postprocessed events: {:?}", evs);
                     if ev_count > debug_at {
-                        lprintln!(DEBUG, "Received {} events", ev_count);
+                        lprintln!(DEBUG, "Received {ev_count} events");
                         debug_at += 1000000;
                     }
                     for ev in &evs {
@@ -80,7 +80,7 @@ impl PostProcessor {
                     item = PipeItem::Events(evs);
                 }
                 PipeItem::StartOfRun(ref run_id) => {
-                    lprintln!(INFO, "Starting run {}", run_id);
+                    lprintln!(INFO, "Starting run {run_id}");
                     self.shm.set_run_id(run_id);
                     last_ts = EventTime::zero();
                     ev_count = 0;
@@ -106,7 +106,7 @@ impl PostProcessor {
                     continue;
                 }
                 PipeItem::SetMode(name, params, send) => {
-                    lprintln!(INFO, "Using postproc recipe {} with {:?}", name, params);
+                    lprintln!(INFO, "Using postproc recipe {name} with {params:?}");
                     if !recipe_names.contains(&name) {
                         send.send(CommandReply::new_error(
                             None, format!("Recipe {} not found", name)))

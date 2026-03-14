@@ -101,8 +101,8 @@ pub trait MesyCommandHandler: Send + 'static {
             let mod_xmit_set = mod_info[2];
             let mod_firmware = mod_info[3];
 
-            lprintln!(INFO, "Module {}: ID {}, version {}, xmit cap {}, xmit set {}, firmware {}",
-                      i, mod_id, mod_ver, mod_xmit_cap, mod_xmit_set, mod_firmware);
+            lprintln!(INFO, "Module {i}: ID {}, version {}, xmit cap {}, xmit set {}, firmware {}",
+                      mod_id, mod_ver, mod_xmit_cap, mod_xmit_set, mod_firmware);
         }
         Ok(mod_types)
     }
@@ -110,8 +110,8 @@ pub trait MesyCommandHandler: Send + 'static {
     fn set_up(&mut self, modules: &[ModType; 8], config: &MesyConfig) -> UResult<()> {
         for i in 0..8 {
             if let Some(cfg) = config.cells.get(&i) {
-                lprintln!(INFO, "Setting up cell {} with source {}, compare {}",
-                          i, cfg.source, cfg.compare);
+                lprintln!(INFO, "Setting up cell {i} with source {}, compare {}",
+                          cfg.source, cfg.compare);
                 let _res: [U16; 3] = self.do_command(
                     Cmd::SetCell,
                     [U16::new(i as _), U16::new(cfg.source), U16::new(cfg.compare)],
@@ -127,18 +127,18 @@ pub trait MesyCommandHandler: Send + 'static {
                         if let MesyModuleConfig::Mpsd { threshold, gain } = cfg {
                             self.set_up_mpsd(i, *threshold, *gain)?;
                         } else {
-                            lprintln!(WARN, "Module {} is not an MPSD, skipping setup", i);
+                            lprintln!(WARN, "Module {i} is not an MPSD, skipping setup");
                         }
                     } else {
-                        lprintln!(WARN, "MPSD {} has no assigned configuration, skipping setup", i);
+                        lprintln!(WARN, "MPSD {i} has no assigned configuration, skipping setup");
                     }
                 },
                 ModType::Mwpchr => {
-                    lprintln!(INFO, "Module {} is a MWPCHR, no setup necessary", i);
+                    lprintln!(INFO, "Module {i} is a MWPCHR, no setup necessary");
                 }
                 _ => {
-                    lprintln!(WARN, "Module {} has unsupported type {:?}, skipping setup",
-                              i, modules[i]);
+                    lprintln!(WARN, "Module {i} has unsupported type {:?}, skipping setup",
+                              modules[i]);
                 }
             }
         }
@@ -146,7 +146,7 @@ pub trait MesyCommandHandler: Send + 'static {
     }
 
     fn set_up_mpsd(&mut self, num: usize, threshold: u16, gain: u16) -> UResult<()> {
-        lprintln!(INFO, "Setting up MPSD {} with threshold {}, gain {}", num, threshold, gain);
+        lprintln!(INFO, "Setting up MPSD {num} with threshold {threshold}, gain {gain}");
         let _res: [U16; 3] = self.do_command(
             Cmd::SetGainMpsd,
             [U16::new(num as _), U16::new(8), U16::new(gain)],
@@ -225,7 +225,7 @@ impl MesyCommandHandler for CommandSocket {
                                       .fold(0, |sum, chunk| sum ^ LE::read_u16(chunk));
         packet.hdr.checksum.set(chksum);
         packet.trailer.set(0xFFFF);
-        ldebug!("Mesytec command: {:?}", packet);
+        ldebug!("Mesytec command: {packet:?}");
         // ldebug!("Mesytec command buffer: {:?}", packet.as_bytes());
 
         // exchange communication
@@ -239,7 +239,7 @@ impl MesyCommandHandler for CommandSocket {
             .map_err(|_| anyhow!("Reply packet has wrong length (expected {}, got {})",
                                  size_of::<Packet<Dout>>(), nrecv))
             .with_context(|| format!("Sending command {:?}", cmd))?;
-        ldebug!("Mesytec reply: {:?}", ret);
+        ldebug!("Mesytec reply: {ret:?}");
 
         // consistency checks
         if ret.hdr.buf_len != nrecv as u16 / 2 - 1 {

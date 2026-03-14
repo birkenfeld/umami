@@ -144,7 +144,7 @@ pub trait Input: Send {
                 Err(TryRecvError::Empty) => (),
                 Ok((cmd, rep)) => self.main_loop_command(cmd, rep, &mut common),
                 Err(e) => {
-                    lprintln!(ERROR, "Cannot read command for {}: {}, exiting input", desc, e);
+                    lprintln!(ERROR, "Cannot read command for {desc}: {e}, exiting input");
                     return;
                 }
             }
@@ -161,7 +161,7 @@ pub trait Input: Send {
                         continue;
                     }
                     Err(UError::Other(e)) => {
-                        lprintln!(ERROR, "Cannot read events for {}: {}", desc, e);
+                        lprintln!(ERROR, "Cannot read events for {desc}: {e}");
                         common.needs_reset = true;
                         common.events.send(PipeItem::EndOfRun).expect("event channel closed");
                         common.update_state(InputState::Errored);
@@ -179,7 +179,7 @@ pub trait Input: Send {
             match common.command.recv() {
                 Ok((cmd, rep)) => self.main_loop_command(cmd, rep, &mut common),
                 Err(e) => {
-                    lprintln!(ERROR, "Cannot read command for {}: {}, exiting input", desc, e);
+                    lprintln!(ERROR, "Cannot read command for {desc}: {e}, exiting input");
                     return;
                 }
             }
