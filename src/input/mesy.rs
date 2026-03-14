@@ -100,8 +100,8 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
         let n = match self.source.get_packet(&mut buffer) {
             Ok(0) => return Ok(vec![]),
             Ok(n) => n,
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(vec![]),
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Err(UError::InputEnded),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(vec![]),
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(UError::InputEnded),
             Err(e) => Err(e).context("Reading packet from source")?,
         };
         self.dump.write(&buffer[..n])?;
@@ -277,5 +277,5 @@ impl MesySource for ReplayFile {
 }
 
 fn parse_int(s: &[u8]) -> Option<u64> {
-    std::str::from_utf8(s).ok()?.trim().parse::<u64>().ok()
+    str::from_utf8(s).ok()?.trim().parse::<u64>().ok()
 }

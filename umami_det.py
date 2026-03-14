@@ -199,7 +199,8 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         if mode_name not in self._measure_modes:
             raise InvalidOperation(
                 f'Measure mode {mode_name!r} not supported by UMAMI')
-        self._send_cmd('set_mode', mode=mode_name)
+        self._send_cmd('set_mode', name=mode_name,
+                       params={'use_gate': not self._ignoregate})
         self._mode = value
 
     def get_measureMode_unit(self):
@@ -209,8 +210,8 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         return self._ignoregate
 
     def write_ignoreGate(self, value):
-        self._send_cmd('set_mode', mode=MODE_NAMES[self._mode],
-                       use_gate=not value)
+        self._send_cmd('set_mode', name=MODE_NAMES[self._mode],
+                       params={'use_gate': not value})
         self._ignoregate = value
 
     def get_ignoreGate_unit(self):
@@ -222,9 +223,10 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         return self._tofbins
 
     def write_tofRange(self, value):
-        self._send_cmd('set_mode', mode=MODE_NAMES[self._mode],
-                       time_bins=list(t/1e6 for t in value))
-        self._ntofbins = len(value)
+        self._send_cmd('set_mode', name=MODE_NAMES[self._mode],
+                       params={'time_bins': list(t/1e6 for t in value)})
+        # first and last bin are reserved for underflow and overflow
+        self._ntofbins = len(value) + 2
         self._tofbins = value
 
     def get_tofRange_unit(self):

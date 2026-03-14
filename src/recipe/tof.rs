@@ -115,6 +115,7 @@ impl Recipe for TofStd {
     }
 }
 
+
 pub struct HistoStd {
     // Configuration
     /// Whether to use the gate signal to filter events. If false, gate signals
