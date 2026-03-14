@@ -34,8 +34,6 @@ enum Cmd {
     Raw { path: String },
     /// Disable raw dump files.
     NoRaw,
-    /// Get all possible mode names.
-    Modes,
     /// Set mode name and parameters for histogramming.
     Mode { name: String, params: value::Map<String, value::Value> },
     /// Get the current state.
@@ -62,7 +60,6 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
         Cmd::NoRaw => Command::SetRawDump { enable: false, path: String::new() },
         Cmd::Mode { name, params } =>
             Command::SetMode { name, params: toml::Table::try_from(params)? },
-        Cmd::Modes => Command::GetModes,
         Cmd::State => Command::GetState,
     };
 

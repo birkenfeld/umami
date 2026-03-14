@@ -22,7 +22,6 @@ pub enum PipeItem {
     EndOfRun,
     ModuleState(ModuleId, InputState),
     SetMode(String, toml::Table, channel::Sender<CommandReply>),
-    GetModes(channel::Sender<CommandReply>),
     GetState(channel::Sender<CommandReply>),
 }
 

@@ -73,13 +73,13 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
 
     properties = {
         'umami':      Prop(nonemptystring, 'Path to the umami executable.'),
-        'config':     Prop(str, 'Path to the TOML config file.'),
-        'rawdatadir': Prop(str, 'Path to place raw event data.'),
+        'config':     Prop(str, 'Path to the UMAMI TOML config file.'),
+        'rawdatadir': Prop(str, 'Path to place raw event data if not empty.'),
     }
 
     _shm = None
     _proc = None
-    _cmdsock = None
+    _cmd = None
 
     def init(self):
         # check prerequisites
@@ -91,63 +91,67 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
             raise ConfigurationError('Config file does not exist')
 
         # general initialization
+        self._mode = 0
         self._tofbins = []
         self._ntofbins = 1
-        self._mode = 0
         self._ignoregate = False
         self._started = False
 
-        # read initial config from UMAMI toml config
+        # read initial config from UMAMI toml file
         with open(self.config) as f:
             content = f.read()
         config = toml.Parser(self.config, content).parse_doc()
         self._nmod = len(config['modules'])
-        shm_name = config.get('ipc_name', 'umami')
         self._nx = config['histogram']['nx']
         self._ny = config['histogram']['ny']
         self._max_nt = config['histogram']['max_nt']
-        array_len = self._nx * self._ny * self._max_nt
-
-        # create/open the shared memory area
-        shm_size = SHM_HEAD_LEN + array_len * EL_SIZE
-        self._shm = SharedMemory(shm_name, shm_size)
-        self._init = self._shm.get_array('u2', 1, 128)
-        self._init[0] = 0
-        self._data = self._shm.get_array('u4', array_len, SHM_HEAD_LEN)
+        self._measure_modes = list(config['cook_modes'])
 
         # start the UMAMI subprocess
+        ipc_name = 'umami-tango-' + self._worker_name.replace('/', '-')
         self.init_fd_log('umami')
         self._proc = subprocess.Popen(
-            [self.umami, self.config],
+            [self.umami, '--ipc', ipc_name, self.config],
             cwd=os.path.dirname(self.config),
             close_fds=True,
             stderr=self.get_log_fd(),
         )
 
-        # wait for UMAMI to initialize
-        while not self._init[0]:
-            if not (self._proc and self._proc.poll() is None):
-                raise HardwareFailure('UMAMI process failed to start')
-            time.sleep(0.1)
-
         # connect to UMAMI via a Unix socket and set up the initial state
-        self._cmdsock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        self._cmdsock.settimeout(2)
-        self._cmdsock.bind('\0tango-umami-cmd-' + self._worker_name)
-        self._cmdsock.connect('\0' + shm_name)
+        self._cmd = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self._cmd.settimeout(2)
+        # we need to bind to a name to receive replies
+        self._cmd.bind('\0req-' + ipc_name)
 
-        # enable raw data dumping and get supported measure modes
-        self._send_cmd('set_raw_dump', enable=True, path=self.rawdatadir)
-        self._measure_modes = self._send_cmd('get_modes')
+        # wait for UMAMI to initialize
+        while True:
+            time.sleep(0.1)
+            try:
+                self._cmd.connect('\0' + ipc_name)
+                self.hw_version = self._send_cmd('ping')
+                break
+            except (ConnectionRefusedError, CommunicationFailure):
+                if self._proc.poll() is not None:
+                    raise HardwareFailure('UMAMI exited during initialization')
+
+        # set up histo readout via shared memory
+        array_len = self._nx * self._ny * self._max_nt
+        shm_size = SHM_HEAD_LEN + array_len * EL_SIZE
+        self._shm = SharedMemory(ipc_name, shm_size)
+        self._data = self._shm.get_array('u4', array_len, SHM_HEAD_LEN)
+
+        # enable raw data dumping
+        if self.rawdatadir:
+            self._send_cmd('set_raw_dump', enable=True, path=self.rawdatadir)
 
     def delete(self):
-        if self._cmdsock:
-            self._cmdsock.close()
+        if self._cmd:
+            self._cmd.close()
         if self._proc and self._proc.poll() is None:
             self._proc.kill()
         self.delete_fd_log()
+        self._data = None
         if self._shm:
-            self._init = self._data = None
             try:
                 self._shm.close()
             except BufferError:
@@ -254,8 +258,8 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         cmd.update(kwargs)
         msg = json.dumps(cmd).encode()
         try:
-            self._cmdsock.sendall(msg)
-            ret = self._cmdsock.recv(2048)
+            self._cmd.sendall(msg)
+            ret = self._cmd.recv(2048)
             reply = json.loads(ret.decode())
         except Exception as e:
             raise CommunicationFailure(f'Error communicating with UMAMI: {e}')
@@ -268,8 +272,8 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
 
     def Command(self, cmd):
         try:
-            self._cmdsock.sendall(cmd.encode())
-            return self._cmdsock.recv(2048).decode()
+            self._cmd.sendall(cmd.encode())
+            return self._cmd.recv(2048).decode()
         except Exception as e:
             raise CommunicationFailure(f'Error communicating with UMAMI: {e}')
 

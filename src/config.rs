@@ -116,7 +116,7 @@ fn default_ipc_name() -> String {
 
 pub fn load_config(path: &Path) -> UResult<Config> {
     let mut config: Config = toml::from_str(
-        &std::fs::read_to_string(&path)
+        &std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file {:?}", path.display()))?
     ).with_context(|| format!("Failed to parse config file {:?}", path.display()))?;
     config.filename = path.to_owned();

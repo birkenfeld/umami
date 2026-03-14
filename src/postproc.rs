@@ -126,12 +126,6 @@ impl PostProcessor {
                     }).expect("param reply receiver died");
                     continue;
                 }
-                PipeItem::GetModes(send) => {
-                    let value = recipe_names.clone().into();
-                    send.send(CommandReply::Data { module: None, value })
-                        .expect("param reply receiver died");
-                    continue;
-                }
                 PipeItem::GetState(send) => {
                     let inputs = self.input_state.iter().map(|(mid, state)| {
                         let state = serde_json::to_value(state).expect("ok");
@@ -141,9 +135,6 @@ impl PostProcessor {
                     map.insert("inputs".into(), inputs.into());
                     map.insert("mode".into(), cur_recipe.as_str().into());
                     // TODO mode parameters
-                    map.insert("nx".into(), self.shm.nx.into());
-                    map.insert("ny".into(), self.shm.nx.into());
-                    map.insert("max_nt".into(), self.shm.nt.into());
                     send.send(CommandReply::Data { module: None, value: map.into() })
                         .expect("param reply receiver died");
                     continue;

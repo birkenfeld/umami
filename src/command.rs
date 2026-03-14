@@ -17,13 +17,13 @@ use crate::pipeline::PipeItem;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
+    Ping,
     Clear,
     Start { run_id: String },
     Stop,
     GetState,
     SetRawDump { enable: bool, path: String },
     SetMode { name: String, params: toml::Table },
-    GetModes,
     Config { module: ModuleId, name: String, value: Value },
     GetConfig { module: ModuleId, name: String },
 }
@@ -115,6 +115,10 @@ impl CommandHandler {
     pub fn handle(&self, cmd: Command) -> CommandReply {
         let (rep_send, rep_recv) = crate::channel::bounded(self.mod_send.len());
         match cmd {
+            Command::Ping => {
+                let version = format!("UMAMI {}", env!("CARGO_PKG_VERSION"));
+                CommandReply::Data { module: None, value: version.into() }
+            }
             Command::Clear => {
                 self.post_send.send(PipeItem::Clear)
                               .expect("postprocessor command receiver died");
@@ -127,11 +131,6 @@ impl CommandHandler {
             }
             Command::SetMode { name, params } => {
                 self.post_send.send(PipeItem::SetMode(name, params, rep_send))
-                              .expect("postprocessor command receiver died");
-                rep_recv.recv().expect("postprocessor command sender died")
-            }
-            Command::GetModes => {
-                self.post_send.send(PipeItem::GetModes(rep_send))
                               .expect("postprocessor command receiver died");
                 rep_recv.recv().expect("postprocessor command sender died")
             }
