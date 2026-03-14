@@ -12,7 +12,7 @@ int shm_open(const char *name, int flags, unsigned int mode);
 int shm_unlink(const char *name);
 """)
 
-off_size = 128 + 128 + 4*4
+off_size = 128 + 4*4
 
 lib = ffi.dlopen('rt')
 fd = lib.shm_open(b"umami", os.O_RDONLY, 0o666)
@@ -20,9 +20,8 @@ if fd < 0:
     raise RuntimeError('Could not open shared memory')
 mapp = mmap.mmap(fd, off_size, prot=mmap.PROT_READ)
 header_values = np.frombuffer(mapp, '<u4')
-nmod = header_values[64] >> 16
-nx = header_values[65]
-ny = header_values[66]
+nx = header_values[33]
+ny = header_values[34]
 del header_values
 mapp.close()
 
@@ -49,7 +48,7 @@ pg.setConfigOption('foreground', 'k')
 app = QtWidgets.QApplication([])
 window = pg.GraphicsLayoutWidget()
 window.resize(800, 800)
-window.setWindowTitle(f'UMAMI histogram, {nmod} modules')
+window.setWindowTitle('UMAMI histogram')
 plot = window.addPlot()
 plot.setTitle('starting...')
 

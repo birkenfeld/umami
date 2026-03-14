@@ -8,7 +8,8 @@ use crate::{lprintln, ltrace};
 use crate::channel::{Receiver, Sender};
 use crate::command::CommandReply;
 use crate::error::{UResult};
-use crate::event::{EventData, EventTime};
+use crate::input::InputState;
+use crate::event::{EventData, EventTime, ModuleId};
 use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
 use crate::shm::ShmBox;
@@ -17,6 +18,7 @@ pub struct PostProcessor {
     recipes: BTreeMap<String, Box<dyn Recipe>>,
     input: Receiver<PipeItem>,
     output: Sender<PipeItem>,
+    input_state: BTreeMap<ModuleId, InputState>,
     shm: ShmBox,
 }
 
@@ -31,6 +33,7 @@ impl PostProcessor {
             recipes,
             input,
             output,
+            input_state: BTreeMap::new(),
             shm: data,
         }
     }
@@ -51,6 +54,7 @@ impl PostProcessor {
         let mut out_of_order = 0;
 
         // use the default recipe at first
+        let mut cur_recipe = String::from("default");
         let recipe_names = self.recipes.keys().cloned().collect::<Vec<_>>();
         let mut recipe = self.recipes.get_mut("default").expect("default recipe").as_mut();
 
@@ -101,8 +105,8 @@ impl PostProcessor {
                 }
 
                 // Meta items, not sent on to output
-                PipeItem::ModuleState(ref module, ref state) => {
-                    self.shm.set_state(*module, *state);
+                PipeItem::ModuleState(module, state) => {
+                    self.input_state.insert(module, state);
                     continue;
                 }
                 PipeItem::SetMode(name, params, send) => {
@@ -114,6 +118,7 @@ impl PostProcessor {
                         continue;
                     }
                     recipe = self.recipes.get_mut(&name).expect("checked above").as_mut();
+                    cur_recipe = name;
                     send.send(match recipe.update_config(params) {
                         Ok(_) => CommandReply::Ok,
                         Err(e) => CommandReply::new_error(
@@ -122,7 +127,20 @@ impl PostProcessor {
                     continue;
                 }
                 PipeItem::GetModes(send) => {
-                    send.send(CommandReply::Data { module: None, value: recipe_names.clone().into() })
+                    let value = recipe_names.clone().into();
+                    send.send(CommandReply::Data { module: None, value })
+                        .expect("param reply receiver died");
+                    continue;
+                }
+                PipeItem::GetState(send) => {
+                    let inputs = self.input_state.iter().map(|(mid, state)| {
+                        let state = serde_json::to_value(state).expect("ok");
+                        (format!("module{}", mid.0), state)
+                    }).collect::<serde_json::Map<_, _>>();
+                    let mut map = serde_json::Map::new();
+                    map.insert("inputs".into(), inputs.into());
+                    map.insert("mode".into(), cur_recipe.as_str().into());
+                    send.send(CommandReply::Data { module: None, value: map.into() })
                         .expect("param reply receiver died");
                     continue;
                 }

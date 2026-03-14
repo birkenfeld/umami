@@ -23,6 +23,7 @@ pub enum PipeItem {
     ModuleState(ModuleId, InputState),
     SetMode(String, toml::Table, channel::Sender<CommandReply>),
     GetModes(channel::Sender<CommandReply>),
+    GetState(channel::Sender<CommandReply>),
 }
 
 pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
@@ -33,7 +34,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         Err(anyhow!("Too many modules: {}, max is {}", n_modules, MAX_MODULES))?;
     }
 
-    let shm_area = ShmInterface::create(&config.ipc_name, &config.histogram, n_modules)?;
+    let shm_area = ShmInterface::create(&config.ipc_name, &config.histogram)?;
 
     lprintln!(INFO, "IPC interfaces are available under the name {:?}", config.ipc_name);
 

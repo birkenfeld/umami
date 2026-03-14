@@ -20,6 +20,7 @@ pub enum Command {
     Clear,
     Start { run_id: String },
     Stop,
+    GetState,
     SetRawDump { enable: bool, path: String },
     SetMode { name: String, params: toml::Table },
     GetModes,
@@ -118,6 +119,11 @@ impl CommandHandler {
                 self.post_send.send(PipeItem::Clear)
                               .expect("postprocessor command receiver died");
                 CommandReply::Ok
+            }
+            Command::GetState => {
+                self.post_send.send(PipeItem::GetState(rep_send))
+                              .expect("postprocessor command receiver died");
+                rep_recv.recv().expect("postprocessor command sender died")
             }
             Command::SetMode { name, params } => {
                 self.post_send.send(PipeItem::SetMode(name, params, rep_send))

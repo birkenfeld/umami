@@ -11,6 +11,7 @@ use std::io::{Seek, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 use anyhow::Context;
+use serde::Serialize;
 use crate::{lprintln, ltrace};
 use crate::channel::{Sender, Receiver, TryRecvError};
 use crate::command::{Command, CommandReply};
@@ -21,15 +22,14 @@ use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
 use crate::util::resolve;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum InputState {
-    #[allow(dead_code)]
-    Unknown = 0,  // not set by us
-    Idle = 1,
-    Running = 2,
-    Ended = 3,
-    Errored = 4,
+    Init,
+    Idle,
+    Running,
+    Ended,
+    Error(String),
 }
 
 pub struct InputCommon {
@@ -50,7 +50,7 @@ impl InputCommon {
         recipe: Box<dyn Recipe>,
     ) -> Self {
         Self {
-            state: InputState::Unknown,
+            state: InputState::Init,
             module,
             state_send,
             events,
@@ -63,7 +63,7 @@ impl InputCommon {
         if self.state == InputState::Running {
             self.events.send(PipeItem::EndOfRun).expect("event channel closed");
         }
-        self.state = state;
+        self.state = state.clone();
         self.state_send.send(PipeItem::ModuleState(self.module, state))
                        .expect("state channel closed");
     }
@@ -103,7 +103,7 @@ pub trait Input: Send {
         let mid = common.module;
         let reply = match cmd {
             Command::Start { run_id } => match common.state {
-                InputState::Errored | InputState::Unknown => {
+                InputState::Error(_) | InputState::Init => {
                     CommandReply::new_error(
                         Some(mid), format!("Cannot start input from state {:?}", common.state)
                     )
@@ -111,20 +111,19 @@ pub trait Input: Send {
                 _ => {
                     if common.state == InputState::Running {
                         if let Err(e) = self.stop() {
-                            common.set_state(InputState::Errored);
-                            rep.send(CommandReply::new_error(
-                                Some(mid), format!("Failed to stop input for restart: {}", e)
-                            )).expect("command channel closed");
+                            let msg = format!("Failed to stop input for restart: {}", e);
+                            common.set_state(InputState::Error(msg.clone()));
+                            rep.send(CommandReply::new_error(Some(mid), msg))
+                               .expect("command channel closed");
                             return;
                         } else {
                             common.set_state(InputState::Idle);
                         }
                     }
                     if let Err(e) = self.start(run_id) {
-                        common.set_state(InputState::Errored);
-                        CommandReply::new_error(
-                            Some(mid), format!("Failed to start input: {}", e)
-                        )
+                        let msg = format!("Failed to start input: {}", e);
+                        common.set_state(InputState::Error(msg.clone()));
+                        CommandReply::new_error(Some(mid), msg)
                     } else {
                         common.set_state(InputState::Running);
                         CommandReply::Ok
@@ -132,7 +131,7 @@ pub trait Input: Send {
                 }
             }
             Command::Stop => match common.state {
-                InputState::Errored | InputState::Unknown => {
+                InputState::Error(_) | InputState::Init => {
                     CommandReply::new_error(
                         Some(mid), format!("Cannot start input from state {:?}", common.state)
                     )
@@ -146,10 +145,9 @@ pub trait Input: Send {
                 }
                 InputState::Running => {
                     if let Err(e) = self.stop() {
-                        common.set_state(InputState::Errored);
-                        CommandReply::new_error(
-                            Some(mid), format!("Failed to stop input: {}", e)
-                        )
+                        let msg = format!("Failed to stop input: {}", e);
+                        common.set_state(InputState::Error(msg.clone()));
+                        CommandReply::new_error(Some(mid), msg)
                     } else {
                         common.set_state(InputState::Idle);
                         CommandReply::Ok
@@ -181,7 +179,7 @@ pub trait Input: Send {
                 }
             }
 
-            if common.state != InputState::Errored {
+            if !matches!(common.state, InputState::Error(_)) {
                 match self.read_events() {
                     Ok(ev) => {
                         ltrace!("{} | Incoming events: {:?}", desc, ev);
@@ -193,8 +191,9 @@ pub trait Input: Send {
                         continue;
                     }
                     Err(UError::Other(e)) => {
+                        let msg = format!("Error reading events: {}", e);
                         lprintln!(ERROR, "Cannot read events for {desc}: {e}");
-                        common.set_state(InputState::Errored);
+                        common.set_state(InputState::Error(msg));
                         // wait for commands below
                     }
                     Err(UError::InputEnded) => {

@@ -9,8 +9,6 @@ use nix::{fcntl::OFlag, unistd::ftruncate};
 use nix::sys::{mman::{shm_open, mmap, MapFlags, ProtFlags}, stat::Mode};
 use crate::config::HistoConfig;
 use crate::error::UResult;
-use crate::event::ModuleId;
-use crate::input::InputState;
 
 pub const MAX_MODULES: usize = 128;
 pub const MAX_HISTO_SIZE: usize = 1024 * 1024 * 1024;  // 1 GB shmem
@@ -69,19 +67,13 @@ impl ShmBox {
 #[derive(zerocopy::FromBytes)]
 pub struct ShmInterface {
     pub run_id: [u8; 128],
-    pub state: [u8; MAX_MODULES],
-    pub initialized: u16,
-    pub modules: u16,
+    pub global_state: u32,
     pub nx: u32,
     pub ny: u32,
     pub nt: u32,
 }
 
 impl ShmInterface {
-    pub fn set_state(&mut self, module: ModuleId, state: InputState) {
-        self.state[module.0 as usize] = state as u8;
-    }
-
     pub fn set_run_id(&mut self, run_id: &str) {
         let bytes = run_id.as_bytes();
         let len = bytes.len().min(self.run_id.len() - 1);
@@ -90,10 +82,10 @@ impl ShmInterface {
     }
 
     pub fn set_initialized(&mut self) {
-        self.initialized = 1;
+        self.global_state |= 1;
     }
 
-    pub fn create(name: &str, config: &HistoConfig, modules: usize) -> UResult<ShmBox> {
+    pub fn create(name: &str, config: &HistoConfig) -> UResult<ShmBox> {
         let max_size = config.nx * config.ny * config.max_nt;
         if max_size == 0 {
             Err(anyhow!("Requested histogram size is zero"))?;
@@ -115,9 +107,7 @@ impl ShmInterface {
         };
         let mut shmbox = ShmBox { ptr: ptr.cast(), max_nt: config.max_nt as u32 };
         shmbox.run_id.fill(0);
-        shmbox.state.fill(0);
-        shmbox.initialized = 0;
-        shmbox.modules = modules as u16;
+        shmbox.global_state = 0;
         shmbox.nx = config.nx as u32;
         shmbox.ny = config.ny as u32;
         shmbox.nt = 0;

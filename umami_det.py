@@ -41,14 +41,7 @@ from entangle.lib.shm import SharedMemory
 EL_SIZE = 4
 
 # Shared memory header length in bytes
-SHM_HEAD_LEN = 128 + 128 + 4*4
-
-# Input states
-STATE_UNKNOWN = 0
-STATE_IDLE    = 1
-STATE_RUNNING = 2
-STATE_ENDED   = 3
-STATE_ERRORED = 4
+SHM_HEAD_LEN = 128 + 4*4
 
 # Measure modes (numbers for compatibility with older devices)
 MODE_NAMES = {
@@ -118,9 +111,8 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         # create/open the shared memory area
         shm_size = SHM_HEAD_LEN + array_len * EL_SIZE
         self._shm = SharedMemory(shm_name, shm_size)
-        self._state = self._shm.get_array('u1', 128, 128)
-        self._state[0] = 0
-        self._init = self._shm.get_array('u2', 1, 256)
+        self._init = self._shm.get_array('u2', 1, 128)
+        self._init[0] = 0
         self._data = self._shm.get_array('u4', array_len, SHM_HEAD_LEN)
 
         # start the UMAMI subprocess
@@ -133,8 +125,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         )
 
         # wait for UMAMI to initialize
-        while not (self._init[0] and
-                   all(st >= STATE_INIT for st in self._state[:self._nmod])):
+        while not self._init[0]:
             if not (self._proc and self._proc.poll() is None):
                 raise HardwareFailure('UMAMI process failed to start')
             time.sleep(0.1)
@@ -247,9 +238,10 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
     def state(self):
         if not (self._proc and self._proc.poll() is None):
             return FAULT, 'UMAMI process exited'
-        if any(st == STATE_RUNNING for st in self._state[:self._nmod]):
+        state = self._send_cmd('get_state')['inputs']
+        if any(st == 'running' for st in state.values()):
             return BUSY, 'counting'
-        elif any(st == STATE_ERRORED for st in self._state[:self._nmod]):
+        elif any(st == 'error' for st in state.values()):
             return FAULT, 'input error'
         return ON, ''
 

@@ -34,8 +34,12 @@ enum Cmd {
     Raw { path: String },
     /// Disable raw dump files.
     NoRaw,
+    /// Get all possible mode names.
+    Modes,
     /// Set mode name and parameters for histogramming.
     Mode { name: String, params: value::Map<String, value::Value> },
+    /// Get the current state.
+    State,
 }
 
 fn inner_main(args: Options) -> anyhow::Result<()> {
@@ -58,6 +62,8 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
         Cmd::NoRaw => Command::SetRawDump { enable: false, path: String::new() },
         Cmd::Mode { name, params } =>
             Command::SetMode { name, params: toml::Table::try_from(params)? },
+        Cmd::Modes => Command::GetModes,
+        Cmd::State => Command::GetState,
     };
 
     let cmd_json = serde_json::to_string(&cmd).context("Serializing command to JSON")?;
@@ -78,7 +84,13 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
             let module_str = module.map_or("".to_string(), |m| format!("Module {}: ", m.0));
             bail!("{}{}", module_str, message);
         },
-        CommandReply::Data { .. } => bail!("Unexpected data reply"),
+        CommandReply::Data { module, value } => {
+            if let Some(module) = module {
+                println!("Module {}: {}", module.0, value);
+            } else {
+                println!("{}", value);
+            }
+        }
     }
 
     Ok(())
