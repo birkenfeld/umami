@@ -75,12 +75,6 @@ pub struct RecipeConfig {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct PostConfig {
-    #[serde(default)]
-    pub recipe: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct HistoConfig {
     pub nx: usize,
     pub ny: usize,
@@ -91,7 +85,7 @@ pub struct HistoConfig {
 pub struct Config {
     pub modules: BTreeMap<String, ModuleConfig>,
     pub recipes: BTreeMap<String, RecipeConfig>,
-    pub postprocess: PostConfig,
+    pub postprocess_modes: BTreeMap<String, String>,
     pub histogram: HistoConfig,
     #[serde(default = "default_ipc_name")]
     pub ipc_name: String,

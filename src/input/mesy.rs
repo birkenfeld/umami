@@ -236,13 +236,10 @@ impl MesySource for ReplayFile {
                         // this line should contain the number of header lines
                         if let Some(pos) = buffer.windows(15).position(|w| w == b"header length: ") {
                             let start_num = pos + 15;
-                            if let Some(end_num) = buffer[start_num..].windows(6).position(|w| w == b" lines") {
-                                if let Some(num) = std::str::from_utf8(&buffer[start_num..][..end_num])
-                                    .ok()
-                                    .and_then(|s| s.trim().parse::<usize>().ok())
-                                {
-                                    header_lines = num;
-                                }
+                            if let Some(end_num) = buffer[start_num..].windows(6).position(|w| w == b" lines")
+                                && let Some(num) = parse_int(&buffer[start_num..][..end_num])
+                            {
+                                header_lines = num;
                             }
                         }
                     }
@@ -277,4 +274,8 @@ impl MesySource for ReplayFile {
             Ok(n)
         }
     }
+}
+
+fn parse_int(s: &[u8]) -> Option<u64> {
+    std::str::from_utf8(s).ok()?.trim().parse::<u64>().ok()
 }

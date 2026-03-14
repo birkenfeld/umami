@@ -6,6 +6,7 @@ use std::os::unix::net;
 use std::time::Duration;
 use anyhow::{bail, Context};
 use clap::{Parser, Subcommand};
+use serde_json::value;
 use uds::UnixDatagramExt;
 use umami::{Command, CommandReply};
 
@@ -33,8 +34,8 @@ enum Cmd {
     Raw { path: String },
     /// Disable raw dump files.
     NoRaw,
-    /// Set TOF parameters for histogramming.
-    Params { params: serde_json::value::Map<String, serde_json::value::Value> },
+    /// Set mode name and parameters for histogramming.
+    Mode { name: String, params: value::Map<String, value::Value> },
 }
 
 fn inner_main(args: Options) -> anyhow::Result<()> {
@@ -55,7 +56,8 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
         Cmd::Clear => Command::Clear,
         Cmd::Raw { path } => Command::SetRawDump { enable: true, path },
         Cmd::NoRaw => Command::SetRawDump { enable: false, path: String::new() },
-        Cmd::Params { params } => Command::SetParams { params: toml::Table::try_from(params)? },
+        Cmd::Mode { name, params } =>
+            Command::SetMode { name, params: toml::Table::try_from(params)? },
     };
 
     let cmd_json = serde_json::to_string(&cmd).context("Serializing command to JSON")?;

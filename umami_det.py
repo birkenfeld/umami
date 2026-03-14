@@ -28,7 +28,8 @@ import subprocess
 import time
 
 from entangle import base
-from entangle.core import BUSY, FAULT, ON, Prop, nonemptystring
+from entangle.core import BUSY, FAULT, ON, Attr, Prop, nonemptystring, \
+    uint16, uint64
 from entangle.core.errors import ConfigurationError, InvalidOperation, \
     CommunicationFailure, HardwareFailure
 from entangle.lib import toml
@@ -50,17 +51,24 @@ STATE_STOPPED = 3
 STATE_ERRORED = 4
 STATE_ENDED   = 5
 
+# Measure modes (numbers for compatibility with older devices)
+MODE_NAMES = {
+    0: 'default',
+    1: 'tof',
+    2: 'ext_rt',
+}
+
 
 class ImageChannel(FdLogMixin, base.ImageChannel):
     """Provides histogram readout for any detector supported by UMAMI."""
 
     attributes = {
-        # 'measureMode': Attr(uint16, 'Measure mode (normal/TOF/RT).',
-        #                     writable=True),
-        # 'tofRange':    Attr(uint64, 'Range of TOF channels.', dims=1,
-        #                     unit='us', max_x=1025, writable=True),
-        # 'ignoreGate':  Attr(bool, 'Whether to ignore the gate signal.',
-        #                     writable=True),
+        'measureMode': Attr(uint16, 'Measure mode (normal/TOF/RT).',
+                            writable=True),
+        'tofRange':    Attr(uint64, 'Range of TOF channels.', dims=1,
+                            unit='us', max_x=1025, writable=True),
+        'ignoreGate':  Attr(bool, 'Whether to ignore the gate signal.',
+                            writable=True),
     }
 
     properties = {
@@ -74,13 +82,22 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
     _cmdsock = None
 
     def init(self):
-        self._proc = None
+        # check prerequisites
         if not os.path.isfile(self.umami):
             raise ConfigurationError('UMAMI executable does not exist')
         if not os.path.isdir(self.rawdatadir):
             raise ConfigurationError('Raw data directory does not exist')
         if not os.path.isfile(self.config):
             raise ConfigurationError('Config file does not exist')
+
+        # general initialization
+        self._tofbins = []
+        self._ntofbins = 1
+        self._mode = 0
+        self._ignoregate = False
+        self._started = False
+
+        # read initial config from UMAMI toml config
         with open(self.config) as f:
             content = f.read()
         config = toml.Parser(self.config, content).parse_doc()
@@ -90,14 +107,16 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         self._ny = config['histogram']['ny']
         self._max_nt = config['histogram']['max_nt']
         array_len = self._nx * self._ny * self._max_nt
+
+        # create/open the shared memory area
         shm_size = SHM_HEAD_LEN + array_len * EL_SIZE
         self._shm = SharedMemory(shm_name, shm_size)
         self._state = self._shm.get_array('u1', 128, 128)
         self._state[0] = 0
         self._init = self._shm.get_array('u2', 1, 256)
         self._data = self._shm.get_array('u4', array_len, SHM_HEAD_LEN)
-        self._ntofbins = 1
-        self._started = False
+
+        # start the UMAMI subprocess
         self.init_fd_log('umami')
         self._proc = subprocess.Popen(
             [self.umami, self.config],
@@ -105,16 +124,23 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
             close_fds=True,
             stderr=self.get_log_fd(),
         )
+
+        # wait for UMAMI to initialize
         while not (self._init[0] and
                    all(st >= STATE_INIT for st in self._state[:self._nmod])):
             if not (self._proc and self._proc.poll() is None):
                 raise HardwareFailure('UMAMI process failed to start')
             time.sleep(0.1)
+
+        # connect to UMAMI via a Unix socket and set up the initial state
         self._cmdsock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self._cmdsock.settimeout(2)
         self._cmdsock.bind('\0tango-umami-cmd-' + self._worker_name)
         self._cmdsock.connect('\0' + shm_name)
+
+        # enable raw data dumping and get supported measure modes
         self._send_cmd('set_raw_dump', enable=True, path=self.rawdatadir)
+        self._measure_modes = self._send_cmd('get_modes')
 
     def delete(self):
         if self._cmdsock:
@@ -157,32 +183,44 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         if value:
             raise InvalidOperation('This channel does not support active mode')
 
-    # def read_measureMode(self):
-    #     return 0
+    def read_measureMode(self):
+        return self._mode
 
-    # def write_measureMode(self, value):
-    #     pass
+    def write_measureMode(self, value):
+        mode_name = MODE_NAMES.get(value, 'unknown')
+        if mode_name not in self._measure_modes:
+            raise InvalidOperation(
+                f'Measure mode {mode_name!r} not supported by UMAMI')
+        self._send_cmd('set_mode', mode=mode_name)
+        self._mode = value
 
-    # def get_measureMode_unit(self):
-    #     return ''
+    def get_measureMode_unit(self):
+        return ''
 
-    # def read_ignoreGate(self):
-    #     return False
+    def read_ignoreGate(self):
+        return self._ignoregate
 
-    # def write_ignoreGate(self, value):
-    #     pass
+    def write_ignoreGate(self, value):
+        self._send_cmd('set_mode', mode=MODE_NAMES[self._mode],
+                       use_gate=not value)
+        self._ignoregate = value
 
-    # def get_ignoreGate_unit(self):
-    #     return ''
+    def get_ignoreGate_unit(self):
+        return ''
 
-    # def read_tofRange(self):
-    #     return self._ntofbins
+    def read_tofRange(self):
+        if self._mode == 0:
+            return []
+        return self._tofbins
 
-    # def write_tofRange(self, value):
-    #     pass
+    def write_tofRange(self, value):
+        self._send_cmd('set_mode', mode=MODE_NAMES[self._mode],
+                       time_bins=list(t/1e6 for t in value))
+        self._ntofbins = len(value)
+        self._tofbins = value
 
-    # def get_tofRange_unit(self):
-    #     return 'us'
+    def get_tofRange_unit(self):
+        return 'us'
 
     def read_preselection(self):
         return 0

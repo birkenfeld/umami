@@ -18,17 +18,18 @@ pub enum Command {
     Start { run_id: String },
     Stop,
     SetRawDump { enable: bool, path: String },
-    SetParams { params: toml::Table },
+    SetMode { name: String, params: toml::Table },
+    GetModes,
     Config { module: ModuleId, name: String, value: Value },
     GetConfig { module: ModuleId, name: String },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "result")]
+#[serde(tag = "result", rename_all = "snake_case")]
 pub enum CommandReply {
     Ok,
     Error { module: Option<ModuleId>, message: String },
-    Data { module: ModuleId, value: Value },
+    Data { module: Option<ModuleId>, value: Value },
 }
 
 impl CommandReply {
@@ -85,8 +86,13 @@ impl CommandHandler {
                               .expect("postprocessor command receiver died");
                 Ok(CommandReply::Ok)
             }
-            Command::SetParams { params } => {
-                self.post_send.send(PipeItem::Params(params, rep_send))
+            Command::SetMode { name, params } => {
+                self.post_send.send(PipeItem::SetMode(name, params, rep_send))
+                              .expect("postprocessor command receiver died");
+                Ok(rep_recv.recv().expect("postprocessor command sender died"))
+            }
+            Command::GetModes => {
+                self.post_send.send(PipeItem::GetModes(rep_send))
                               .expect("postprocessor command receiver died");
                 Ok(rep_recv.recv().expect("postprocessor command sender died"))
             }

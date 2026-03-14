@@ -3,4 +3,3 @@
 - wrong event count when starting while still reading from file
 - check input time offsets for GE
 - file paths relative to config dir
-- implement measure modes (= different postproc recipes)?

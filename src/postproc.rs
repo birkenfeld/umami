@@ -1,8 +1,9 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-use anyhow::Context;
+use std::collections::BTreeMap;
 use std::time::Instant;
+use anyhow::Context;
 use crate::{lprintln, ltrace};
 use crate::channel::{Receiver, Sender};
 use crate::command::CommandReply;
@@ -13,7 +14,7 @@ use crate::recipe::Recipe;
 use crate::shm::ShmBox;
 
 pub struct PostProcessor {
-    recipe: Box<dyn Recipe>,
+    recipes: BTreeMap<String, Box<dyn Recipe>>,
     input: Receiver<PipeItem>,
     output: Sender<PipeItem>,
     shm: ShmBox,
@@ -21,13 +22,13 @@ pub struct PostProcessor {
 
 impl PostProcessor {
     pub fn new(
-        recipe: Box<dyn Recipe>,
+        recipes: BTreeMap<String, Box<dyn Recipe>>,
         input: Receiver<PipeItem>,
         output: Sender<PipeItem>,
         data: ShmBox,
     ) -> Self {
         Self {
-            recipe,
+            recipes,
             input,
             output,
             shm: data,
@@ -49,33 +50,17 @@ impl PostProcessor {
         let mut ev_count: usize = 0;
         let mut out_of_order = 0;
 
+        // use the default recipe at first
+        let recipe_names = self.recipes.keys().cloned().collect::<Vec<_>>();
+        let mut recipe = self.recipes.get_mut("default").expect("default recipe").as_mut();
+
         self.shm.set_initialized();
 
         while let Ok(mut item) = self.input.recv() {
             match item {
-                PipeItem::Clear => {
-                    lprintln!(INFO, "Clearing histogram");
-                    self.shm.clear_histo();
-                }
-                PipeItem::StartOfRun(ref run_id) => {
-                    lprintln!(INFO, "Starting run {}", run_id);
-                    self.shm.set_run_id(run_id);
-                    last_ts = EventTime::zero();
-                    ev_count = 0;
-                    out_of_order = 0;
-                    debug_at = 0;
-                    started = Some(Instant::now());
-                }
-                PipeItem::EndOfRun => {
-                    if let Some(ts) = started {
-                        lprintln!(INFO, "Run finished: {} events in {:.3} s, {} out of order",
-                                  ev_count, ts.elapsed().as_secs_f32(), out_of_order);
-                        started = None;
-                    }
-                }
                 PipeItem::Events(evs) => {
                     ev_count += evs.len();
-                    let evs = self.recipe.process(evs);
+                    let evs = recipe.process(evs);
                     ltrace!("Postprocessed events: {:?}", evs);
                     if ev_count > debug_at {
                         lprintln!(DEBUG, "Received {} events", ev_count);
@@ -94,17 +79,52 @@ impl PostProcessor {
                     }
                     item = PipeItem::Events(evs);
                 }
-                PipeItem::Params(params, send) => {
-                    lprintln!(INFO, "Updating postproc recipe with {:?}", params);
-                    send.send(match self.recipe.update_config(params) {
+                PipeItem::StartOfRun(ref run_id) => {
+                    lprintln!(INFO, "Starting run {}", run_id);
+                    self.shm.set_run_id(run_id);
+                    last_ts = EventTime::zero();
+                    ev_count = 0;
+                    out_of_order = 0;
+                    debug_at = 0;
+                    started = Some(Instant::now());
+                }
+                PipeItem::EndOfRun => {
+                    if let Some(ts) = started {
+                        lprintln!(INFO, "Run finished: {} events in {:.3} s, {} out of order",
+                                  ev_count, ts.elapsed().as_secs_f32(), out_of_order);
+                        started = None;
+                    }
+                }
+                PipeItem::Clear => {
+                    lprintln!(INFO, "Clearing histogram");
+                    self.shm.clear_histo();
+                }
+
+                // Meta items, not sent on to output
+                PipeItem::ModuleState(ref module, ref state) => {
+                    self.shm.set_state(*module, *state);
+                    continue;
+                }
+                PipeItem::SetMode(name, params, send) => {
+                    lprintln!(INFO, "Using postproc recipe {} with {:?}", name, params);
+                    if !recipe_names.contains(&name) {
+                        send.send(CommandReply::new_error(
+                            None, format!("Recipe {} not found", name)))
+                            .expect("param reply receiver died");
+                        continue;
+                    }
+                    recipe = self.recipes.get_mut(&name).expect("checked above").as_mut();
+                    send.send(match recipe.update_config(params) {
                         Ok(_) => CommandReply::Ok,
                         Err(e) => CommandReply::new_error(
                             None, format!("Failed to update recipe config: {}", e)),
                     }).expect("param reply receiver died");
                     continue;
                 }
-                PipeItem::State(ref module, ref state) => {
-                    self.shm.set_state(*module, *state);
+                PipeItem::GetModes(send) => {
+                    send.send(CommandReply::Data { module: None, value: recipe_names.clone().into() })
+                        .expect("param reply receiver died");
+                    continue;
                 }
             }
             self.output.send(item).expect("output sender closed");

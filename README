@@ -1,10 +1,17 @@
 Unified Mechanism for Acquisition of Measured Intensity (UMAMI)
 ===============================================================
 
-UMAMI is brought to you by
+Idea
+----
+
+UMAMI implements a "modular pipeline" approach which combines detector-specific
+backends with configurable processing steps.
+
 
 Authors
 -------
+
+UMAMI is brought to you by
 
 * Georg Brandl <g.brandl@fz-juelich.de>
 * Alexander Zaft <a.zaft@fz-juelich.de>

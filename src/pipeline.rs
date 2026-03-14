@@ -21,8 +21,9 @@ pub enum PipeItem {
     Clear,
     StartOfRun(String),
     EndOfRun,
-    State(ModuleId, InputState),
-    Params(toml::Table, channel::Sender<CommandReply>),
+    ModuleState(ModuleId, InputState),
+    SetMode(String, toml::Table, channel::Sender<CommandReply>),
+    GetModes(channel::Sender<CommandReply>),
 }
 
 pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
@@ -107,8 +108,16 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
 
     let (output_send, output_recv) = channel::bounded(EV_CHANNEL_SIZE);
 
+    let mut post_recipes = BTreeMap::new();
+    for (name, recipe) in config.postprocess_modes {
+        post_recipes.insert(name, recipe::from_config(&config.recipes, &recipe)?);
+    }
+    if !post_recipes.contains_key("default") {
+        Err(anyhow!("No default mode configured"))?;
+    }
+
     let postproc = postproc::PostProcessor::new(
-        recipe::from_config(&config.recipes, &config.postprocess.recipe)?,
+        post_recipes,
         postproc_recv,
         output_send,
         shm_area,

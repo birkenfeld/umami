@@ -45,7 +45,7 @@ pub struct InputCommon {
 
 impl InputCommon {
     fn update_state(&self, state: InputState) {
-        self.state.send(PipeItem::State(self.module, state))
+        self.state.send(PipeItem::ModuleState(self.module, state))
                   .expect("state channel closed");
     }
 }

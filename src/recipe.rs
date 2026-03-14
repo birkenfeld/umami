@@ -6,7 +6,7 @@ mod mesy;
 mod tof;
 
 use std::collections::BTreeMap;
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use crate::config::RecipeConfig;
 use crate::error::UResult;
 use crate::event::Event;
@@ -44,9 +44,12 @@ pub fn from_config(map: &BTreeMap<String, RecipeConfig>, name: &str) -> UResult<
     match this.r#type.as_str() {
         // TODO: should be a macro
         "none" => Ok(Box::new(NoRecipe)),
-        "tof_std" => Ok(Box::new(tof::TofStd::from_config(this.config, map)?)),
-        "mesy_test" => Ok(Box::new(mesy::MesyTest::from_config(this.config, map)?)),
-        "kws_ge" => Ok(Box::new(kws::KWSGERecipe::from_config(this.config, map)?)),
+        "tof_std" => Ok(Box::new(tof::TofStd::from_config(this.config, map)
+                                 .with_context(|| format!("Creating recipe {name}"))?)),
+        "mesy_test" => Ok(Box::new(mesy::MesyTest::from_config(this.config, map)
+                                 .with_context(|| format!("Creating recipe {name}"))?)),
+        "kws_ge" => Ok(Box::new(kws::KWSGERecipe::from_config(this.config, map)
+                                 .with_context(|| format!("Creating recipe {name}"))?)),
         _ => Err(anyhow!("Unknown recipe type: {}", this.r#type).into()),
     }
 }
