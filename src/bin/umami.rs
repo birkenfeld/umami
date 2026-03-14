@@ -2,7 +2,6 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use std::path::PathBuf;
-use anyhow::Context;
 use clap::Parser;
 
 use umami::lprintln;
@@ -27,10 +26,7 @@ pub struct Options {
 
 fn inner_main(args: Options) -> umami::UResult<()> {
     lprintln!(INFO, "Starting UMAMI with config file {:?}", args.config.display());
-    let mut config: umami::Config = toml::from_str(
-        &std::fs::read_to_string(&args.config)
-            .with_context(|| format!("Failed to read config file {:?}", args.config.display()))?
-    ).with_context(|| format!("Failed to parse config file {:?}", args.config.display()))?;
+    let mut config = umami::load_config(&args.config)?;
 
     if let Some(ipc_name) = args.ipc_name {
         config.ipc_name = ipc_name.to_string();

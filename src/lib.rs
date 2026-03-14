@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 // Public API
 pub use self::command::{Command, CommandReply};
-pub use self::config::Config;
+pub use self::config::load_config;
 pub use self::error::UResult;
 pub use self::pipeline::run_pipeline;
 

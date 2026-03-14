@@ -2,7 +2,10 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use anyhow::Context;
 use serde::Deserialize;
+use crate::error::UResult;
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -91,6 +94,8 @@ pub struct Config {
     pub ipc_name: String,
     #[serde(default)]
     pub debug: bool,
+    #[serde(skip)]
+    pub filename: PathBuf,
 }
 
 fn deserialize_ip<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -107,4 +112,13 @@ where
 
 fn default_ipc_name() -> String {
     "umami".into()
+}
+
+pub fn load_config(path: &Path) -> UResult<Config> {
+    let mut config: Config = toml::from_str(
+        &std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read config file {:?}", path.display()))?
+    ).with_context(|| format!("Failed to parse config file {:?}", path.display()))?;
+    config.filename = path.to_owned();
+    Ok(config)
 }
