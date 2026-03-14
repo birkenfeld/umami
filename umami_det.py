@@ -147,8 +147,11 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
             self._proc.kill()
         self.delete_fd_log()
         if self._shm:
-            self._state = self._init = self._data = None
-            self._shm.close()
+            self._init = self._data = None
+            try:
+                self._shm.close()
+            except BufferError:
+                pass
 
     def read_detectorSize(self):
         return [self._nx, self._ny, self._ntofbins]

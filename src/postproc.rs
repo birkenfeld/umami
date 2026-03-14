@@ -65,7 +65,7 @@ impl PostProcessor {
                 PipeItem::Events(evs) => {
                     ev_count += evs.len();
                     let evs = recipe.process(evs);
-                    ltrace!("Postprocessed events: {:?}", evs);
+                    ltrace!("Processed events: {:?}", evs);
                     if ev_count > debug_at {
                         lprintln!(DEBUG, "Received {ev_count} events");
                         debug_at += 1000000;
@@ -110,7 +110,7 @@ impl PostProcessor {
                     continue;
                 }
                 PipeItem::SetMode(name, params, send) => {
-                    lprintln!(INFO, "Using postproc recipe {name} with {params:?}");
+                    lprintln!(INFO, "Using processing recipe {name} with {params:?}");
                     if !recipe_names.contains(&name) {
                         send.send(CommandReply::new_error(
                             None, format!("Recipe {} not found", name)))

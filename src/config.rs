@@ -88,7 +88,7 @@ pub struct HistoConfig {
 pub struct Config {
     pub modules: BTreeMap<String, ModuleConfig>,
     pub recipes: BTreeMap<String, RecipeConfig>,
-    pub postprocess_modes: BTreeMap<String, String>,
+    pub process_modes: BTreeMap<String, String>,
     pub histogram: HistoConfig,
     #[serde(default = "default_ipc_name")]
     pub ipc_name: String,

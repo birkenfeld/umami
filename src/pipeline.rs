@@ -95,7 +95,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     let (output_send, output_recv) = channel::bounded(EV_CHANNEL_SIZE);
 
     let mut post_recipes = BTreeMap::new();
-    for (name, recipe) in config.postprocess_modes {
+    for (name, recipe) in config.process_modes {
         post_recipes.insert(name, recipe::from_config(&config.recipes, &recipe)?);
     }
     if !post_recipes.contains_key("default") {
