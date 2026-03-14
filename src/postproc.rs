@@ -140,6 +140,10 @@ impl PostProcessor {
                     let mut map = serde_json::Map::new();
                     map.insert("inputs".into(), inputs.into());
                     map.insert("mode".into(), cur_recipe.as_str().into());
+                    // TODO mode parameters
+                    map.insert("nx".into(), self.shm.nx.into());
+                    map.insert("ny".into(), self.shm.nx.into());
+                    map.insert("max_nt".into(), self.shm.nt.into());
                     send.send(CommandReply::Data { module: None, value: map.into() })
                         .expect("param reply receiver died");
                     continue;

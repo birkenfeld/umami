@@ -15,7 +15,6 @@ pub const MAX_HISTO_SIZE: usize = 1024 * 1024 * 1024;  // 1 GB shmem
 
 pub struct ShmBox {
     ptr: NonNull<ShmInterface>,
-    max_nt: u32,
 }
 
 unsafe impl Send for ShmBox {}
@@ -36,21 +35,15 @@ impl DerefMut for ShmBox {
 
 impl ShmBox {
     pub fn clear_histo(&mut self) {
-        let size = (self.nx * self.ny * self.max_nt) as usize;
+        let size = (self.nx * self.ny * self.nt) as usize;
         unsafe {
             let histo_ptr = self.ptr.as_ptr().add(1) as *mut u32;
             std::slice::from_raw_parts_mut(histo_ptr, size).fill(0);
         };
     }
 
-    pub fn add_histo(&mut self, x: u32, y: u32, mut t: u32) {
-        if self.nt > 0 && t >= self.nt {
-            return;
-        }
-        if self.nt == 0 {
-            t = 0;
-        }
-        if x < self.nx && y < self.ny {
+    pub fn add_histo(&mut self, x: u32, y: u32, t: u32) {
+        if x < self.nx && y < self.ny && t < self.nt {
             let off = t * (self.nx * self.ny) + y * self.nx + x;
             unsafe {
                 let histo_ptr = self.ptr.as_ptr().add(1) as *mut u32;
@@ -105,13 +98,12 @@ impl ShmInterface {
                  ProtFlags::PROT_WRITE, MapFlags::MAP_SHARED, fd, 0)
                 .context("Mapping shared memory block")?
         };
-        let mut shmbox = ShmBox { ptr: ptr.cast(), max_nt: config.max_nt as u32 };
+        let mut shmbox = ShmBox { ptr: ptr.cast() };
         shmbox.run_id.fill(0);
         shmbox.global_state = 0;
         shmbox.nx = config.nx as u32;
         shmbox.ny = config.ny as u32;
-        shmbox.nt = 0;
+        shmbox.nt = config.max_nt as u32;
         Ok(shmbox)
     }
-
 }
