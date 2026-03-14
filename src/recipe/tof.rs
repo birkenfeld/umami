@@ -114,3 +114,53 @@ impl Recipe for TofStd {
         events
     }
 }
+
+pub struct HistoStd {
+    // Configuration
+    /// Whether to use the gate signal to filter events. If false, gate signals
+    /// are ignored.
+    use_gate: bool,
+    // Run-time state
+    gate_up: bool,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct HistoConfig {
+    pub use_gate: Option<bool>,
+}
+
+impl Recipe for HistoStd {
+    fn from_config(config: toml::Table, _: &BTreeMap<String, RecipeConfig>) -> UResult<Self> {
+        let config: HistoConfig = config.try_into()
+            .context("parsing config for tof_std recipe")?;
+        Ok(HistoStd {
+            use_gate: config.use_gate.unwrap_or(false),
+            gate_up: false,
+        })
+    }
+
+    fn update_config(&mut self, config: toml::Table) -> UResult<()> {
+        let config: HistoConfig = config.try_into()
+            .context("parsing config for tof_std recipe")?;
+        if let Some(use_gate) = config.use_gate {
+            self.use_gate = use_gate;
+        }
+        Ok(())
+    }
+
+    fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
+        for event in &mut events {
+            match event.data {
+                EventData::Gate { up } => self.gate_up = up,
+                _ => {
+                    if self.use_gate && !self.gate_up {
+                        event.data = EventData::Void;
+                        continue;
+                    }
+                }
+            }
+        }
+        events
+    }
+}

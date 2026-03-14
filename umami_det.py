@@ -28,8 +28,8 @@ import subprocess
 import time
 
 from entangle import base
-from entangle.core import BUSY, FAULT, ON, Attr, Prop, nonemptystring, \
-    uint16, uint64
+from entangle.core import BUSY, FAULT, OFF, INIT, UNKNOWN, ON, Attr, Cmd, \
+    Prop, nonemptystring, uint16, uint64
 from entangle.core.errors import ConfigurationError, InvalidOperation, \
     CommunicationFailure, HardwareFailure
 from entangle.lib import toml
@@ -69,6 +69,14 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
                             unit='us', max_x=1025, writable=True),
         'ignoreGate':  Attr(bool, 'Whether to ignore the gate signal.',
                             writable=True),
+    }
+
+    commands = {
+        'Command': Cmd('Communicate with UMAMI over the Unix socket.',
+                       str, str,
+                       'The command to send, in JSON serialized form.',
+                       'The reply, in JSON serialized form.',
+                       disallowed=(FAULT, OFF, INIT, UNKNOWN)),
     }
 
     properties = {
@@ -261,6 +269,13 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
                 f'{reply.get("module", "unknown module")}')
         elif reply['result'] == 'data':
             return reply['value']
+
+    def Command(self, cmd):
+        try:
+            self._cmdsock.sendall(cmd.encode())
+            return self._cmdsock.recv(2048).decode()
+        except Exception as e:
+            raise CommunicationFailure(f'Error communicating with UMAMI: {e}')
 
     def Clear(self):
         self._send_cmd('clear')

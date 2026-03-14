@@ -38,25 +38,38 @@ impl UdsInterface {
         loop {
             match self.sock.recv_from(&mut buf) {
                 Ok((n, addr)) => {
-                    // TODO error handling
-                    if let Ok(s) = str::from_utf8(&buf[..n])
-                        && let Ok(cmd) = serde_json::from_str::<Command>(s)
-                    {
-                        ldebug!("Received command {:?}", cmd);
-                        self.req_write.send(cmd).unwrap();
-                        if let Ok(reply) = self.rep_read.recv() {
-                            ldebug!("Sending reply {:?}", reply);
-                            let r = serde_json::to_string(&reply).unwrap();
-                            if let Err(e) = self.sock.send_to_addr(r.as_bytes(), &addr) {
-                                lprintln!(ERROR, "Sending command reply: {e:#}");
-                            }
-                        }
+                    let reply = self.handle_message(&buf[..n]);
+                    let serialized = serde_json::to_string(&reply).expect("serializable");
+                    if self.sock.send_to_addr(serialized.as_bytes(), &addr).is_err() {
+                        lprintln!(ERROR, "Failed to send command reply to {:?}", addr);
                     }
-                },
+                }
                 Err(e) => {
                     lprintln!(ERROR, "Unix socket receive error: {e:#}");
                 }
             }
+        }
+    }
+
+    fn handle_message(&self, buf: &[u8]) -> CommandReply {
+        match str::from_utf8(buf) {
+            Err(_) => {
+                CommandReply::new_error(None, format!("Invalid UTF-8 in telegram"))
+            }
+            Ok(s) => match serde_json::from_str::<Command>(s) {
+                Err(e) => {
+                    CommandReply::new_error(None, format!("Invalid JSON or invalid command: {e:#}"))
+                }
+                Ok(cmd) => {
+                    ldebug!("Received command {:?}", cmd);
+                    self.req_write.send(cmd).unwrap();
+                    if let Ok(reply) = self.rep_read.recv() {
+                        reply
+                    } else {
+                        CommandReply::new_error(None, "Failed to receive command reply".to_string())
+                    }
+                }
+            },
         }
     }
 }

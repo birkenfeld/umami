@@ -44,6 +44,8 @@ pub fn from_config(map: &BTreeMap<String, RecipeConfig>, name: &str) -> UResult<
     match this.r#type.as_str() {
         // TODO: should be a macro
         "none" => Ok(Box::new(NoRecipe)),
+        "histo_std" => Ok(Box::new(tof::HistoStd::from_config(this.config, map)
+                                   .with_context(|| format!("Creating recipe {name}"))?)),
         "tof_std" => Ok(Box::new(tof::TofStd::from_config(this.config, map)
                                  .with_context(|| format!("Creating recipe {name}"))?)),
         "mesy_test" => Ok(Box::new(mesy::MesyTest::from_config(this.config, map)
