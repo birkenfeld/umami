@@ -23,8 +23,8 @@ pub struct GeInput<S> {
     source: S,
     module: ModuleId,
     dump: DumpHandler,
+    queue: Vec<Event>,
     is_ts: bool,
-    // last_event_at: EventTime,
 }
 
 fn read_time(buf: &[u8]) -> EventTime {
@@ -50,8 +50,8 @@ impl<S: Source> GeInput<S> {
             source,
             dump: Default::default(),
             module: common.module,
+            queue: Vec::with_capacity(1024),
             is_ts: config.timestamper,
-            // last_event_at: EventTime::zero(),
         };
         input.start_main_loop(common)?;
         Ok(())
@@ -92,18 +92,26 @@ impl<S: Source> Input for GeInput<S> {
         match self.source.read_exact(&mut buffer[..16]) {
             Ok(_) => {},
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(vec![]),
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(UError::InputEnded),
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                if !self.queue.is_empty() {
+                    self.queue.sort();
+                    return Ok(std::mem::take(&mut self.queue));
+                } else {
+                    return Err(UError::InputEnded);
+                }
+            }
             // TODO: handle reconnect if necessary
             Err(e) => Err(e).context("Reading from source")?,
         }
         let len = LE::read_u32(&buffer) as usize;
         let pktype = LE::read_u32(&buffer[4..]);
+        let header_time = read_time(&buffer[8..]);
 
         if len == 0 {
             if pktype == PACKET_HEARTBT {
                 self.dump.write(&buffer[..16])?;
                 return Ok(vec![Event::new(
-                    read_time(&buffer[8..]),
+                    header_time,
                     EventTime::zero(),
                     self.module,
                     InputId(0),
@@ -126,7 +134,16 @@ impl<S: Source> Input for GeInput<S> {
         };
         let nevents = (len - 24) / evlen;
         let mut offset = 40;
-        let mut events = Vec::with_capacity(nevents);
+        let mut events = Vec::with_capacity(self.queue.len() + nevents);
+
+        for event in std::mem::replace(&mut self.queue, Vec::with_capacity(1024)) {
+            if event.time < header_time {
+                events.push(event);
+            } else {
+                self.queue.push(event);
+            }
+        }
+
         for _ in 0..nevents {
             let detid = LE::read_u32(&buffer[offset+8..]);
             let data = if self.is_ts {
@@ -149,18 +166,20 @@ impl<S: Source> Input for GeInput<S> {
                 flags,
                 data,
             );
-            events.push(event);
+
+            // Use the packet header timestamp as a criterion - we know any events before
+            // this timestamp have been sent in this or a previous packet.  Any events
+            // afterwards can still have a later time than events coming in future packets.
+            if event.time < header_time {
+                events.push(event);
+            } else {
+                self.queue.push(event);
+            }
             offset += evlen;
         }
         events.sort();
 
         self.dump.write(&buffer[..16+len])?;
-
-        // if events[0].time < self.last_event_at {
-        //     crate::lprintln!(WARN, "Received out-of-order events with time {} (current ts {}), jump {}",
-        //                      events[0].time, self.last_event_at, self.last_event_at - events[0].time);
-        // }
-        // self.last_event_at = events.last().unwrap().time;
 
         Ok(events)
     }

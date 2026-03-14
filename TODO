@@ -1,5 +1,3 @@
 - Module IDs must be consecutive? Or how to map to SHM status?
 - status via SHM or UDS (more detailed)?
-- wrong event count when starting while still reading from file
-- check input time offsets for GE
 - file paths relative to config dir
