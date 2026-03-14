@@ -45,11 +45,10 @@ SHM_HEAD_LEN = 128 + 128 + 4*4
 
 # Input states
 STATE_UNKNOWN = 0
-STATE_INIT    = 1
+STATE_IDLE    = 1
 STATE_RUNNING = 2
-STATE_STOPPED = 3
+STATE_ENDED   = 3
 STATE_ERRORED = 4
-STATE_ENDED   = 5
 
 # Measure modes (numbers for compatibility with older devices)
 MODE_NAMES = {

@@ -78,6 +78,7 @@ impl<S: Source> Input for GeInput<S> {
     fn start(&mut self, run_id: String) -> UResult<()> {
         self.dump.start(self.module, &run_id)?;
         self.source.reset()?;
+        self.queue.clear();
         Ok(())
     }
 

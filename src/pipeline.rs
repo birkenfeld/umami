@@ -55,15 +55,10 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
             send
         };
         let (command_send, command_recv) = channel::bounded(1);
-        let common = InputCommon {
-            needs_reset: false,
-            running: false,
-            module: mid,
-            events: event_send,
-            state: postproc_send.clone(),
-            command: command_recv,
-            recipe: recipe::from_config(&config.recipes, &module_config.recipe)?,
-        };
+        let common = InputCommon::new(
+            mid, postproc_send.clone(), event_send, command_recv,
+            recipe::from_config(&config.recipes, &module_config.recipe)?
+        );
         command_sends.insert(mid, command_send);
 
         if let Err(e) = input::start(module_config.specific, common) {
@@ -96,10 +91,6 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         postproc_send.clone(),
     ).context("Creating command handler")?;
 
-    if immediate_start {
-        handler.handle(command::Command::Start { run_id: "auto".to_string() });
-    }
-
     let (output_send, output_recv) = channel::bounded(EV_CHANNEL_SIZE);
 
     let mut post_recipes = BTreeMap::new();
@@ -123,8 +114,12 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         .spawn(move || while output_recv.recv().is_ok() {})
         .context("Spawning output thread")?;
 
-    handler.start()?;
     postproc.start()?;
+
+    if immediate_start {
+        handler.handle(command::Command::Start { run_id: "auto".to_string() });
+    }
+    handler.start()?;
 
     wait_for_signal().context("Setting signal handler")?;
 
