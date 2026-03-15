@@ -9,7 +9,7 @@ use crate::command::CommandReply;
 use crate::config::Config;
 use crate::error::UResult;
 use crate::event::{Event, ModuleId};
-use crate::input::{InputCommon, InputState};
+use crate::input::{ModuleCommon, ModuleState};
 use crate::shm::{ShmInterface, MAX_MODULES};
 use crate::util::wait_for_signal;
 
@@ -20,7 +20,7 @@ pub enum PipeItem {
     Clear,
     StartOfRun(String),
     EndOfRun,
-    ModuleState(ModuleId, InputState),
+    ModuleState(ModuleId, ModuleState),
     SetMode(String, toml::Table, channel::Sender<CommandReply>),
     GetState(channel::Sender<CommandReply>),
 }
@@ -55,7 +55,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
             send
         };
         let (command_send, command_recv) = channel::bounded(1);
-        let common = InputCommon::new(
+        let common = ModuleCommon::new(
             mid, postproc_send.clone(), event_send, command_recv,
             recipe::from_config(&config.recipes, &module_config.recipe)?
         );

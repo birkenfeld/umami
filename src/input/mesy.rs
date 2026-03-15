@@ -12,7 +12,7 @@ use crate::config::{MesyConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::event::{ModuleId, Event, EventFlags, EventData, EventTime, InputId};
 use crate::input::{ReplayFile, DumpHandler};
-use super::{Source, Input, InputCommon, UdpReader};
+use super::{Source, Module, ModuleCommon, UdpReader};
 
 const MAX_PACKET_SIZE: usize = 2048;
 const HEADER_LEN: usize = 42;
@@ -23,7 +23,7 @@ const END_MARKER: &[u8] = b"\xff\xff\xaa\xaa\x55\x55\x00\x00";
 const FILE_START: &[u8] = b"mesytec ";
 const FULL_HEADER: &[u8] = b"mesytec psd listmode data\nheader length: 2 lines \n";
 
-pub struct MesyInput<S, C> {
+pub struct MesyModule<S, C> {
     source: S,
     command_handler: C,
     module: ModuleId,
@@ -31,39 +31,39 @@ pub struct MesyInput<S, C> {
     is_master: bool,
 }
 
-impl MesyInput<(), ()> {
-    pub fn start(config: MesyConfig, common: InputCommon) -> UResult<()> {
+impl MesyModule<(), ()> {
+    pub fn start(config: MesyConfig, common: ModuleCommon) -> UResult<()> {
         match &config.local {
             SourceConfig::IP(addr) => {
                 let reader = UdpReader::from_config(addr)?;
                 let local = reader.0.local_addr().context("Getting local address of UDP reader")?;
                 let cmds = cmd::make_command_socket(local, &config)?;
-                MesyInput::start_with_source(reader, cmds, config, common)
+                MesyModule::start_with_source(reader, cmds, config, common)
             }
             SourceConfig::File(path) => {
-                MesyInput::start_with_source(ReplayFile::from_config(path)?, (), config, common)
+                MesyModule::start_with_source(ReplayFile::from_config(path)?, (), config, common)
             }
         }
     }
 }
 
-impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
-    fn start_with_source(source: S, mut commands: C, config: MesyConfig, common: InputCommon) -> UResult<()> {
+impl<S: MesySource, C: cmd::MesyCommandHandler> MesyModule<S, C> {
+    fn start_with_source(source: S, mut commands: C, config: MesyConfig, common: ModuleCommon) -> UResult<()> {
         let modules = commands.scan()?;
         commands.set_up(&modules, &config)?;
-        let input = Self {
+        let module = Self {
             source,
             command_handler: commands,
             module: common.module,
             dump: Default::default(),
             is_master: config.is_master,
         };
-        input.start_main_loop(common)?;
+        module.start_main_loop(common)?;
         Ok(())
     }
 }
 
-impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
+impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
     fn description(&self) -> String {
         format!("MCPD module {} at {}", self.module.0, self.source.description())
     }
@@ -101,7 +101,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
             Ok(0) => return Ok(vec![]),
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(vec![]),
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(UError::InputEnded),
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(UError::NoMoreData),
             Err(e) => Err(e).context("Reading packet from source")?,
         };
         self.dump.write(&buffer[..n])?;

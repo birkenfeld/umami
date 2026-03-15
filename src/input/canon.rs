@@ -12,9 +12,9 @@ use crate::config::{CanonConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
 use crate::input::{ReplayFile, DumpHandler};
-use super::{Source, Input, InputCommon};
+use super::{Source, Module, ModuleCommon};
 
-pub struct CanonInput<S> {
+pub struct CanonModule<S> {
     source: S,
     module: ModuleId,
     dump: DumpHandler,
@@ -29,20 +29,20 @@ const EVENT_SIZE: usize = 8;
 // 01/01/2008 00:00:00 UTC, the epoch for Canon device time
 const EPOCH: EventTime = EventTime::from_sec_nsec(1199145600, 0);
 
-impl CanonInput<()> {
-    pub fn start(config: CanonConfig, common: InputCommon) -> UResult<()> {
+impl CanonModule<()> {
+    pub fn start(config: CanonConfig, common: ModuleCommon) -> UResult<()> {
         match &config.source {
-            SourceConfig::IP(addr) => CanonInput::start_with_source(
+            SourceConfig::IP(addr) => CanonModule::start_with_source(
                 TcpStream::from_config(addr)?, config, common),
-            SourceConfig::File(path) => CanonInput::start_with_source(
+            SourceConfig::File(path) => CanonModule::start_with_source(
                 ReplayFile::from_config(path)?, config, common),
         }
     }
 }
 
-impl<S: CanonSource> CanonInput<S> {
-    pub fn start_with_source(source: S, config: CanonConfig, common: InputCommon) -> UResult<()> {
-        let input = Self {
+impl<S: CanonSource> CanonModule<S> {
+    pub fn start_with_source(source: S, config: CanonConfig, common: ModuleCommon) -> UResult<()> {
+        let module = Self {
             source,
             module: common.module,
             dump: Default::default(),
@@ -50,12 +50,12 @@ impl<S: CanonSource> CanonInput<S> {
             time_ofs: EventTime::zero(),
             buffer: vec![0; EVENT_SIZE * MAX_EVENTS],
         };
-        input.start_main_loop(common)?;
+        module.start_main_loop(common)?;
         Ok(())
     }
 }
 
-impl<S: CanonSource> Input for CanonInput<S> {
+impl<S: CanonSource> Module for CanonModule<S> {
     fn description(&self) -> String {
         format!(
             "{} module {} at {}",
@@ -184,7 +184,7 @@ impl CanonSource for TcpStream {
             // no answer? strange, but give it some time
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(0),
             // socket closed
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(UError::InputEnded),
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(UError::NoMoreData),
             // TODO: handle reconnect if necessary
             Err(e) => Err(e).context("Reading number of events")?,
         };
@@ -200,7 +200,7 @@ impl CanonSource for ReplayFile {
         // There are no headers in the replay file, so we just read as many events as possible.
         match io::Read::read(&mut self.file, buffer) {
             Ok(n) => Ok(n / EVENT_SIZE),
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Err(UError::InputEnded),
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Err(UError::NoMoreData),
             Err(e) => Err(e).context("Reading events from replay file")?,
         }
     }

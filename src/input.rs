@@ -24,7 +24,7 @@ use crate::util::resolve;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum InputState {
+pub enum ModuleState {
     Init,
     Idle,
     Running,
@@ -32,8 +32,8 @@ pub enum InputState {
     Error(String),
 }
 
-pub struct InputCommon {
-    state: InputState,
+pub struct ModuleCommon {
+    state: ModuleState,
     module: ModuleId,
     state_send: Sender<PipeItem>,
     events: Sender<PipeItem>,
@@ -41,7 +41,7 @@ pub struct InputCommon {
     recipe: Box<dyn Recipe>,
 }
 
-impl InputCommon {
+impl ModuleCommon {
     pub fn new(
         module: ModuleId,
         state_send: Sender<PipeItem>,
@@ -50,7 +50,7 @@ impl InputCommon {
         recipe: Box<dyn Recipe>,
     ) -> Self {
         Self {
-            state: InputState::Init,
+            state: ModuleState::Init,
             module,
             state_send,
             events,
@@ -59,8 +59,8 @@ impl InputCommon {
         }
     }
 
-    fn set_state(&mut self, state: InputState) {
-        if self.state == InputState::Running {
+    fn set_state(&mut self, state: ModuleState) {
+        if self.state == ModuleState::Running {
             self.events.send(PipeItem::EndOfRun).expect("event channel closed");
         }
         self.state = state.clone();
@@ -69,16 +69,16 @@ impl InputCommon {
     }
 }
 
-pub fn start(config: SpecificModuleConfig, common: InputCommon) -> UResult<()> {
+pub fn start(config: SpecificModuleConfig, common: ModuleCommon) -> UResult<()> {
     match config {
-        SpecificModuleConfig::GE(cfg) => ge::GeInput::start(cfg, common)?,
-        SpecificModuleConfig::Canon(cfg) => canon::CanonInput::start(cfg, common)?,
-        SpecificModuleConfig::Mesy(cfg) => mesy::MesyInput::start(cfg, common)?,
+        SpecificModuleConfig::GE(cfg) => ge::GeModule::start(cfg, common)?,
+        SpecificModuleConfig::Canon(cfg) => canon::CanonModule::start(cfg, common)?,
+        SpecificModuleConfig::Mesy(cfg) => mesy::MesyModule::start(cfg, common)?,
     }
     Ok(())
 }
 
-pub trait Input: Send {
+pub trait Module: Send {
     fn description(&self) -> String;
     fn handle(&mut self, cmd: Command) -> UResult<CommandReply>;
     fn start(&mut self, run_id: String) -> UResult<()>;
@@ -87,69 +87,69 @@ pub trait Input: Send {
 
     // Rest of methods are all fully implemented
 
-    fn start_main_loop(self, common: InputCommon) -> UResult<()>
+    fn start_main_loop(self, common: ModuleCommon) -> UResult<()>
     where Self: Sized + 'static
     {
         let desc = self.description();
         lprintln!(INFO, "Initialized {desc}");
         thread::Builder::new()
-            .name(format!("Input {}", self.description()))
+            .name(format!("Module {}", self.description()))
             .spawn(move || self.main_loop(common))
-            .context(format!("Spawning input thread for {desc}"))?;
+            .context(format!("Spawning module thread for {desc}"))?;
         Ok(())
     }
 
-    fn main_loop_command(&mut self, cmd: Command, rep: Sender<CommandReply>, common: &mut InputCommon) {
+    fn main_loop_command(&mut self, cmd: Command, rep: Sender<CommandReply>, common: &mut ModuleCommon) {
         let mid = common.module;
         let reply = match cmd {
             Command::Start { run_id } => match common.state {
-                InputState::Error(_) | InputState::Init => {
+                ModuleState::Error(_) | ModuleState::Init => {
                     CommandReply::new_error(
-                        Some(mid), format!("Cannot start input from state {:?}", common.state)
+                        Some(mid), format!("Cannot start module from state {:?}", common.state)
                     )
                 }
                 _ => {
-                    if common.state == InputState::Running {
+                    if common.state == ModuleState::Running {
                         if let Err(e) = self.stop() {
-                            let msg = format!("Failed to stop input for restart: {}", e);
-                            common.set_state(InputState::Error(msg.clone()));
+                            let msg = format!("Failed to stop module for restart: {}", e);
+                            common.set_state(ModuleState::Error(msg.clone()));
                             rep.send(CommandReply::new_error(Some(mid), msg))
                                .expect("command channel closed");
                             return;
                         } else {
-                            common.set_state(InputState::Idle);
+                            common.set_state(ModuleState::Idle);
                         }
                     }
                     if let Err(e) = self.start(run_id) {
-                        let msg = format!("Failed to start input: {}", e);
-                        common.set_state(InputState::Error(msg.clone()));
+                        let msg = format!("Failed to start module: {}", e);
+                        common.set_state(ModuleState::Error(msg.clone()));
                         CommandReply::new_error(Some(mid), msg)
                     } else {
-                        common.set_state(InputState::Running);
+                        common.set_state(ModuleState::Running);
                         CommandReply::Ok
                     }
                 }
             }
             Command::Stop => match common.state {
-                InputState::Error(_) | InputState::Init => {
+                ModuleState::Error(_) | ModuleState::Init => {
                     CommandReply::new_error(
-                        Some(mid), format!("Cannot start input from state {:?}", common.state)
+                        Some(mid), format!("Cannot start module from state {:?}", common.state)
                     )
                 }
-                InputState::Idle => {
+                ModuleState::Idle => {
                     CommandReply::Ok
                 }
-                InputState::Ended => {
-                    common.set_state(InputState::Idle);
+                ModuleState::Ended => {
+                    common.set_state(ModuleState::Idle);
                     CommandReply::Ok
                 }
-                InputState::Running => {
+                ModuleState::Running => {
                     if let Err(e) = self.stop() {
-                        let msg = format!("Failed to stop input: {}", e);
-                        common.set_state(InputState::Error(msg.clone()));
+                        let msg = format!("Failed to stop module: {}", e);
+                        common.set_state(ModuleState::Error(msg.clone()));
                         CommandReply::new_error(Some(mid), msg)
                     } else {
-                        common.set_state(InputState::Idle);
+                        common.set_state(ModuleState::Idle);
                         CommandReply::Ok
                     }
                 }
@@ -163,27 +163,27 @@ pub trait Input: Send {
         rep.send(reply).expect("command channel closed");
     }
 
-    fn main_loop(mut self, mut common: InputCommon)
+    fn main_loop(mut self, mut common: ModuleCommon)
     where Self: Sized
     {
         let desc = self.description();
-        common.set_state(InputState::Idle);
+        common.set_state(ModuleState::Idle);
 
         loop {
             match common.command.try_recv() {
                 Err(TryRecvError::Empty) => (),
                 Ok((cmd, rep)) => self.main_loop_command(cmd, rep, &mut common),
                 Err(e) => {
-                    lprintln!(ERROR, "Cannot read command for {desc}: {e}, exiting input");
+                    lprintln!(ERROR, "Cannot read command for {desc}: {e}, exiting");
                     return;
                 }
             }
 
-            if !matches!(common.state, InputState::Error(_)) {
+            if !matches!(common.state, ModuleState::Error(_)) {
                 match self.read_events() {
                     Ok(ev) => {
                         ltrace!("{} | Incoming events: {:?}", desc, ev);
-                        if common.state == InputState::Running {
+                        if common.state == ModuleState::Running {
                             let ev = common.recipe.process(ev);
                             ltrace!("{} | Processed events: {:?}", desc, ev);
                             common.events.send(PipeItem::Events(ev)).expect("event channel closed");
@@ -193,11 +193,11 @@ pub trait Input: Send {
                     Err(UError::Other(e)) => {
                         let msg = format!("Error reading events: {}", e);
                         lprintln!(ERROR, "Cannot read events for {desc}: {e}");
-                        common.set_state(InputState::Error(msg));
+                        common.set_state(ModuleState::Error(msg));
                         // wait for commands below
                     }
-                    Err(UError::InputEnded) => {
-                        common.set_state(InputState::Ended);
+                    Err(UError::NoMoreData) => {
+                        common.set_state(ModuleState::Ended);
                         // wait for commands below
                     }
                 }
@@ -207,7 +207,7 @@ pub trait Input: Send {
             match common.command.recv() {
                 Ok((cmd, rep)) => self.main_loop_command(cmd, rep, &mut common),
                 Err(e) => {
-                    lprintln!(ERROR, "Cannot read command for {desc}: {e}, exiting input");
+                    lprintln!(ERROR, "Cannot read command for {desc}: {e}, exiting");
                     return;
                 }
             }

@@ -8,8 +8,8 @@ use crate::{lprintln, ltrace};
 use crate::channel::{Receiver, Sender};
 use crate::command::CommandReply;
 use crate::error::{UResult};
-use crate::input::InputState;
 use crate::event::{EventData, EventTime, ModuleId};
+use crate::input::ModuleState;
 use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
 use crate::shm::ShmBox;
@@ -18,7 +18,7 @@ pub struct PostProcessor {
     recipes: BTreeMap<String, Box<dyn Recipe>>,
     input: Receiver<PipeItem>,
     output: Sender<PipeItem>,
-    input_state: BTreeMap<ModuleId, InputState>,
+    module_state: BTreeMap<ModuleId, ModuleState>,
     shm: ShmBox,
 }
 
@@ -33,7 +33,7 @@ impl PostProcessor {
             recipes,
             input,
             output,
-            input_state: BTreeMap::new(),
+            module_state: BTreeMap::new(),
             shm: data,
         }
     }
@@ -106,7 +106,7 @@ impl PostProcessor {
 
                 // Meta items, not sent on to output
                 PipeItem::ModuleState(module, state) => {
-                    self.input_state.insert(module, state);
+                    self.module_state.insert(module, state);
                     continue;
                 }
                 PipeItem::SetMode(name, params, send) => {
@@ -127,12 +127,12 @@ impl PostProcessor {
                     continue;
                 }
                 PipeItem::GetState(send) => {
-                    let inputs = self.input_state.iter().map(|(mid, state)| {
+                    let modules = self.module_state.iter().map(|(mid, state)| {
                         let state = serde_json::to_value(state).expect("ok");
-                        (format!("module{}", mid.0), state)
+                        (mid.0.to_string(), state)
                     }).collect::<serde_json::Map<_, _>>();
                     let mut map = serde_json::Map::new();
-                    map.insert("inputs".into(), inputs.into());
+                    map.insert("modules".into(), modules.into());
                     map.insert("mode".into(), cur_recipe.as_str().into());
                     // TODO mode parameters
                     send.send(CommandReply::Data { module: None, value: map.into() })

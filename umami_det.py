@@ -245,7 +245,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
     def state(self):
         if not (self._proc and self._proc.poll() is None):
             return FAULT, 'UMAMI process exited'
-        state = self._send_cmd('get_state')['inputs']
+        state = self._send_cmd('get_state')['modules']
         if any(st == 'running' for st in state.values()):
             return BUSY, 'counting'
         elif any(st == 'error' for st in state.values()):
