@@ -301,7 +301,7 @@ impl Source for UdpReader {
     }
 
     fn description(&self) -> String {
-        self.0.peer_addr().map(|x| x.to_string()).unwrap_or("?".into())
+        self.0.local_addr().map(|x| format!("local addr {x}")).unwrap_or("?".into())
     }
 
     fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
