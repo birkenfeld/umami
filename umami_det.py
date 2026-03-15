@@ -105,7 +105,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         self._nx = config['histogram']['nx']
         self._ny = config['histogram']['ny']
         self._max_nt = config['histogram']['max_nt']
-        self._measure_modes = list(config['cook_modes'])
+        self._measure_modes = list(config['process_modes'])
 
         # start the UMAMI subprocess
         ipc_name = 'umami-tango-' + self._worker_name.replace('/', '-')
