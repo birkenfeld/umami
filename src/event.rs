@@ -24,16 +24,16 @@ impl EventTime {
         Self(0)
     }
 
-    pub const fn from_nsec(nsec: i64) -> Self {
-        Self(nsec)
-    }
-
     pub const fn from_sec_nsec(sec: u32, nsec: u32) -> Self {
         Self(sec as i64 * 1_000_000_000 + nsec as i64)
     }
 
     pub const fn from_floating_sec(sec: f64) -> Self {
         Self((sec * 1_000_000_000.0) as i64)
+    }
+
+    pub fn from_ticks<T>(ns_per: i64, ticks: T) -> Self where i64: From<T> {
+        Self(i64::from(ticks) * ns_per)
     }
 
     pub fn from_clock<T>(freq: i64, ticks: T) -> Self where i64: From<T> {

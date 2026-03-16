@@ -97,9 +97,9 @@ impl<S: CanonSource> Module for CanonModule<S> {
                     continue,
                 EventType::DeviceTime => {
                     let time = EPOCH +
-                        EventTime::from_clock(1, cev.s()) +
+                        EventTime::from_ticks(1_000_000_000, cev.s()) +
                         EventTime::from_clock(32768, cev.ss()) +
-                        EventTime::from_clock(40_000_000, cev.us());
+                        EventTime::from_ticks(25, cev.us());
                     self.time_ofs = time;
                     Event::new(
                         self.time_ofs,
@@ -112,9 +112,9 @@ impl<S: CanonSource> Module for CanonModule<S> {
                 },
                 EventType::DevTime32bit => {
                     let time = EPOCH +
-                        EventTime::from_clock(1, cev.s32()) +
+                        EventTime::from_ticks(1_000_000_000, cev.s32()) +
                         EventTime::from_clock(32768, cev.ss32()) +
-                        EventTime::from_clock(40_000_000, cev.us32());
+                        EventTime::from_ticks(25, cev.us32());
                     self.time_ofs = time;
                     Event::new(
                         self.time_ofs,
@@ -126,7 +126,7 @@ impl<S: CanonSource> Module for CanonModule<S> {
                     )
                 },
                 EventType::Neutron => {
-                    let t = EventTime::from_clock(40_000_000, cev.t());
+                    let t = EventTime::from_ticks(25, cev.t());
                     Event::new(
                         self.time_ofs + t,
                         t,
@@ -139,7 +139,7 @@ impl<S: CanonSource> Module for CanonModule<S> {
                     )
                 },
                 EventType::Neutron14bit => {
-                    let t = EventTime::from_clock(40_000_000, cev.t());
+                    let t = EventTime::from_ticks(25, cev.t());
                     Event::new(
                         self.time_ofs + t,
                         t,

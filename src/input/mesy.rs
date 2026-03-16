@@ -14,7 +14,7 @@ use crate::event::{ModuleId, Event, EventFlags, EventData, EventTime, InputId};
 use crate::input::{ReplayFile, DumpHandler};
 use super::{Source, Module, ModuleCommon, UdpReader};
 
-const TIME_BASE: i64 = 10_000_000;
+const TIME_BASE: i64 = 100; // ns
 const MAX_PACKET_SIZE: usize = 2048;
 const HEADER_LEN: usize = 42;
 const EVENT_SIZE: usize = 6;
@@ -132,7 +132,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
                 // trigger event
                 let data_id = (data >> 40) & 0b1111;
                 Event::new(
-                    EventTime::from_clock(TIME_BASE, ts as i64),
+                    EventTime::from_ticks(TIME_BASE, ts as i64),
                     EventTime::zero(),
                     self.module,
                     InputId(data_id as u32),
@@ -150,7 +150,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
                 let xpos = mcpd_id << 7 | mod_id << 4 | slot_id;
 
                 Event::new(
-                    EventTime::from_clock(TIME_BASE, ts as i64),
+                    EventTime::from_ticks(TIME_BASE, ts as i64),
                     EventTime::zero(),
                     self.module,
                     InputId(xpos as u32),
