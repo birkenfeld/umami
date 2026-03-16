@@ -8,6 +8,7 @@ mod mesy;
 use std::fs::File;
 use std::thread;
 use std::io::{Seek, Write};
+use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::time::Duration;
 use anyhow::Context;
@@ -25,7 +26,6 @@ use crate::util::resolve;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModuleState {
-    Init,
     Idle,
     Running,
     Ended,
@@ -50,7 +50,7 @@ impl ModuleCommon {
         recipe: Box<dyn Recipe>,
     ) -> Self {
         Self {
-            state: ModuleState::Init,
+            state: ModuleState::Idle,
             module,
             state_send,
             events,
@@ -62,6 +62,9 @@ impl ModuleCommon {
     fn set_state(&mut self, state: ModuleState) {
         if self.state == ModuleState::Running {
             self.events.send(PipeItem::EndOfRun).expect("event channel closed");
+        }
+        if let ModuleState::Error(e) = &state {
+            lprintln!(ERROR, "Module {} entered error state: {}", self.module.0, e);
         }
         self.state = state.clone();
         self.state_send.send(PipeItem::ModuleState(self.module, state))
@@ -83,6 +86,7 @@ pub trait Module: Send {
     fn handle(&mut self, cmd: Command) -> UResult<CommandReply>;
     fn start(&mut self, run_id: String) -> UResult<()>;
     fn stop(&mut self) -> UResult<()>;
+    fn reset(&mut self) -> UResult<()>;
     fn read_events(&mut self) -> UResult<Vec<Event>>;
 
     // Rest of methods are all fully implemented
@@ -102,17 +106,17 @@ pub trait Module: Send {
     fn main_loop_command(&mut self, cmd: Command, rep: Sender<CommandReply>, common: &mut ModuleCommon) {
         let mid = common.module;
         let reply = match cmd {
-            Command::Start { run_id } => match common.state {
-                ModuleState::Error(_) | ModuleState::Init => {
-                    // TODO: reset command
+            Command::Start { run_id } => match &common.state {
+                ModuleState::Error(e) => {
                     CommandReply::new_error(
-                        Some(mid), format!("Cannot start module from state {:?}", common.state)
+                        Some(mid),
+                        format!("Cannot start module in error state. Last error: {e:#}")
                     )
                 }
                 _ => {
                     if common.state == ModuleState::Running {
                         if let Err(e) = self.stop() {
-                            let msg = format!("Failed to stop module for restart: {}", e);
+                            let msg = format!("Failed to stop module for restart: {e:#}");
                             common.set_state(ModuleState::Error(msg.clone()));
                             rep.send(CommandReply::new_error(Some(mid), msg))
                                .expect("command channel closed");
@@ -122,7 +126,7 @@ pub trait Module: Send {
                         }
                     }
                     if let Err(e) = self.start(run_id) {
-                        let msg = format!("Failed to start module: {}", e);
+                        let msg = format!("Failed to start module: {e:#}");
                         common.set_state(ModuleState::Error(msg.clone()));
                         CommandReply::new_error(Some(mid), msg)
                     } else {
@@ -131,10 +135,11 @@ pub trait Module: Send {
                     }
                 }
             }
-            Command::Stop => match common.state {
-                ModuleState::Error(_) | ModuleState::Init => {
+            Command::Stop => match &common.state {
+                ModuleState::Error(e) => {
                     CommandReply::new_error(
-                        Some(mid), format!("Cannot start module from state {:?}", common.state)
+                        Some(mid),
+                        format!("Cannot stop module in error state. Last error: {e:#}")
                     )
                 }
                 ModuleState::Idle => {
@@ -146,7 +151,7 @@ pub trait Module: Send {
                 }
                 ModuleState::Running => {
                     if let Err(e) = self.stop() {
-                        let msg = format!("Failed to stop module: {}", e);
+                        let msg = format!("Failed to stop module: {e:#}");
                         common.set_state(ModuleState::Error(msg.clone()));
                         CommandReply::new_error(Some(mid), msg)
                     } else {
@@ -155,10 +160,24 @@ pub trait Module: Send {
                     }
                 }
             }
+            Command::Reset => match common.state {
+                ModuleState::Error(_) => {
+                    if let Err(e) = self.reset() {
+                        let msg = format!("Failed to reset module: {e:#}");
+                        common.set_state(ModuleState::Error(msg.clone()));
+                        CommandReply::new_error(Some(mid), msg)
+                    } else {
+                        lprintln!(INFO, "Reset {}", self.description());
+                        common.set_state(ModuleState::Idle);
+                        CommandReply::Ok
+                    }
+                }
+                _ => CommandReply::Ok
+            }
             _ => match self.handle(cmd) {
                 Ok(reply) => reply,
                 Err(e) => CommandReply::new_error(Some(mid),
-                                                  format!("Failed to handle command: {}", e)),
+                                                  format!("Failed to handle command: {e:#}")),
             }
         };
         rep.send(reply).expect("command channel closed");
@@ -175,7 +194,7 @@ pub trait Module: Send {
                 Err(TryRecvError::Empty) => (),
                 Ok((cmd, rep)) => self.main_loop_command(cmd, rep, &mut common),
                 Err(e) => {
-                    lprintln!(ERROR, "Cannot read command for {desc}: {e}, exiting");
+                    lprintln!(ERROR, "Cannot read command for {desc}: {e:#}, exiting");
                     return;
                 }
             }
@@ -192,8 +211,8 @@ pub trait Module: Send {
                         continue;
                     }
                     Err(UError::Other(e)) => {
-                        let msg = format!("Error reading events: {}", e);
-                        lprintln!(ERROR, "Cannot read events for {desc}: {e}");
+                        let msg = format!("Error reading events: {e:#}");
+                        lprintln!(ERROR, "Cannot read events for {desc}: {e:#}");
                         common.set_state(ModuleState::Error(msg));
                         // wait for commands below
                     }
@@ -208,7 +227,7 @@ pub trait Module: Send {
             match common.command.recv() {
                 Ok((cmd, rep)) => self.main_loop_command(cmd, rep, &mut common),
                 Err(e) => {
-                    lprintln!(ERROR, "Cannot read command for {desc}: {e}, exiting");
+                    lprintln!(ERROR, "Cannot read command for {desc}: {e:#}, exiting");
                     return;
                 }
             }
@@ -222,6 +241,7 @@ pub trait Source: Send + 'static {
     fn from_config(cfg: &Self::Config) -> UResult<Self> where Self: Sized;
     fn description(&self) -> String;
     fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()>;
+    fn reset(&mut self) -> UResult<()>;
     fn rewind(&mut self) -> UResult<()> {
         Ok(())
     }
@@ -252,6 +272,10 @@ impl Source for ReplayFile {
         std::io::Read::read_exact(&mut self.file, buf)
     }
 
+    fn reset(&mut self) -> UResult<()> {
+        self.rewind()
+    }
+
     fn rewind(&mut self) -> UResult<()> {
         self.file
             .seek(std::io::SeekFrom::Start(0))
@@ -279,9 +303,19 @@ impl Source for std::net::TcpStream {
     fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
         std::io::Read::read_exact(self, buf)
     }
+
+    fn reset(&mut self) -> UResult<()> {
+        let addr = self.peer_addr()
+            .context("Getting previous peer address")?;
+        *self = std::net::TcpStream::connect(addr)
+            .with_context(|| format!("Connecting to {}", addr))?;
+        self.set_read_timeout(Some(Duration::from_millis(300)))
+            .context("Setting socket timeout")?; // TODO configurable?
+        Ok(())
+    }
 }
 
-pub struct UdpReader(std::net::UdpSocket);
+pub struct UdpReader(std::net::UdpSocket, std::net::SocketAddr);
 
 impl std::io::Read for UdpReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -298,15 +332,26 @@ impl Source for UdpReader {
             .context(format!("Binding to source socket {}", addr))?;
         sock.set_read_timeout(Some(Duration::from_millis(300)))
             .context("Setting socket timeout")?; // TODO configurable?
-        Ok(UdpReader(sock))
+        Ok(UdpReader(sock, addr))
     }
 
     fn description(&self) -> String {
-        self.0.local_addr().map(|x| format!("local addr {x}")).unwrap_or("?".into())
+        format!("local addr {}", self.1)
     }
 
     fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
         std::io::Read::read_exact(self, buf)
+    }
+
+    fn reset(&mut self) -> UResult<()> {
+        // Close first, cannot bind the new socket and *then* move it in place
+        let _ = nix::unistd::close(self.0.as_raw_fd());
+        let new_sock = std::net::UdpSocket::bind(self.1)
+            .context(format!("Rebinding to source socket {}", self.1))?;
+        new_sock.set_read_timeout(Some(Duration::from_millis(300)))
+            .context("Setting socket timeout")?; // TODO configurable?
+        self.0 = new_sock;
+        Ok(())
     }
 }
 

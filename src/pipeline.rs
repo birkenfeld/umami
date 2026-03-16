@@ -62,7 +62,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         command_sends.insert(mid, command_send);
 
         if let Err(e) = input::start(module_config.specific, common) {
-            lprintln!(ERROR, "Failed to initialize module {}: {}", module_name, e);
+            lprintln!(ERROR, "Failed to initialize module {module_name}: {e:#}");
             init_errors = true;
         }
     }

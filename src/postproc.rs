@@ -124,7 +124,7 @@ impl PostProcessor {
                     send.send(match recipe.update_config(params) {
                         Ok(_) => CommandReply::Ok,
                         Err(e) => CommandReply::new_error(
-                            None, format!("Failed to update recipe config: {}", e)),
+                            None, format!("Failed to update recipe config: {e:#}")),
                     }).expect("param reply receiver died");
                     continue;
                 }

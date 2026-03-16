@@ -96,6 +96,12 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
         Ok(())
     }
 
+    fn reset(&mut self) -> UResult<()> {
+        self.source.reset()?;
+        // TODO self.command_handler.set_up()?;
+        Ok(())
+    }
+
     fn read_events(&mut self) -> UResult<Vec<Event>> {
         let mut buffer = [0_u8; MAX_PACKET_SIZE];
         let n = match self.source.get_packet(&mut buffer) {

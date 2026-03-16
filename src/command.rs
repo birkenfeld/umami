@@ -21,6 +21,7 @@ pub enum Command {
     Clear,
     Start { run_id: String },
     Stop,
+    Reset,
     GetState,
     SetRawDump { enable: bool, path: String },
     SetMode { name: String, params: toml::Table },
@@ -81,8 +82,8 @@ impl CommandHandler {
                 Ok((n, addr)) => {
                     let reply = self.message(&buf[..n]);
                     let serialized = serde_json::to_string(&reply).expect("serializable");
-                    if self.sock.send_to_addr(serialized.as_bytes(), &addr).is_err() {
-                        lprintln!(ERROR, "Failed to send command reply to {addr:?}");
+                    if let Err(e) = self.sock.send_to_addr(serialized.as_bytes(), &addr) {
+                        lprintln!(ERROR, "Failed to send command reply to {addr:?}: {e:#}");
                     }
                 }
                 Err(e) => {
@@ -99,7 +100,7 @@ impl CommandHandler {
             }
             Ok(s) => match serde_json::from_str::<Command>(s) {
                 Err(e) => {
-                    lprintln!(ERROR, "Received invalid command {s:?}: {e:?}");
+                    lprintln!(ERROR, "Received invalid command {s:?}: {e:#}");
                     CommandReply::new_error(None, format!("Invalid JSON or invalid command: {e:#}"))
                 }
                 Ok(cmd) => {
@@ -134,7 +135,8 @@ impl CommandHandler {
                               .expect("postprocessor command receiver died");
                 rep_recv.recv().expect("postprocessor command sender died")
             }
-            Command::Start { .. } | Command::Stop | Command::SetRawDump { .. } => {
+            Command::Start { .. } | Command::Stop | Command::SetRawDump { .. } |
+            Command::Reset => {
                 if let Command::Start { run_id } = &cmd {
                     self.post_send.send(PipeItem::StartOfRun(run_id.into()))
                                   .expect("postprocessor command receiver died");

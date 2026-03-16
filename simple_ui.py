@@ -78,14 +78,21 @@ def send_cmd(cmd, **kwds):
         sock.sendall(json.dumps({'command': cmd} | kwds).encode())
         reply = json.loads(sock.recv(2048).decode())
     except Exception as e:
-        print(f'{cmd}: error communicating: {e}')
+        QtWidgets.QMessageBox.critical(window, 'Error',
+                                       f'Error communicating with server: {e}')
     else:
-        print(f'{cmd}: {reply}')
+        if reply['result'] == 'error':
+            QtWidgets.QMessageBox.critical(window, 'Error',
+                                           f'Error: {reply["message"]}')
 
 buttons = QtWidgets.QFrame()
 buttons.setLayout(QtWidgets.QHBoxLayout())
 buttons.layout().setContentsMargins(0, 5, 0, 5)
 buttons.layout().addStretch()
+
+btn = QtWidgets.QPushButton('Reset')
+btn.clicked.connect(lambda: send_cmd('reset'))
+buttons.layout().addWidget(btn)
 
 btn = QtWidgets.QPushButton('Clear')
 btn.clicked.connect(lambda: send_cmd('clear'))

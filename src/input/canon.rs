@@ -83,6 +83,11 @@ impl<S: CanonSource> Module for CanonModule<S> {
         Ok(())
     }
 
+    fn reset(&mut self) -> UResult<()> {
+        self.source.reset()?;
+        Ok(())
+    }
+
     fn read_events(&mut self) -> UResult<Vec<Event>> {
         let nevents = self.source.request_events(&mut self.buffer)?;
         self.dump.write(&self.buffer[..nevents * EVENT_SIZE])?;

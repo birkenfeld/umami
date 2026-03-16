@@ -30,6 +30,8 @@ enum Cmd {
     Stop,
     /// Clear the histogram.  Can be called while running.
     Clear,
+    /// Reset the input modules.  Does not clear the histogram.
+    Reset,
     /// Enable and set the path to the raw dump files.
     Raw { path: String },
     /// Disable raw dump files.
@@ -56,6 +58,7 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
         Cmd::Start { run_id } => Command::Start { run_id },
         Cmd::Stop => Command::Stop,
         Cmd::Clear => Command::Clear,
+        Cmd::Reset => Command::Reset,
         Cmd::Raw { path } => Command::SetRawDump { enable: true, path },
         Cmd::NoRaw => Command::SetRawDump { enable: false, path: String::new() },
         Cmd::Mode { name, params } =>

@@ -87,6 +87,12 @@ impl<S: Source> Module for GeModule<S> {
         Ok(())
     }
 
+    fn reset(&mut self) -> UResult<()> {
+        self.source.reset()?;
+        self.queue.clear();
+        Ok(())
+    }
+
     fn read_events(&mut self) -> UResult<Vec<Event>> {
         // read header
         let mut buffer = [0_u8; MAX_PACKET_SIZE];
