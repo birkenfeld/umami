@@ -36,7 +36,6 @@ mapp.close()
 mapp = mmap.mmap(fd, off_size + nx*ny*4, prot=mmap.PROT_READ)
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
 sock.bind('\0plot-' + shm_name + '-' + str(os.getpid()))
-sock.connect('\0' + shm_name)
 
 prev = dict()
 
@@ -74,6 +73,7 @@ img.setColorMap(pg.colormap.get('viridis'))
 plot.enableAutoRange('xy', True)
 
 def send_cmd(cmd, **kwds):
+    sock.connect('\0' + shm_name)
     try:
         sock.sendall(json.dumps({'command': cmd} | kwds).encode())
         reply = json.loads(sock.recv(2048).decode())

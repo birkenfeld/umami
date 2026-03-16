@@ -104,6 +104,7 @@ pub trait Module: Send {
         let reply = match cmd {
             Command::Start { run_id } => match common.state {
                 ModuleState::Error(_) | ModuleState::Init => {
+                    // TODO: reset command
                     CommandReply::new_error(
                         Some(mid), format!("Cannot start module from state {:?}", common.state)
                     )
