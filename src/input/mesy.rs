@@ -160,6 +160,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
             };
             events.push(event);
         }
+        events.sort();
 
         Ok(events)
     }

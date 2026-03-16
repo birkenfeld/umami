@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 use anyhow::Context;
-use crate::{lprintln, ltrace};
+use crate::{lprintln, ldebug, ltrace};
 use crate::channel::{Receiver, Sender};
 use crate::command::CommandReply;
 use crate::error::{UResult};
@@ -70,9 +70,11 @@ impl PostProcessor {
                         lprintln!(DEBUG, "Received {ev_count} events");
                         debug_at += 1000000;
                     }
-                    for ev in &evs {
+                    for (j, ev) in evs.iter().enumerate() {
                         let ev_ts = ev.time;
                         if ev_ts < last_ts {
+                            ldebug!("Out of order event #{}: last_ts={last_ts:?}, \
+                                     ev_ts={ev_ts:?}", ev_count+j);
                             out_of_order += 1;
                         }
                         last_ts = ev_ts;
