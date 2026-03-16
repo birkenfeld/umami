@@ -9,12 +9,43 @@ use crate::event::{Event, EventData};
 use super::Recipe;
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct MesyTest {
+pub struct Mpsd;
+
+impl Recipe for Mpsd {
+    fn from_config(_: toml::Table, _: &BTreeMap<String, RecipeConfig>) -> UResult<Self> {
+        Ok(Self)
+    }
+
+    fn update_config(&mut self, _: toml::Table) -> UResult<()> {
+        Ok(())
+    }
+
+    fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
+        for event in &mut events {
+            match event.data {
+                EventData::RawDigital { value1: y, .. } => {
+                    let x_orig = event.input.0;
+                    // since the MPSD has only 8 channels per board,
+                    // remove fourth bit of channel
+                    let x = (x_orig >> 1) & 0xFFF8 | (x_orig & 0x7);
+                    event.data = EventData::Neutron { x, y, t: 0 };
+                }
+                EventData::RawEdge { .. } => {
+                    event.data = EventData::Tzero;
+                }
+                _ => ()
+            }
+        }
+        events
+    }
 }
 
-impl Recipe for MesyTest {
+#[derive(Debug, Deserialize, Clone)]
+pub struct Mdll;
+
+impl Recipe for Mdll {
     fn from_config(_: toml::Table, _: &BTreeMap<String, RecipeConfig>) -> UResult<Self> {
-        Ok(Self {})
+        Ok(Self)
     }
 
     fn update_config(&mut self, _: toml::Table) -> UResult<()> {

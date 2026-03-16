@@ -85,7 +85,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         # check prerequisites
         if not os.path.isfile(self.umami):
             raise ConfigurationError('UMAMI executable does not exist')
-        if not os.path.isdir(self.rawdatadir):
+        if self.rawdatadir and not os.path.isdir(self.rawdatadir):
             raise ConfigurationError('Raw data directory does not exist')
         if not os.path.isfile(self.config):
             raise ConfigurationError('Config file does not exist')

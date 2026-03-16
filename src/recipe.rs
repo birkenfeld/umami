@@ -3,7 +3,7 @@
 
 mod kws;
 mod mesy;
-mod tof;
+mod histo;
 
 use std::collections::BTreeMap;
 use anyhow::{anyhow, Context};
@@ -42,16 +42,18 @@ pub fn from_config(map: &BTreeMap<String, RecipeConfig>, name: &str) -> UResult<
     let this = map.get(name).cloned()
                             .ok_or_else(|| anyhow::anyhow!("Recipe {name} not found"))?;
     match this.r#type.as_str() {
-        // TODO: should be a macro
+        // TODO: should be a macro?
         "none" => Ok(Box::new(NoRecipe)),
-        "histo_std" => Ok(Box::new(tof::HistoStd::from_config(this.config, map)
+        "histo_std" => Ok(Box::new(histo::Std::from_config(this.config, map)
                                    .with_context(|| format!("Creating recipe {name}"))?)),
-        "tof_std" => Ok(Box::new(tof::TofStd::from_config(this.config, map)
-                                 .with_context(|| format!("Creating recipe {name}"))?)),
-        "mesy_test" => Ok(Box::new(mesy::MesyTest::from_config(this.config, map)
-                                 .with_context(|| format!("Creating recipe {name}"))?)),
-        "kws_ge" => Ok(Box::new(kws::KWSGERecipe::from_config(this.config, map)
-                                 .with_context(|| format!("Creating recipe {name}"))?)),
+        "histo_tof" => Ok(Box::new(histo::Tof::from_config(this.config, map)
+                                   .with_context(|| format!("Creating recipe {name}"))?)),
+        "mesy_mdll" => Ok(Box::new(mesy::Mdll::from_config(this.config, map)
+                                   .with_context(|| format!("Creating recipe {name}"))?)),
+        "mesy_mpsd" => Ok(Box::new(mesy::Mpsd::from_config(this.config, map)
+                                   .with_context(|| format!("Creating recipe {name}"))?)),
+        "kws_gedet" => Ok(Box::new(kws::KWSGERecipe::from_config(this.config, map)
+                                   .with_context(|| format!("Creating recipe {name}"))?)),
         _ => Err(anyhow!("Unknown recipe type: {}", this.r#type).into()),
     }
 }

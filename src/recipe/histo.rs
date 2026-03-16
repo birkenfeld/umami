@@ -10,8 +10,11 @@ use crate::event::{Event, EventData, EventFlags, EventTime};
 use crate::recipe::Recipe;
 use crate::util::FalseOr;
 
-pub struct TofStd {
+pub struct Tof {
     // Configuration
+    /// Binning in spatial directions.
+    bin_x: u32,
+    bin_y: u32,
     /// Whether to use the gate signal to filter events. If false, gate signals
     /// are ignored.
     use_gate: bool,
@@ -29,16 +32,20 @@ pub struct TofStd {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TofConfig {
+    pub bin_x: Option<u32>,
+    pub bin_y: Option<u32>,
     pub use_gate: Option<bool>,
     pub aux_mode: Option<FalseOr<u32>>,
     pub time_bins: Option<Vec<f64>>,
 }
 
-impl Recipe for TofStd {
+impl Recipe for Tof {
     fn from_config(config: toml::Table, _: &BTreeMap<String, RecipeConfig>) -> UResult<Self> {
         let config: TofConfig = config.try_into()
             .context("parsing config for tof_std recipe")?;
-        Ok(TofStd {
+        Ok(Tof {
+            bin_x: config.bin_x.unwrap_or(1),
+            bin_y: config.bin_y.unwrap_or(1),
             use_gate: config.use_gate.unwrap_or(false),
             aux_mode: config.aux_mode.unwrap_or(FalseOr::False),
             time_bins: config.time_bins.unwrap_or_default()
@@ -55,6 +62,12 @@ impl Recipe for TofStd {
     fn update_config(&mut self, config: toml::Table) -> UResult<()> {
         let config: TofConfig = config.try_into()
             .context("parsing config for tof_std recipe")?;
+        if let Some(bin_x) = config.bin_x {
+            self.bin_x = bin_x;
+        }
+        if let Some(bin_y) = config.bin_y {
+            self.bin_y = bin_y;
+        }
         if let Some(use_gate) = config.use_gate {
             self.use_gate = use_gate;
         }
@@ -97,16 +110,18 @@ impl Recipe for TofStd {
                         event.flags.set(EventFlags::HasRelTime);
                     }
 
-                    if self.time_bins.len() > 1 &&
-                        let EventData::Neutron { t, .. } = &mut event.data
-                    {
-                        // find the correct bin for this relative time
-                        // this can never overflow, since the final bin is guaranteed
-                        // to be the EventTime::MAX
-                        while event.rel_time >= self.time_bins[self.cur_bin] {
-                             self.cur_bin += 1;
+                    if let EventData::Neutron { x, y, t } = &mut event.data {
+                        if self.time_bins.len() > 1 {
+                            // find the correct bin for this relative time
+                            // this can never overflow, since the final bin is guaranteed
+                            // to be the EventTime::MAX
+                            while event.rel_time >= self.time_bins[self.cur_bin] {
+                                self.cur_bin += 1;
+                            }
+                            *t = self.cur_bin as u32;
                         }
-                        *t = self.cur_bin as u32;
+                        *x /= self.bin_x;
+                        *y /= self.bin_y;
                     }
                 }
             }
@@ -116,8 +131,11 @@ impl Recipe for TofStd {
 }
 
 
-pub struct HistoStd {
+pub struct Std {
     // Configuration
+    /// Binning in spatial directions.
+    bin_x: u32,
+    bin_y: u32,
     /// Whether to use the gate signal to filter events. If false, gate signals
     /// are ignored.
     use_gate: bool,
@@ -127,23 +145,33 @@ pub struct HistoStd {
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct HistoConfig {
+pub struct StdConfig {
+    pub bin_x: Option<u32>,
+    pub bin_y: Option<u32>,
     pub use_gate: Option<bool>,
 }
 
-impl Recipe for HistoStd {
+impl Recipe for Std {
     fn from_config(config: toml::Table, _: &BTreeMap<String, RecipeConfig>) -> UResult<Self> {
-        let config: HistoConfig = config.try_into()
+        let config: StdConfig = config.try_into()
             .context("parsing config for tof_std recipe")?;
-        Ok(HistoStd {
+        Ok(Std {
+            bin_x: config.bin_x.unwrap_or(1),
+            bin_y: config.bin_y.unwrap_or(1),
             use_gate: config.use_gate.unwrap_or(false),
             gate_up: false,
         })
     }
 
     fn update_config(&mut self, config: toml::Table) -> UResult<()> {
-        let config: HistoConfig = config.try_into()
+        let config: StdConfig = config.try_into()
             .context("parsing config for tof_std recipe")?;
+        if let Some(bin_x) = config.bin_x {
+            self.bin_x = bin_x;
+        }
+        if let Some(bin_y) = config.bin_y {
+            self.bin_y = bin_y;
+        }
         if let Some(use_gate) = config.use_gate {
             self.use_gate = use_gate;
         }
@@ -158,6 +186,11 @@ impl Recipe for HistoStd {
                     if self.use_gate && !self.gate_up {
                         event.data = EventData::Void;
                         continue;
+                    }
+
+                    if let EventData::Neutron { x, y, .. } = &mut event.data {
+                        *x /= 1;
+                        *y /= 1;
                     }
                 }
             }

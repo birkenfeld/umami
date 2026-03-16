@@ -145,8 +145,8 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
 
                 let ampl = (data >> 29) & 0x3ff;
                 let ypos = (data >> 19) & 0x3ff;
-                // This is for MPSD (8 tubes/MPSD, 8 MPSD/MCPD).
-                let xpos = mcpd_id << 6 | mod_id << 3 | slot_id;
+                // Most general setup, needs correction for MPSD.
+                let xpos = mcpd_id << 7 | mod_id << 4 | slot_id;
 
                 Event::new(
                     EventTime::from_clock(ts as i64, 10_000_000), // 10MHz clock

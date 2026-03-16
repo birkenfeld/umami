@@ -127,17 +127,17 @@ pub trait MesyCommandHandler: Send + 'static {
                         if let MesyModuleConfig::Mpsd { threshold, gain } = cfg {
                             self.set_up_mpsd(i, *threshold, *gain)?;
                         } else {
-                            lprintln!(WARN, "Module {i} is not an MPSD, skipping setup");
+                            lprintln!(WARN, "Module {i} is not an MPSD, not configuring");
                         }
                     } else {
-                        lprintln!(WARN, "MPSD {i} has no assigned configuration, skipping setup");
+                        lprintln!(WARN, "MPSD {i} has no assigned config, not configuring");
                     }
                 },
                 ModType::Mwpchr => {
-                    lprintln!(INFO, "Module {i} is a MWPCHR, no setup necessary");
+                    lprintln!(INFO, "Module {i} is a MWPCHR, no configuration necessary");
                 }
                 _ => {
-                    lprintln!(WARN, "Module {i} has unsupported type {:?}, skipping setup",
+                    lprintln!(WARN, "Module {i} has unsupported type {:?}, not configuring",
                               modules[i]);
                 }
             }
