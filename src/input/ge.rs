@@ -77,7 +77,7 @@ impl<S: Source> Module for GeModule<S> {
 
     fn start(&mut self, run_id: String) -> UResult<()> {
         self.dump.start(self.module, &run_id)?;
-        self.source.reset()?;
+        self.source.rewind()?;
         self.queue.clear();
         Ok(())
     }

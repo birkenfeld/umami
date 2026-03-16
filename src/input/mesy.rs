@@ -80,7 +80,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
         self.dump.start(self.module, &run_id)?;
         self.dump.write(FULL_HEADER)?;
         self.dump.write(BEG_MARKER)?;
-        self.source.reset()?;
+        self.source.rewind()?;
         if self.is_master {
             self.command_handler.start()?;
         }

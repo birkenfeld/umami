@@ -222,7 +222,7 @@ pub trait Source: Send + 'static {
     fn from_config(cfg: &Self::Config) -> UResult<Self> where Self: Sized;
     fn description(&self) -> String;
     fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()>;
-    fn reset(&mut self) -> UResult<()> {
+    fn rewind(&mut self) -> UResult<()> {
         Ok(())
     }
 }
@@ -252,7 +252,7 @@ impl Source for ReplayFile {
         std::io::Read::read_exact(&mut self.file, buf)
     }
 
-    fn reset(&mut self) -> UResult<()> {
+    fn rewind(&mut self) -> UResult<()> {
         self.file
             .seek(std::io::SeekFrom::Start(0))
             .context("Resetting file source")?;
