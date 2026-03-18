@@ -189,8 +189,8 @@ impl Recipe for Std {
                     }
 
                     if let EventData::Neutron { x, y, .. } = &mut event.data {
-                        *x /= 1;
-                        *y /= 1;
+                        *x /= self.bin_x;
+                        *y /= self.bin_y;
                     }
                 }
             }
