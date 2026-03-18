@@ -6,6 +6,7 @@ mod config;
 mod error;
 mod event;
 mod input;
+mod output;
 mod pipeline;
 mod postproc;
 mod recipe;

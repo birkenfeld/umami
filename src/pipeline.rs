@@ -3,10 +3,11 @@
 
 use std::collections::BTreeMap;
 use anyhow::{anyhow, Context};
-use crate::{channel, lprintln, ldebug};
+use crate::output::OutputCommon;
+use crate::{channel, ldebug, lprintln, output};
 use crate::{command, input, postproc, recipe, sorter};
 use crate::command::CommandReply;
-use crate::config::Config;
+use crate::config::{Config, OutputConfig};
 use crate::error::UResult;
 use crate::event::{Event, ModuleId};
 use crate::input::{ModuleCommon, ModuleState};
@@ -91,7 +92,43 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         postproc_send.clone(),
     ).context("Creating command handler")?;
 
+    let outputs = match config.outputs {
+        Some(outputs) => outputs,
+        None => {
+            lprintln!(INFO, "No outputs configured, using null output as fallback.");
+            Vec::from([OutputConfig {r#type: "none".to_string(), config: toml::Table::default()}])
+            // BTreeMap::from([(
+            //     "null".to_string(),
+            //     OutputConfig {r#type: "none".to_string(), config: toml::Table::default()},
+            // )])
+        },
+    };
     let (output_send, output_recv) = channel::bounded(EV_CHANNEL_SIZE);
+    let mut next_output = output_recv;
+
+    let (last_output, other_outputs) = outputs.split_last().expect("Inserted default");
+
+    for out_config in other_outputs.into_iter() {
+        let (output_send, output_recv) = channel::bounded(EV_CHANNEL_SIZE);
+        let common = OutputCommon::new(next_output, Some(output_send));
+        next_output = output_recv;
+        if let Err(e) = output::from_config(out_config.clone())?.start(common) {
+            let t = &out_config.r#type;
+            init_errors = true;
+            lprintln!(ERROR, "Failed to initialize output {t}: {e:#}");
+        }
+    }
+    {
+        let common = OutputCommon::new(next_output, None);
+        if let Err(e) = output::from_config(last_output.clone())?.start(common) {
+            let t = &last_output.r#type;
+            init_errors = true;
+            lprintln!(ERROR, "Failed to initialize output {t}: {e:#}");
+        }
+    }
+    if init_errors {
+        Err(anyhow!("Some outputs failed to initialize"))?;
+    }
 
     let mut post_recipes = BTreeMap::new();
     for (name, recipe) in config.process_modes {
@@ -108,11 +145,6 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         shm_area,
     );
 
-    // TODO: for now, just absorb everything
-    std::thread::Builder::new()
-        .name("Output".into())
-        .spawn(move || while output_recv.recv().is_ok() {})
-        .context("Spawning output thread")?;
 
     postproc.start()?;
 

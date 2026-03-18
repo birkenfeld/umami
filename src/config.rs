@@ -77,6 +77,13 @@ pub struct RecipeConfig {
     pub config: toml::Table,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct OutputConfig {
+    pub r#type: String,
+    #[serde(flatten)]
+    pub config: toml::Table,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct HistoConfig {
     pub nx: usize,
@@ -88,6 +95,7 @@ pub struct HistoConfig {
 pub struct Config {
     pub modules: BTreeMap<String, ModuleConfig>,
     pub recipes: BTreeMap<String, RecipeConfig>,
+    pub outputs: Option<Vec<OutputConfig>>,
     pub process_modes: BTreeMap<String, String>,
     pub histogram: HistoConfig,
     #[serde(default = "default_ipc_name")]
