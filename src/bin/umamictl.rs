@@ -40,6 +40,8 @@ enum Cmd {
     Mode { name: String, params: value::Map<String, value::Value> },
     /// Get the current state.
     State,
+    /// Get Umami version.
+    Ping,
 }
 
 fn inner_main(args: Options) -> anyhow::Result<()> {
@@ -64,6 +66,7 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
         Cmd::Mode { name, params } =>
             Command::SetMode { name, params: toml::Table::try_from(params)? },
         Cmd::State => Command::GetState,
+        Cmd::Ping => Command::Ping,
     };
 
     let cmd_json = serde_json::to_string(&cmd).context("Serializing command to JSON")?;
