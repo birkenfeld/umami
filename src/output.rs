@@ -118,7 +118,7 @@ impl OutputKind {
     }
 }
 
-pub fn from_config(config: OutputConfig) -> UResult<OutputKind> {
+pub fn from_config(config: &OutputConfig) -> UResult<OutputKind> {
     match config.r#type.as_str() {
         "none" => Ok(OutputKind::Null(Box::new(NullOutput))),
         _ => Err(anyhow!("Unknown output type: {}", config.r#type).into()),

@@ -89,41 +89,26 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     let handler = command::CommandHandler::new(
         &config.ipc_name,
         command_sends,
-        postproc_send.clone(),
+        postproc_send,
     ).context("Creating command handler")?;
 
-    let outputs = match config.outputs {
-        Some(outputs) => outputs,
-        None => {
-            lprintln!(INFO, "No outputs configured, using null output as fallback.");
-            Vec::from([OutputConfig {r#type: "none".to_string(), config: toml::Table::default()}])
-            // BTreeMap::from([(
-            //     "null".to_string(),
-            //     OutputConfig {r#type: "none".to_string(), config: toml::Table::default()},
-            // )])
-        },
-    };
-    let (output_send, output_recv) = channel::bounded(EV_CHANNEL_SIZE);
-    let mut next_output = output_recv;
+    // handle outputs - we need to have at least a null output to consume from the postproc
+    let outputs = config.outputs.unwrap_or_else(|| {
+        lprintln!(INFO, "No outputs configured, using null output as fallback.");
+        vec![OutputConfig {r#type: "none".to_string(), config: toml::Table::default()}]
+    });
 
-    let (last_output, other_outputs) = outputs.split_last().expect("Inserted default");
+    // create channels between outputs (they are daisy-chained)
+    let (mut output_sends, mut output_recvs): (Vec<_>, Vec<_>) =
+        (0..outputs.len()).map(|_| channel::bounded(EV_CHANNEL_SIZE)).unzip();
+    let first_output_send = output_sends.pop().expect("at least one");
 
-    for out_config in other_outputs.into_iter() {
-        let (output_send, output_recv) = channel::bounded(EV_CHANNEL_SIZE);
-        let common = OutputCommon::new(next_output, Some(output_send));
-        next_output = output_recv;
-        if let Err(e) = output::from_config(out_config.clone())?.start(common) {
-            let t = &out_config.r#type;
+    for out_config in outputs {
+        let common = OutputCommon::new(output_recvs.pop().expect("one per output"),
+                                       output_sends.pop());
+        if let Err(e) = output::from_config(&out_config)?.start(common) {
             init_errors = true;
-            lprintln!(ERROR, "Failed to initialize output {t}: {e:#}");
-        }
-    }
-    {
-        let common = OutputCommon::new(next_output, None);
-        if let Err(e) = output::from_config(last_output.clone())?.start(common) {
-            let t = &last_output.r#type;
-            init_errors = true;
-            lprintln!(ERROR, "Failed to initialize output {t}: {e:#}");
+            lprintln!(ERROR, "Failed to initialize output {}: {e:#}", out_config.r#type);
         }
     }
     if init_errors {
@@ -141,10 +126,9 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     let postproc = postproc::PostProcessor::new(
         post_recipes,
         postproc_recv,
-        output_send,
+        first_output_send,
         shm_area,
     );
-
 
     postproc.start()?;
 
