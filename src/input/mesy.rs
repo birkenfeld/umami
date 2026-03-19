@@ -83,18 +83,15 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
         self.dump.write(FULL_HEADER)?;
         self.dump.write(BEG_MARKER)?;
         self.source.rewind()?;
-        if self.is_master {
-            self.command_handler.start()?;
-        }
+        // TODO: check why this is needed on non-master modules
+        self.command_handler.start()?;
         Ok(())
     }
 
     fn stop(&mut self) -> UResult<()> {
         self.dump.write(END_MARKER)?;
         self.dump.stop();
-        if self.is_master {
-            self.command_handler.stop()?;
-        }
+        self.command_handler.stop()?;
         Ok(())
     }
 
@@ -113,6 +110,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(UError::NoMoreData),
             Err(e) => Err(e).context("Reading packet from source")?,
         };
+        // TODO: byte swap
         self.dump.write(&buffer[..n])?;
         self.dump.write(PKT_MARKER)?;
 
@@ -123,7 +121,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
             return Ok(vec![]);
         }
 
-        // TODO: check packet a bit more
+        // TODO: check packet a bit more (esp. buffer serial number)
         let nevents = (n - HEADER_LEN) / EVENT_SIZE;
         let id_status = S::E::read_u16(&buffer[10..12]);
         let status = id_status & 0xFF;
@@ -132,9 +130,20 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
         if status & 1 != 1 {
             lprintln!(WARN, "Mesy {mcpd_id}: got event buffer but daq stopped?");
         }
-        lprintln!(DEBUG, "Mesy {mcpd_id}: got a buffer");
+        //lprintln!(DEBUG, "Mesy {mcpd_id}: got a buffer");
 
         let mut events = Vec::with_capacity(nevents);
+
+        // no events within 25ms -> generate a heartbeat
+        if nevents == 0 {
+            events.push(Event::new(EventTime::from_ticks(TIME_BASE, pkt_ts as i64),
+                                   EventTime::zero(),
+                                   self.module,
+                                   InputId(0),
+                                   EventFlags::None,
+                                   EventData::Heartbeat));
+        }
+
         for i in 0..nevents {
             let data = read_48bit::<S::E>(&buffer[HEADER_LEN + i*EVENT_SIZE..]);
             let ts = pkt_ts + (data & 0x7ffff);    // 19bit

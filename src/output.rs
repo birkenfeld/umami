@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context};
 use crate::channel::{Receiver, Sender};
 use crate::config::OutputConfig;
 use crate::error::UResult;
-use crate::event::Event;
+use crate::event::{Event, EventData};
 use crate::pipeline::PipeItem;
 
 
@@ -90,6 +90,35 @@ impl Output for NullOutput {
         Ok(())
     }
 }
+
+pub struct DiagOutput;
+
+// TODO move diag from postproc here
+impl Output for DiagOutput {
+    fn from_config(_: toml::Table, _: &BTreeMap<String, OutputConfig>) -> UResult<Self> {
+        Ok(DiagOutput)
+    }
+
+    fn update_config(&mut self, _: toml::Table) -> UResult<()> {
+        Ok(())
+    }
+
+    fn handle_start_of_run(&mut self, _run: &str) -> UResult<()> {
+        Ok(())
+    }
+    fn handle_end_of_run(&mut self, _run: String) -> UResult<()> {
+        Ok(())
+    }
+
+    fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
+        for ev in events {
+            if let EventData::Neutron { x, y, t } = &ev.data {
+                println!("{} Neutron at {:3}, {:3}, {:3} ", ev.time, x, y, t);
+            }
+        }
+        Ok(())
+    }
+}
     // std::thread::Builder::new()
     //     .name("Output".into())
     //     .spawn(move || while output_recv.recv().is_ok() {})
@@ -106,6 +135,7 @@ pub struct HDF5EventsOutput;
 
 pub enum OutputKind {
     Null(Box<NullOutput>),
+    Diag(Box<DiagOutput>),
     // HDF5Events(Box<HDF5EventsOutput>),
 }
 
@@ -113,6 +143,7 @@ impl OutputKind {
     pub fn start(self, common: OutputCommon) -> UResult<()> {
         match self {
             Self::Null(output) => output.start(common),
+            Self::Diag(output) => output.start(common),
             // Self::HDF5Events(output) => output.start(common),
         }
     }
@@ -121,6 +152,7 @@ impl OutputKind {
 pub fn from_config(config: &OutputConfig) -> UResult<OutputKind> {
     match config.r#type.as_str() {
         "none" => Ok(OutputKind::Null(Box::new(NullOutput))),
+        "diag" => Ok(OutputKind::Diag(Box::new(DiagOutput))),
         _ => Err(anyhow!("Unknown output type: {}", config.r#type).into()),
     }
 }
