@@ -127,6 +127,6 @@ pub fn load_config(path: &Path) -> UResult<Config> {
         &std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file {:?}", path.display()))?
     ).with_context(|| format!("Failed to parse config file {:?}", path.display()))?;
-    config.filename = path.to_owned();
+    config.filename = path.canonicalize().context("Failed to get canonical config path")?;
     Ok(config)
 }

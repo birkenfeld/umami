@@ -4,6 +4,7 @@
 mod cmd;
 
 use std::io;
+use std::path::Path;
 use anyhow::Context;
 use byteorder::{ByteOrder, BE, LE};
 use crate::lprintln;
@@ -33,16 +34,17 @@ pub struct MesyModule<S, C> {
 }
 
 impl MesyModule<(), ()> {
-    pub fn start(config: MesyConfig, common: ModuleCommon) -> UResult<()> {
+    pub fn start(config: MesyConfig, confdir: &Path, common: ModuleCommon) -> UResult<()> {
         match &config.local {
             SourceConfig::IP(addr) => {
-                let reader = UdpReader::from_config(addr)?;
+                let reader = UdpReader::from_config(addr, confdir)?;
                 let local = reader.0.local_addr().context("Getting local address of UDP reader")?;
                 let cmds = cmd::make_command_socket(local, &config)?;
                 MesyModule::start_with_source(reader, cmds, config, common)
             }
             SourceConfig::File(path) => {
-                MesyModule::start_with_source(ReplayFile::from_config(path)?, (), config, common)
+                MesyModule::start_with_source(
+                    ReplayFile::from_config(path, confdir)?, (), config, common)
             }
         }
     }

@@ -2,6 +2,7 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use anyhow::{anyhow, Context};
 use crate::output::OutputCommon;
 use crate::{channel, ldebug, lprintln, output};
@@ -43,6 +44,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     let mut init_errors = false;
     let mut pipe_recvs = vec![];
     let mut command_sends = BTreeMap::new();
+    let confdir = config.filename.parent().unwrap_or_else(|| Path::new("."));
 
     for (module_name, module_config) in config.modules {
         let mid = ModuleId(module_config.id);
@@ -62,7 +64,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         );
         command_sends.insert(mid, command_send);
 
-        if let Err(e) = input::start(module_config.specific, common) {
+        if let Err(e) = input::start(module_config.specific, &confdir, common) {
             lprintln!(ERROR, "Failed to initialize module {module_name}: {e:#}");
             init_errors = true;
         }

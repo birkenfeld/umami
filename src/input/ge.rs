@@ -3,6 +3,7 @@
 
 use std::io;
 use std::net::TcpStream;
+use std::path::Path;
 use anyhow::{anyhow, Context};
 use byteorder::{ByteOrder, LE};
 use crate::command::{Command, CommandReply};
@@ -34,12 +35,12 @@ fn read_time(buf: &[u8]) -> EventTime {
 }
 
 impl GeModule<()> {
-    pub fn start(config: GEConfig, common: ModuleCommon) -> UResult<()> {
+    pub fn start(config: GEConfig, confdir: &Path, common: ModuleCommon) -> UResult<()> {
         match &config.source {
             SourceConfig::IP(addr) => GeModule::start_with_source(
-                TcpStream::from_config(addr)?, config, common),
+                TcpStream::from_config(addr, confdir)?, config, common),
             SourceConfig::File(path) => GeModule::start_with_source(
-                ReplayFile::from_config(path)?, config, common),
+                ReplayFile::from_config(path, confdir)?, config, common),
         }
     }
 }

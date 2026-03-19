@@ -3,6 +3,7 @@
 
 use std::{io, fmt, thread};
 use std::net::TcpStream;
+use std::path::Path;
 use std::time::Duration;
 use anyhow::Context;
 use byteorder::{ByteOrder, ReadBytesExt, WriteBytesExt, BE};
@@ -30,12 +31,12 @@ const EVENT_SIZE: usize = 8;
 const EPOCH: EventTime = EventTime::from_sec_nsec(1199145600, 0);
 
 impl CanonModule<()> {
-    pub fn start(config: CanonConfig, common: ModuleCommon) -> UResult<()> {
+    pub fn start(config: CanonConfig, confdir: &Path, common: ModuleCommon) -> UResult<()> {
         match &config.source {
             SourceConfig::IP(addr) => CanonModule::start_with_source(
-                TcpStream::from_config(addr)?, config, common),
+                TcpStream::from_config(addr, confdir)?, config, common),
             SourceConfig::File(path) => CanonModule::start_with_source(
-                ReplayFile::from_config(path)?, config, common),
+                ReplayFile::from_config(path, confdir)?, config, common),
         }
     }
 }

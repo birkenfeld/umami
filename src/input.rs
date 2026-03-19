@@ -9,7 +9,7 @@ use std::fs::File;
 use std::thread;
 use std::io::{Seek, Write};
 use std::os::fd::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use anyhow::Context;
 use serde::Serialize;
@@ -72,11 +72,11 @@ impl ModuleCommon {
     }
 }
 
-pub fn start(config: SpecificModuleConfig, common: ModuleCommon) -> UResult<()> {
+pub fn start(config: SpecificModuleConfig, confdir: &Path, common: ModuleCommon) -> UResult<()> {
     match config {
-        SpecificModuleConfig::GE(cfg) => ge::GeModule::start(cfg, common)?,
-        SpecificModuleConfig::Canon(cfg) => canon::CanonModule::start(cfg, common)?,
-        SpecificModuleConfig::Mesy(cfg) => mesy::MesyModule::start(cfg, common)?,
+        SpecificModuleConfig::GE(cfg) => ge::GeModule::start(cfg, confdir, common)?,
+        SpecificModuleConfig::Canon(cfg) => canon::CanonModule::start(cfg, confdir, common)?,
+        SpecificModuleConfig::Mesy(cfg) => mesy::MesyModule::start(cfg, confdir, common)?,
     }
     Ok(())
 }
@@ -238,7 +238,7 @@ pub trait Module: Send {
 
 pub trait Source: Send + 'static {
     type Config;
-    fn from_config(cfg: &Self::Config) -> UResult<Self> where Self: Sized;
+    fn from_config(cfg: &Self::Config, confdir: &Path) -> UResult<Self> where Self: Sized;
     fn description(&self) -> String;
     fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()>;
     fn reset(&mut self) -> UResult<()>;
@@ -255,8 +255,8 @@ pub struct ReplayFile {
 impl Source for ReplayFile {
     type Config = String;
 
-    fn from_config(cfg: &Self::Config) -> UResult<Self> {
-        let file = std::fs::File::open(cfg)
+    fn from_config(cfg: &Self::Config, confdir: &Path) -> UResult<Self> {
+        let file = std::fs::File::open(confdir.join(cfg))
            .with_context(|| format!("Opening source file {:?}", cfg))?;
         Ok(Self {
             file,
@@ -287,7 +287,7 @@ impl Source for ReplayFile {
 impl Source for std::net::TcpStream {
     type Config = String;
 
-    fn from_config(cfg: &Self::Config) -> UResult<Self> {
+    fn from_config(cfg: &Self::Config, _: &Path) -> UResult<Self> {
         let addr = resolve(cfg)?;
         let stream = std::net::TcpStream::connect(addr)
             .with_context(|| format!("Connecting to {}", addr))?;
@@ -326,7 +326,7 @@ impl std::io::Read for UdpReader {
 impl Source for UdpReader {
     type Config = String;
 
-    fn from_config(cfg: &Self::Config) -> UResult<Self> {
+    fn from_config(cfg: &Self::Config, _: &Path) -> UResult<Self> {
         let addr = resolve(cfg)?;
         let sock = std::net::UdpSocket::bind(addr)
             .context(format!("Binding to source socket {}", addr))?;
