@@ -11,7 +11,7 @@ use num_enum::FromPrimitive;
 use zerocopy::{FromBytes, Immutable, IntoBytes, Unaligned};
 use zerocopy::byteorder::little_endian::U16;
 use crate::{ldebug, lprintln};
-use crate::config::{MesyConfig, MesyModuleConfig};
+use crate::config::{MesyConfig, MesyModuleConfig, SourceConfig};
 use crate::error::UResult;
 use crate::util::resolve;
 
@@ -25,6 +25,7 @@ pub enum Cmd {
     Reset = 0,
     Start = 1,
     Stop = 2,
+    SetCommPars = 5,
     SetCell = 9,
     SetGainMpsd = 13,
     SetThreshold = 14,
@@ -93,21 +94,32 @@ pub trait MesyCommandHandler: Send + 'static {
                 continue;
             }
 
-            let peri_reg: [U16; 3] = self.do_command(Cmd::ReadPeriReg,
-                                                     [U16::new(i as _), U16::new(2)])?;
-            let mod_ver = peri_reg[2];
             let mod_info: [U16; 4] = self.do_command(Cmd::GetModInfo, [U16::new(i as _)])?;
             let mod_xmit_cap = mod_info[1];
             let mod_xmit_set = mod_info[2];
-            let mod_firmware = mod_info[3];
+            let mod_major = mod_info[3] >> 8;
+            let mod_minor = mod_info[3] & 0xFF;
 
-            lprintln!(INFO, "Module {i}: ID {}, version {}, xmit cap {}, xmit set {}, firmware {}",
-                      mod_id, mod_ver, mod_xmit_cap, mod_xmit_set, mod_firmware);
+            lprintln!(INFO, "MCPD module {i}: ID {}, xmit cap {}, xmit set {}, firmware {}.{}",
+                      mod_id, mod_xmit_cap, mod_xmit_set, mod_major, mod_minor);
         }
         Ok(mod_types)
     }
 
     fn set_up(&mut self, modules: &[ModType; 8], config: &MesyConfig) -> UResult<()> {
+        let data_port = match &config.local {
+            SourceConfig::IP(addr) => resolve(addr)?.port(),
+            _ => unimplemented!("cannot set up replay file")
+        };
+        let reply: [U16; 14] = self.do_command(Cmd::SetCommPars, [
+            U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // no new mcpd ip
+            U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // data ip = self
+            U16::new(0),  // no new cmd port
+            U16::new(data_port),
+            U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // cmd ip = self
+        ])?;
+        lprintln!(INFO, "Set target data port to {data_port}");
+
         for i in 0..8 {
             if let Some(cfg) = config.cells.get(&i) {
                 lprintln!(INFO, "Setting up cell {i} with source {}, compare {}",
@@ -231,11 +243,16 @@ impl MesyCommandHandler for CommandSocket {
         // exchange communication
         self.sock.send(packet.as_bytes())
                  .with_context(|| format!("Sending command {:?} to command socket", cmd))?;
-        let nrecv = self.sock.recv(&mut self.buffer)
-                             .with_context(|| format!("Receiving reply to command {:?}", cmd))?;
+        let mut nrecv = self.sock.recv(&mut self.buffer)
+                                 .with_context(|| format!("Receiving reply to command {:?}", cmd))?;
         // ldebug!("Mesytec reply buffer: {:?}", &self.buffer[..nrecv]);
+        // some partners do not reply with trailing 0xFFFF
+        if self.buffer[nrecv-2..nrecv] != [0xFF, 0xFF] {
+            nrecv += 2;  // no need to set the bytes, we ignore them
+        }
 
-        let ret = Packet::<Dout>::read_from_bytes(&self.buffer[..nrecv])
+        let ret = Packet::<Dout>::read_from_prefix(&self.buffer[..nrecv])
+            .map(|(pkt, _)| pkt)
             .map_err(|_| anyhow!("Reply packet has wrong length (expected {}, got {})",
                                  size_of::<Packet<Dout>>(), nrecv))
             .with_context(|| format!("Sending command {:?}", cmd))?;

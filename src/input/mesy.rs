@@ -122,6 +122,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
             lprintln!(WARN, "Mesy: got a nondata buffer?");
             return Ok(vec![]);
         }
+
         // TODO: check packet a bit more
         let nevents = (n - HEADER_LEN) / EVENT_SIZE;
         let id_status = S::E::read_u16(&buffer[10..12]);
@@ -129,8 +130,9 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
         let mcpd_id = id_status as u64 >> 8;
         let pkt_ts = read_48bit::<S::E>(&buffer[12..]);
         if status & 1 != 1 {
-            lprintln!(WARN, "Mesy: got event buffer but daq stopped?");
+            lprintln!(WARN, "Mesy {mcpd_id}: got event buffer but daq stopped?");
         }
+        lprintln!(DEBUG, "Mesy {mcpd_id}: got a buffer");
 
         let mut events = Vec::with_capacity(nevents);
         for i in 0..nevents {
