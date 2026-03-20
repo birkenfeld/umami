@@ -191,7 +191,6 @@ impl CanonSource for TcpStream {
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(0),
             // socket closed
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(UError::NoMoreData),
-            // TODO: handle reconnect if necessary
             Err(e) => Err(e).context("Reading number of events")?,
         };
 

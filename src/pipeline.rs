@@ -16,6 +16,7 @@ use crate::shm::{ShmInterface, MAX_MODULES};
 use crate::util::wait_for_signal;
 
 const EV_CHANNEL_SIZE: usize = 128; // TODO tune more
+const OUT_CHANNEL_SIZE: usize = 1024; // give outputs some slack
 
 pub enum PipeItem {
     Events(Vec<Event>),
@@ -102,7 +103,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
 
     // create channels between outputs (they are daisy-chained)
     let (mut output_sends, mut output_recvs): (Vec<_>, Vec<_>) =
-        (0..outputs.len()).map(|_| channel::bounded(EV_CHANNEL_SIZE)).unzip();
+        (0..outputs.len()).map(|_| channel::bounded(OUT_CHANNEL_SIZE)).unzip();
     let first_output_send = output_sends.pop().expect("at least one");
 
     for out_config in outputs {

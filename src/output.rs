@@ -14,8 +14,8 @@ use crate::pipeline::PipeItem;
 
 // TODO:
 // - file-based outputs: filename?
-// - always the NullOutput at the end or check for optional sender?
 // - let implementor match on pipeitem?
+// - Result returns needed? Should Err skip the rest of outputs?
 
 pub struct OutputCommon {
     input: Receiver<PipeItem>,
@@ -125,12 +125,10 @@ impl Output for DiagOutput {
     //     .context("Spawning output thread")?;
 
 // Broadcast over udp/uds
-pub struct UDPOutput;
-pub struct UDSOutput;
-
-
-pub struct FileOutput;
-pub struct HDF5EventsOutput;
+// pub struct UDPOutput;
+// pub struct UDSOutput;
+// pub struct FileOutput;
+// pub struct HDF5EventsOutput;
 
 
 pub enum OutputKind {

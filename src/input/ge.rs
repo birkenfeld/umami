@@ -108,7 +108,6 @@ impl<S: Source> Module for GeModule<S> {
                     return Err(UError::NoMoreData);
                 }
             }
-            // TODO: handle reconnect if necessary
             Err(e) => Err(e).context("Reading from source")?,
         }
         let len = LE::read_u32(&buffer) as usize;

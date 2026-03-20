@@ -30,6 +30,7 @@ pub struct MesyModule<S, C> {
     command_handler: C,
     module: ModuleId,
     dump: DumpHandler,
+    #[allow(unused)]
     is_master: bool,
 }
 

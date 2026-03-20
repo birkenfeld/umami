@@ -32,7 +32,7 @@ pub enum Cmd {
     GetModInfo = 24,
     ReadIds = 36,
     GetMcpdVer = 51,
-    ReadPeriReg = 52,
+    // ReadPeriReg = 52,
 }
 
 #[repr(u16)]
@@ -111,7 +111,7 @@ pub trait MesyCommandHandler: Send + 'static {
             SourceConfig::IP(addr) => resolve(addr)?.port(),
             _ => unimplemented!("cannot set up replay file")
         };
-        let reply: [U16; 14] = self.do_command(Cmd::SetCommPars, [
+        let _: [U16; 14] = self.do_command(Cmd::SetCommPars, [
             U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // no new mcpd ip
             U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // data ip = self
             U16::new(0),  // no new cmd port
