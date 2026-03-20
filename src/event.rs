@@ -110,6 +110,27 @@ pub enum EventFlags {
     Fake = 0x1000,
 }
 
+impl Display for EventFlags {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        if self.is_empty() {
+            return write!(f, "-");
+        }
+        let mut first = true;
+        for flag in self.iter() {
+            if !first {
+                write!(f, "|")?;
+            }
+            first = false;
+            match flag {
+                Self::HasRelTime => write!(f, "RT")?,
+                Self::Fake => write!(f, "F")?,
+                _ => unreachable!(),
+            }
+        }
+        Ok(())
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
@@ -128,13 +149,18 @@ impl Event {
                flags: EventFlags, data: EventData) -> Self {
         Self { time, rel_time, module, input, flags, data }
     }
+
+    pub fn dump(&self) -> DumpEvent<'_> {
+        DumpEvent(self)
+    }
 }
 
 impl Debug for Event {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "Event(time={:.9}, flags={:#x}, module={}, input={}, data={:?})",
-               self.time.0 as f64 / 1_000_000_000.0, self.flags.0,
-               self.module.0, self.input.0, self.data)
+        write!(f, "Event(time={:.9}, rel_time={:.9}, flags={:#x}, module={}, input={}, data={:?})",
+               self.time.0 as f64 / 1_000_000_000.0,
+               self.rel_time.0 as f64 / 1_000_000_000.0,
+               self.flags.0, self.module.0, self.input.0, self.data)
     }
 }
 
@@ -147,5 +173,48 @@ impl PartialOrd for Event {
 impl Ord for Event {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.time.0.cmp(&other.time.0)
+    }
+}
+
+pub struct DumpEvent<'a>(&'a Event);
+
+impl Display for DumpEvent<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        let ev = self.0;
+        write!(f, "{:.9} / {:.9} [{}] M{:2} I{:3} ",
+               ev.time.0 as f64 / 1_000_000_000.0,
+               ev.rel_time.0 as f64 / 1_000_000_000.0,
+               ev.flags, ev.module.0, ev.input.0)?;
+        match ev.data {
+            EventData::RawNeutron =>
+                write!(f, "RawNeutron"),
+            EventData::RawEdge { up } =>
+                write!(f, "RawEdge     {}", if up { "up" } else { "down" }),
+            EventData::RawAnalog1 { value1, value2 } =>
+                write!(f, "RawAnalog1  value1={}, value2={}", value1, value2),
+            EventData::RawAnalog2 { value1, value2, value3 } =>
+                write!(f, "RawAnalog2  value1={}, value2={}, value3={}",
+                       value1, value2, value3),
+            EventData::RawDigital { value1, value2, value3 } =>
+                write!(f, "RawDigital  value1={}, value2={}, value3={}",
+                       value1, value2, value3),
+            EventData::RawData { value, len } =>
+                write!(f, "RawData     len={}, data={:02x?}",
+                       len, &value[..len as usize]),
+            EventData::Heartbeat =>
+                write!(f, "Heartbeat"),
+            EventData::Neutron { x, y, t } =>
+                write!(f, "Neutron     at {:3}, {:3}, {:3}", x, y, t),
+            EventData::Monitor { index } =>
+                write!(f, "Monitor     index={index}"),
+            EventData::Tzero =>
+                write!(f, "T-zero"),
+            EventData::Gate { up } =>
+                write!(f, "Gate        {}", if up { "up" } else { "down" }),
+            EventData::AuxSignal { number, up } =>
+                write!(f, "Aux signal  {} {}", number, if up { "up" } else { "down" }),
+            EventData::Void =>
+                write!(f, "Void"),
+        }
     }
 }
