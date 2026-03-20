@@ -107,18 +107,17 @@ pub trait MesyCommandHandler: Send + 'static {
     }
 
     fn set_up(&mut self, modules: &[ModType; 8], config: &MesyConfig) -> UResult<()> {
-        let data_port = match &config.local {
-            SourceConfig::IP(addr) => resolve(addr)?.port(),
-            _ => unimplemented!("cannot set up replay file")
-        };
-        let _: [U16; 14] = self.do_command(Cmd::SetCommPars, [
-            U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // no new mcpd ip
-            U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // data ip = self
-            U16::new(0),  // no new cmd port
-            U16::new(data_port),
-            U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // cmd ip = self
-        ])?;
-        lprintln!(INFO, "Set target data port to {data_port}");
+        if let SourceConfig::IP(addr) = &config.local {
+            let data_port = resolve(addr)?.port();
+            let _: [U16; 14] = self.do_command(Cmd::SetCommPars, [
+                U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // no new mcpd ip
+                U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // data ip = self
+                U16::new(0),  // no new cmd port
+                U16::new(data_port),
+                U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // cmd ip = self
+            ])?;
+            lprintln!(INFO, "Set target data port to {data_port}");
+        }
 
         for i in 0..8 {
             if let Some(cfg) = config.cells.get(&i) {
