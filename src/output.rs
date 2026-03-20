@@ -1,14 +1,12 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-use std::collections::BTreeMap;
-
 use anyhow::{anyhow, Context};
-
+use crate::lprintln;
 use crate::channel::{Receiver, Sender};
 use crate::config::OutputConfig;
 use crate::error::UResult;
-use crate::event::{Event, EventData};
+use crate::event::{Event, EventTime};
 use crate::pipeline::PipeItem;
 
 
@@ -30,12 +28,11 @@ impl OutputCommon {
 
 
 pub trait Output: Send {
-    fn from_config(_: toml::Table, _: &BTreeMap<String, OutputConfig>) -> UResult<Self>
-        where Self: Sized;
-    fn update_config(&mut self, _: toml::Table) -> UResult<()>;
+    fn from_config(config: &toml::Table) -> UResult<Self> where Self: Sized;
+    // fn update_config(&mut self, _: toml::Table) -> UResult<()>;
     fn handle_events(&mut self, events: &[Event]) -> UResult<()>;
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()>;
-    fn handle_end_of_run(&mut self, run: String) -> UResult<()>;
+    fn handle_end_of_run(&mut self) -> UResult<()>;
     fn main_loop(mut self, common: OutputCommon)
     where Self: Sized
     {
@@ -47,7 +44,9 @@ pub trait Output: Send {
                 PipeItem::StartOfRun(run) => {
                     let _ = self.handle_start_of_run(run);
                 },
-                PipeItem::EndOfRun => {},
+                PipeItem::EndOfRun => {
+                    let _ = self.handle_end_of_run();
+                },
                 PipeItem::Clear => {},
                 _ => {},
             }
@@ -71,18 +70,18 @@ pub trait Output: Send {
 pub struct NullOutput;
 
 impl Output for NullOutput {
-    fn from_config(_: toml::Table, _: &BTreeMap<String, OutputConfig>) -> UResult<Self> {
+    fn from_config(_: &toml::Table) -> UResult<Self> {
         Ok(NullOutput)
     }
 
-    fn update_config(&mut self, _: toml::Table) -> UResult<()> {
-        Ok(())
-    }
+    // fn update_config(&mut self, _: toml::Table) -> UResult<()> {
+    //     Ok(())
+    // }
 
     fn handle_start_of_run(&mut self, _run: &str) -> UResult<()> {
         Ok(())
     }
-    fn handle_end_of_run(&mut self, _run: String) -> UResult<()> {
+    fn handle_end_of_run(&mut self) -> UResult<()> {
         Ok(())
     }
 
@@ -91,38 +90,54 @@ impl Output for NullOutput {
     }
 }
 
-pub struct DiagOutput;
+pub struct DiagOutput {
+    every_event: bool,
+    last_ts: EventTime,
+    out_of_order: usize,
+}
 
-// TODO move diag from postproc here
 impl Output for DiagOutput {
-    fn from_config(_: toml::Table, _: &BTreeMap<String, OutputConfig>) -> UResult<Self> {
-        Ok(DiagOutput)
+    fn from_config(config: &toml::Table) -> UResult<Self> {
+        Ok(DiagOutput {
+            every_event: config.get("every_event").and_then(|v| v.as_bool()).unwrap_or(false),
+            last_ts: EventTime::zero(),
+            out_of_order: 0,
+        })
     }
 
-    fn update_config(&mut self, _: toml::Table) -> UResult<()> {
-        Ok(())
-    }
+    // fn update_config(&mut self, _: toml::Table) -> UResult<()> {
+    //     Ok(())
+    // }
 
     fn handle_start_of_run(&mut self, _run: &str) -> UResult<()> {
+        self.out_of_order = 0;
+        self.last_ts = EventTime::zero();
         Ok(())
     }
-    fn handle_end_of_run(&mut self, _run: String) -> UResult<()> {
+
+    fn handle_end_of_run(&mut self) -> UResult<()> {
+        if self.out_of_order > 0 {
+            lprintln!(INFO, "Total out of order: {}", self.out_of_order);
+        }
         Ok(())
     }
 
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
         for ev in events {
-            if let EventData::Neutron { x, y, t } = &ev.data {
-                println!("{} Neutron at {:3}, {:3}, {:3} ", ev.time, x, y, t);
+            let ev_ts = ev.time;
+            if ev_ts < self.last_ts {
+                // lprintln!(INFO, "Out of order event: last_ts={:?}, \
+                           // ev_ts={:?}", self.last_ts, ev_ts);
+                self.out_of_order += 1;
+            }
+            self.last_ts = ev_ts;
+            if self.every_event {
+                lprintln!(INFO, "{}", ev.dump());
             }
         }
         Ok(())
     }
 }
-    // std::thread::Builder::new()
-    //     .name("Output".into())
-    //     .spawn(move || while output_recv.recv().is_ok() {})
-    //     .context("Spawning output thread")?;
 
 // Broadcast over udp/uds
 // pub struct UDPOutput;
@@ -132,8 +147,8 @@ impl Output for DiagOutput {
 
 
 pub enum OutputKind {
-    Null(Box<NullOutput>),
-    Diag(Box<DiagOutput>),
+    Null(NullOutput),
+    Diag(DiagOutput),
     // HDF5Events(Box<HDF5EventsOutput>),
 }
 
@@ -149,8 +164,10 @@ impl OutputKind {
 
 pub fn from_config(config: &OutputConfig) -> UResult<OutputKind> {
     match config.r#type.as_str() {
-        "none" => Ok(OutputKind::Null(Box::new(NullOutput))),
-        "diag" => Ok(OutputKind::Diag(Box::new(DiagOutput))),
+        "none" => Ok(OutputKind::Null(NullOutput)),
+        "diag" => Ok(OutputKind::Diag(
+            DiagOutput::from_config(&config.config)?
+        )),
         _ => Err(anyhow!("Unknown output type: {}", config.r#type).into()),
     }
 }

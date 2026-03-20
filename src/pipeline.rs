@@ -96,10 +96,12 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     ).context("Creating command handler")?;
 
     // handle outputs - we need to have at least a null output to consume from the postproc
-    let outputs = config.outputs.unwrap_or_else(|| {
+    let mut outputs = config.outputs.unwrap_or_default();
+    if outputs.is_empty() {
         lprintln!(INFO, "No outputs configured, using null output as fallback.");
-        vec![OutputConfig {r#type: "none".to_string(), config: toml::Table::default()}]
-    });
+        outputs = vec![OutputConfig {r#type: "none".to_string(),
+                                     config: Default::default()}];
+    }
 
     // create channels between outputs (they are daisy-chained)
     let (mut output_sends, mut output_recvs): (Vec<_>, Vec<_>) =
@@ -134,6 +136,8 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     );
 
     postproc.start()?;
+
+    lprintln!(INFO, "Init done, waiting for commands");
 
     if immediate_start {
         handler.handle(command::Command::Start { run_id: "auto".to_string() });

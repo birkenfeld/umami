@@ -4,11 +4,11 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 use anyhow::Context;
-use crate::{lprintln, ldebug, ltrace};
+use crate::{lprintln, ltrace};
 use crate::channel::{Receiver, Sender};
 use crate::command::CommandReply;
 use crate::error::{UResult};
-use crate::event::{EventData, EventTime, ModuleId};
+use crate::event::{EventData, ModuleId};
 use crate::input::ModuleState;
 use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
@@ -49,9 +49,7 @@ impl PostProcessor {
     pub fn main(mut self) {
         let mut started = None;
         let mut debug_at = 0;
-        let mut last_ts = EventTime::zero();
         let mut ev_count: usize = 0;
-        let mut out_of_order = 0;
 
         // use the default recipe at first
         let mut cur_recipe = String::from("default");
@@ -70,15 +68,7 @@ impl PostProcessor {
                         lprintln!(DEBUG, "Received {ev_count} events");
                         debug_at += 1000000;
                     }
-                    for (j, ev) in evs.iter().enumerate() {
-                        let ev_ts = ev.time;
-                        if ev_ts < last_ts {
-                            ldebug!("Out of order event #{}: last_ts={last_ts:?}, \
-                                     ev_ts={ev_ts:?}", ev_count+j);
-                            out_of_order += 1;
-                        }
-                        last_ts = ev_ts;
-
+                    for ev in &evs {
                         if let EventData::Neutron { x, y, t } = ev.data {
                             self.shm.add_histo(x, y, t);
                         };
@@ -88,16 +78,14 @@ impl PostProcessor {
                 PipeItem::StartOfRun(ref run_id) => {
                     lprintln!(INFO, "Starting run {run_id}");
                     self.shm.set_run_id(run_id);
-                    last_ts = EventTime::zero();
                     ev_count = 0;
-                    out_of_order = 0;
                     debug_at = 0;
                     started = Some(Instant::now());
                 }
                 PipeItem::EndOfRun => {
                     if let Some(ts) = started {
-                        lprintln!(INFO, "Run finished: {} events in {:.3} s, {} out of order",
-                                  ev_count, ts.elapsed().as_secs_f32(), out_of_order);
+                        lprintln!(INFO, "Run finished: {} events in {:.3} s",
+                                  ev_count, ts.elapsed().as_secs_f32());
                         started = None;
                     }
                 }
