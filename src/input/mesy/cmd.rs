@@ -130,6 +130,8 @@ pub trait MesyCommandHandler: Send + 'static {
             }
         }
 
+        // TODO: transmission mode (for MCPD and modules)
+
         for (i, modtype) in modules.iter().enumerate() {
             match modtype {
                 ModType::None => continue,
@@ -161,7 +163,7 @@ pub trait MesyCommandHandler: Send + 'static {
         let _res: [U16; 3] = self.do_command(
             Cmd::SetGainMpsd,
             [U16::new(num as _), U16::new(8), U16::new(gain)],
-        )?;   // id 8 = all channels
+        )?;   // id 8 = all channels (TODO single gain)
         let _res: [U16; 2] = self.do_command(
             Cmd::SetThreshold,
             [U16::new(num as _), U16::new(threshold)],

@@ -8,6 +8,8 @@ use crate::error::UResult;
 use crate::event::{Event, EventData};
 use super::Recipe;
 
+// TODO: amplitude modes
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct Mpsd;
 

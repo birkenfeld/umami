@@ -28,10 +28,14 @@ const FULL_HEADER: &[u8] = b"mesytec psd listmode data\nheader length: 2 lines \
 pub struct MesyModule<S, C> {
     source: S,
     command_handler: C,
-    module: ModuleId,
     dump: DumpHandler,
+    // configuration
+    module: ModuleId,
     #[allow(unused)]
     is_master: bool,
+    // run-time
+    buf_serial: Option<u16>,
+    no_event_buffers: usize,
 }
 
 impl MesyModule<(), ()> {
@@ -58,9 +62,11 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyModule<S, C> {
         let module = Self {
             source,
             command_handler: commands,
-            module: common.module,
             dump: Default::default(),
+            module: common.module,
             is_master: config.is_master,
+            buf_serial: None,
+            no_event_buffers: 0,
         };
         module.start_main_loop(common)?;
         Ok(())
@@ -84,6 +90,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
         self.dump.write(FULL_HEADER)?;
         self.dump.write(BEG_MARKER)?;
         self.source.rewind()?;
+        self.buf_serial = None;
         // TODO: check why this is needed on non-master modules
         self.command_handler.start()?;
         Ok(())
@@ -115,34 +122,53 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Module for MesyModule<S, C> {
         self.dump.write(&buffer[..n])?;
         self.dump.write(PKT_MARKER)?;
 
+        let buf_length = S::E::read_u16(&buffer) as usize * 2;
+        if buf_length != n {
+            lprintln!(WARN, "MCPD {}: got packet of size {}, expected {}",
+                      self.source.description(), n, buf_length);
+            return Ok(vec![]);
+        }
         let btype = S::E::read_u16(&buffer[2..4]);
         if btype >> 15 != 0 {
             // not a data buffer
-            lprintln!(WARN, "Mesy: got a nondata buffer?");
+            lprintln!(WARN, "MCPD {}: got an unexpected command buffer",
+                      self.source.description());
             return Ok(vec![]);
         }
 
-        // TODO: check packet a bit more (esp. buffer serial number)
         let nevents = (n - HEADER_LEN) / EVENT_SIZE;
-        let id_status = S::E::read_u16(&buffer[10..12]);
+        let buf_serial = S::E::read_u16(&buffer[6..]);
+        let id_status = S::E::read_u16(&buffer[10..]);
         let status = id_status & 0xFF;
         let mcpd_id = id_status as u64 >> 8;
         let pkt_ts = read_48bit::<S::E>(&buffer[12..]);
         if status & 1 != 1 {
-            lprintln!(WARN, "Mesy {mcpd_id}: got event buffer but daq stopped?");
+            lprintln!(WARN, "MCPD {mcpd_id}: got event buffer but daq stopped");
+            return Ok(vec![]);
         }
-        //lprintln!(DEBUG, "Mesy {mcpd_id}: got a buffer");
+        if let Some(prev) = self.buf_serial && buf_serial != prev.wrapping_add(1) {
+            lprintln!(WARN, "MCPD {mcpd_id}: skipped {} buffer(s): serial {} -> {}",
+                      buf_serial.wrapping_sub(prev + 1), prev, buf_serial);
+        }
+        self.buf_serial = Some(buf_serial);
+        //lprintln!(DEBUG, "MCPD {mcpd_id}: got a data buffer");
 
         let mut events = Vec::with_capacity(nevents);
 
-        // no events within 25ms -> generate a heartbeat
+        // no events within 250ms -> generate a heartbeat
         if nevents == 0 {
-            events.push(Event::new(EventTime::from_ticks(TIME_BASE, pkt_ts as i64),
-                                   EventTime::zero(),
-                                   self.module,
-                                   InputId(0),
-                                   EventFlags::None,
-                                   EventData::Heartbeat));
+            self.no_event_buffers += 1;
+            if self.no_event_buffers == 10 {
+                events.push(Event::new(EventTime::from_ticks(TIME_BASE, pkt_ts as i64),
+                                       EventTime::zero(),
+                                       self.module,
+                                       InputId(0),
+                                       EventFlags::None,
+                                       EventData::Heartbeat));
+                self.no_event_buffers = 0;
+            }
+        } else {
+            self.no_event_buffers = 0;
         }
 
         for i in 0..nevents {
