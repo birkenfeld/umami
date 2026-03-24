@@ -7,7 +7,7 @@ use anyhow::{anyhow, Context};
 use crate::output::OutputCommon;
 use crate::{channel, ldebug, lprintln, output};
 use crate::{command, input, postproc, recipe, sorter};
-use crate::command::CommandReply;
+use crate::command::{Command, CommandReply};
 use crate::config::{Config, OutputConfig};
 use crate::error::UResult;
 use crate::event::{Event, ModuleId};
@@ -137,11 +137,17 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
 
     postproc.start()?;
 
-    lprintln!(INFO, "Init done, waiting for commands");
 
-    if immediate_start {
-        handler.handle(command::Command::Start { run_id: "auto".to_string() });
+    if let Some(path) = config.raw_dir {
+        lprintln!(INFO, "Raw dump enabled, dumping to {:?}", path.display());
+        let path = path.to_string_lossy().to_string();
+        handler.handle(Command::SetRawDump { enable: true, path });
     }
+    if immediate_start {
+        handler.handle(Command::Start { run_id: "auto".to_string() });
+    }
+
+    lprintln!(INFO, "Init done, waiting for commands");
     handler.start()?;
 
     wait_for_signal().context("Setting signal handler")?;

@@ -100,6 +100,7 @@ pub struct Config {
     pub histogram: HistoConfig,
     #[serde(default = "default_ipc_name")]
     pub ipc_name: String,
+    pub raw_dir: Option<PathBuf>,
     #[serde(default)]
     pub debug: bool,
     #[serde(skip)]

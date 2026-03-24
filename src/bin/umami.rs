@@ -18,6 +18,8 @@ pub struct Options {
     start: bool,
     #[clap(long="ipc", help="Name of the instance for IPC, overrides config file")]
     ipc_name: Option<String>,
+    #[clap(long="raw", help="Enable raw dump to this path, overrides config file")]
+    raw: Option<PathBuf>,
     #[clap(long="debug", help="Enable debug output")]
     debug: bool,
     #[clap(long="trace", help="Enable trace output (every event)")]
@@ -30,6 +32,9 @@ fn inner_main(args: Options) -> umami::UResult<()> {
 
     if let Some(ipc_name) = args.ipc_name {
         config.ipc_name = ipc_name.to_string();
+    }
+    if let Some(raw_dir) = args.raw {
+        config.raw_dir = Some(raw_dir);
     }
 
     umami::set_debug_params(config.debug | args.debug | args.trace, args.trace)?;
