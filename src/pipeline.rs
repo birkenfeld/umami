@@ -99,8 +99,8 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     let mut outputs = config.outputs.unwrap_or_default();
     if outputs.is_empty() {
         lprintln!(INFO, "No outputs configured, using null output as fallback.");
-        outputs = vec![OutputConfig {r#type: "none".to_string(),
-                                     config: Default::default()}];
+        outputs.insert("".into(), OutputConfig { r#type: "none".to_string(),
+                                                 config: Default::default() });
     }
 
     // create channels between outputs (they are daisy-chained)
@@ -108,7 +108,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         (0..outputs.len()).map(|_| channel::bounded(OUT_CHANNEL_SIZE)).unzip();
     let first_output_send = output_sends.pop().expect("at least one");
 
-    for out_config in outputs {
+    for out_config in outputs.values() {
         let common = OutputCommon::new(output_recvs.pop().expect("one per output"),
                                        output_sends.pop());
         if let Err(e) = output::from_config(&out_config)?.start(common) {

@@ -95,7 +95,7 @@ pub struct HistoConfig {
 pub struct Config {
     pub modules: BTreeMap<String, ModuleConfig>,
     pub recipes: BTreeMap<String, RecipeConfig>,
-    pub outputs: Option<Vec<OutputConfig>>,
+    pub outputs: Option<BTreeMap<String, OutputConfig>>,
     pub process_modes: BTreeMap<String, String>,
     pub histogram: HistoConfig,
     #[serde(default = "default_ipc_name")]
