@@ -10,10 +10,7 @@ use crate::event::{Event, EventTime};
 use crate::pipeline::PipeItem;
 
 
-// TODO:
-// - file-based outputs: filename?
-// - let implementor match on pipeitem?
-// - Result returns needed? Should Err skip the rest of outputs?
+// TODO: file-based outputs: filename (needs to come from Command)?
 
 pub struct OutputCommon {
     name: String,
