@@ -108,12 +108,13 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         (0..outputs.len()).map(|_| channel::bounded(OUT_CHANNEL_SIZE)).unzip();
     let first_output_send = output_sends.pop().expect("at least one");
 
-    for out_config in outputs.values() {
-        let common = OutputCommon::new(output_recvs.pop().expect("one per output"),
+    for (name, out_config) in outputs {
+        let common = OutputCommon::new(name.clone(),
+                                       output_recvs.pop().expect("one per output"),
                                        output_sends.pop());
-        if let Err(e) = output::from_config(&out_config)?.start(common) {
+        if let Err(e) = output::start(out_config, common) {
             init_errors = true;
-            lprintln!(ERROR, "Failed to initialize output {}: {e:#}", out_config.r#type);
+            lprintln!(ERROR, "Failed to initialize output {}: {e:#}", name);
         }
     }
     if init_errors {

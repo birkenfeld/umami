@@ -16,19 +16,24 @@ use crate::pipeline::PipeItem;
 // - Result returns needed? Should Err skip the rest of outputs?
 
 pub struct OutputCommon {
+    name: String,
     input: Receiver<PipeItem>,
     output: Option<Sender<PipeItem>>,
 }
 
 impl OutputCommon {
-    pub fn new(input: Receiver<PipeItem>, output: Option<Sender<PipeItem>>) -> Self {
-        Self { input, output }
+    pub fn new(
+        name: String,
+        input: Receiver<PipeItem>,
+        output: Option<Sender<PipeItem>>,
+    ) -> Self {
+        Self { name, input, output }
     }
 }
 
 
 pub trait Output: Send {
-    fn from_config(config: &toml::Table) -> UResult<Self> where Self: Sized;
+    fn from_config(config: toml::Table) -> UResult<Self> where Self: Sized;
     // fn update_config(&mut self, _: toml::Table) -> UResult<()>;
     fn handle_events(&mut self, events: &[Event]) -> UResult<()>;
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()>;
@@ -39,15 +44,23 @@ pub trait Output: Send {
         while let Ok(item) = common.input.recv() {
             match &item {
                 PipeItem::Events(events) => {
-                    let _ = self.handle_events(&events);
+                    if let Err(e) = self.handle_events(&events) {
+                        lprintln!(ERROR, "Output {}: error handling events: {e:#}",
+                                  common.name);
+                    }
                 },
                 PipeItem::StartOfRun(run) => {
-                    let _ = self.handle_start_of_run(run);
+                    if let Err(e) = self.handle_start_of_run(run) {
+                        lprintln!(ERROR, "Output {}: error handling start of run: {e:#}",
+                                  common.name);
+                    }
                 },
                 PipeItem::EndOfRun => {
-                    let _ = self.handle_end_of_run();
+                    if let Err(e) = self.handle_end_of_run() {
+                        lprintln!(ERROR, "Output {}: error handling end of run: {e:#}",
+                                  common.name);
+                    }
                 },
-                PipeItem::Clear => {},
                 _ => {},
             }
             if let Some(sender) = &common.output {
@@ -70,7 +83,7 @@ pub trait Output: Send {
 pub struct NullOutput;
 
 impl Output for NullOutput {
-    fn from_config(_: &toml::Table) -> UResult<Self> {
+    fn from_config(_: toml::Table) -> UResult<Self> {
         Ok(NullOutput)
     }
 
@@ -97,7 +110,7 @@ pub struct DiagOutput {
 }
 
 impl Output for DiagOutput {
-    fn from_config(config: &toml::Table) -> UResult<Self> {
+    fn from_config(config: toml::Table) -> UResult<Self> {
         Ok(DiagOutput {
             every_event: config.get("every_event").and_then(|v| v.as_bool()).unwrap_or(false),
             last_ts: EventTime::zero(),
@@ -146,28 +159,10 @@ impl Output for DiagOutput {
 // pub struct HDF5EventsOutput;
 
 
-pub enum OutputKind {
-    Null(NullOutput),
-    Diag(DiagOutput),
-    // HDF5Events(Box<HDF5EventsOutput>),
-}
-
-impl OutputKind {
-    pub fn start(self, common: OutputCommon) -> UResult<()> {
-        match self {
-            Self::Null(output) => output.start(common),
-            Self::Diag(output) => output.start(common),
-            // Self::HDF5Events(output) => output.start(common),
-        }
-    }
-}
-
-pub fn from_config(config: &OutputConfig) -> UResult<OutputKind> {
+pub fn start(config: OutputConfig, common: OutputCommon) -> UResult<()> {
     match config.r#type.as_str() {
-        "none" => Ok(OutputKind::Null(NullOutput)),
-        "diag" => Ok(OutputKind::Diag(
-            DiagOutput::from_config(&config.config)?
-        )),
+        "none" => Ok(NullOutput::from_config(config.config)?.start(common)?),
+        "diag" => Ok(DiagOutput::from_config(config.config)?.start(common)?),
         _ => Err(anyhow!("Unknown output type: {}", config.r#type).into()),
     }
 }
