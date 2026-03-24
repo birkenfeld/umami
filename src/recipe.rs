@@ -3,6 +3,7 @@
 
 mod kws;
 mod mesy;
+mod canon;
 mod histo;
 
 use std::collections::BTreeMap;
@@ -63,6 +64,7 @@ pub fn from_config(map: &BTreeMap<String, RecipeConfig>, name: &str)
         "histo_tof" => histo::Tof,
         "mesy_mdll" => mesy::Mdll,
         "mesy_mpsd" => mesy::Mpsd,
+        "canon" => canon::Psd,
         "kws_gedet" => kws::KWSGERecipe,
     }
 }

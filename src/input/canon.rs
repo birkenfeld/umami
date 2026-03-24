@@ -250,7 +250,7 @@ impl CanonEvent {
 
     /// Neutron: PSD number (3 bit used)
     fn p(&self) -> u8 {
-        ((self.0 >> 24) & 0xFF) as _
+        ((self.0 >> 24) & 0x7) as _
     }
 
     /// Neutron: left pulse height
@@ -265,7 +265,7 @@ impl CanonEvent {
 
     /// Neutron14bit: PSD number (3 bit used)
     fn p14(&self) -> u8 {
-        ((self.0 >> 28) & 0xF) as _
+        ((self.0 >> 28) & 0x7) as _
     }
 
     /// Neutron14bit: left pulse height
