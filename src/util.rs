@@ -7,6 +7,7 @@ use anyhow::anyhow;
 use serde::Deserialize;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
+use crate::lprintln;
 use crate::error::UResult;
 
 /// Resolves a string to the corresponding IPv4 socket address.
@@ -23,6 +24,7 @@ pub fn resolve(addr: &str) -> UResult<std::net::SocketAddr> {
 pub fn wait_for_signal() -> io::Result<()> {
     let mut signals = Signals::new([SIGINT, SIGTERM])?;
     signals.wait();
+    lprintln!(INFO, "Termination signal received, shutting down.");
     Ok(())
 }
 
