@@ -37,6 +37,7 @@ pub trait Output: Send {
     fn handle_events(&mut self, events: &[Event]) -> UResult<()>;
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()>;
     fn handle_end_of_run(&mut self) -> UResult<()>;
+
     fn main_loop(mut self, common: OutputCommon)
     where Self: Sized
     {
@@ -70,6 +71,7 @@ pub trait Output: Send {
     fn start(self, common: OutputCommon) -> UResult<()>
     where Self: Sized + 'static
     {
+        lprintln!(INFO, "Initialized output {}", common.name);
         std::thread::Builder::new()
             .name("Output".into())
             .spawn(move || self.main_loop(common))

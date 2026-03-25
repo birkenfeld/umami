@@ -98,9 +98,8 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     // handle outputs - we need to have at least a null output to consume from the postproc
     let mut outputs = config.outputs.unwrap_or_default();
     if outputs.is_empty() {
-        lprintln!(INFO, "No outputs configured, using null output as fallback.");
-        outputs.insert("".into(), OutputConfig { r#type: "none".to_string(),
-                                                 config: Default::default() });
+        outputs.insert("null".into(), OutputConfig { r#type: "none".to_string(),
+                                                     config: Default::default() });
     }
 
     // create channels between outputs (they are daisy-chained)
@@ -109,6 +108,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     let first_output_send = output_sends.pop().expect("at least one");
 
     for (name, out_config) in outputs {
+        ldebug!("Initializing output {name}: {:?}", out_config);
         let common = OutputCommon::new(name.clone(),
                                        output_recvs.pop().expect("one per output"),
                                        output_sends.pop());
