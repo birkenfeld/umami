@@ -14,6 +14,7 @@ bitflag-attr = "0.13.0"
 byteorder = "1.5.0"
 clap = { version = "4.5.60", features = ["derive"] }
 flume = { version = "0.12.0", default-features = false }
+hdf5= { package = "hdf5-metno", version = "0.12.4" }
 itertools = "0.14.0"
 jemallocator = "0.5.4"
 jiff = "0.2.21"

@@ -2,11 +2,12 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use anyhow::{anyhow, Context};
+use hdf5;
 use crate::lprintln;
 use crate::channel::{Receiver, Sender};
 use crate::config::OutputConfig;
-use crate::error::UResult;
-use crate::event::{Event, EventTime};
+use crate::error::{UError, UResult};
+use crate::event::{Event, EventData, EventTime};
 use crate::pipeline::PipeItem;
 
 
@@ -149,17 +150,88 @@ impl Output for DiagOutput {
     }
 }
 
+// TODO:
+// - behind feature?
+// - filename template
+/// Output for a HDF5-File containing events following the NXevent_data format.
+///
+///  Currently the following fields are not supported:
+///  "event_time_zero"
+///  "event_index"
+///  "cue_timestamp_zero"
+///  "cue_index"
+///  "pulse_height"
+///
+pub struct HDF5EventsOutput {
+    file: Option<hdf5::File>,
+}
+
+impl HDF5EventsOutput {
+    fn map_to_index(x: u32, y: u32) -> u32 {
+        x + 100 * y
+    }
+}
+
+impl Output for HDF5EventsOutput {
+    fn from_config(_config: toml::Table) -> UResult<Self> where Self: Sized {
+        Ok(HDF5EventsOutput { file: None })
+    }
+
+    fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
+        if let Some(file) = &self.file {
+            let event_id = file.dataset("event_id").map_err(|e| UError::Other(e.into()))?;
+            let event_offset = file.dataset("event_time_offset").map_err(|e| UError::Other(e.into()))?;
+            let mut ids = Vec::with_capacity(events.len());
+            let mut offsets: Vec<f64> = Vec::with_capacity(events.len());
+            for event in events {
+                match event.data {
+                    // TODO: zero timestamps handling (chopper?)
+                    EventData::Neutron { x, y, t } => {
+                        ids.push(HDF5EventsOutput::map_to_index(x, y));
+                        // TODO: What does t mean vs event.time?
+                        offsets.push(t.into());
+                    },
+                    _ => (),
+                }
+            }
+            event_id.resize(event_id.size() + ids.len()).map_err(|e| UError::Other(e.into()))?;
+            event_id.write_slice(&ids, 0..ids.len()).map_err(|e| UError::Other(e.into()))?;
+            event_offset.resize(event_offset.size() + offsets.len()).map_err(|e| UError::Other(e.into()))?;
+            event_offset.write_slice(&offsets, 0..offsets.len()).map_err(|e| UError::Other(e.into()))?;
+        }
+        Ok(())
+    }
+
+    fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
+        self.file = Some(hdf5::File::create(format!("{}.h5", run)).map_err(|e| UError::Other(e.into()))?);
+        let file = self.file.as_ref().unwrap();
+        // events
+        let builder = file.new_dataset::<f64>();
+        let _ = builder.shape(hdf5::Extent::resizable(0)).create("event_time_offset").map_err(|e| UError::Other(e.into()))?;
+        let builder = file.new_dataset::<u32>();
+        let _ = builder.shape(hdf5::Extent::resizable(0)).create("event_id").map_err(|e| UError::Other(e.into()))?;
+        Ok(())
+    }
+
+    fn handle_end_of_run(&mut self) -> UResult<()> {
+        // let file = self.file.as_ref();
+        // drop(file);
+        self.file = None;
+        Ok(())
+    }
+}
+
 // Broadcast over udp/uds
 // pub struct UDPOutput;
 // pub struct UDSOutput;
 // pub struct FileOutput;
-// pub struct HDF5EventsOutput;
 
 
 pub fn start(config: OutputConfig, common: OutputCommon) -> UResult<()> {
     match config.r#type.as_str() {
         "none" => Ok(NullOutput::from_config(config.config)?.start(common)?),
         "diag" => Ok(DiagOutput::from_config(config.config)?.start(common)?),
+        "hdf5" => Ok(HDF5EventsOutput::from_config(config.config)?.start(common)?),
         _ => Err(anyhow!("Unknown output type: {}", config.r#type).into()),
     }
 }
