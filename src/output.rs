@@ -3,6 +3,7 @@
 
 use anyhow::{anyhow, Context};
 use hdf5;
+use itertools::Itertools;
 use crate::lprintln;
 use crate::channel::{Receiver, Sender};
 use crate::config::OutputConfig;
@@ -101,16 +102,53 @@ impl Output for NullOutput {
     }
 }
 
+
+#[bitflag_attr::bitflag(u16)]
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventMask {
+    RAW_NEUTRON = 0x1,
+    RAW_EDGE = 0x2,
+    RAW_ANALOG = 0x4,
+    RAW_DIGITAL = 0x8,
+    RAW_DATA = 0x10,
+    HEARTBEAT = 0x20,
+
+    NEUTRON = 0x40,
+    MONITOR = 0x80,
+    TZERO = 0x100,
+    GATE = 0x200,
+    AUX = 0x400,
+    VOID = 0x800,
+
+    ALL_RAW = 0x3F,
+    ALL_COOKED = 0x7C0,
+    ALL = 0xFFF,
+}
+
+
+/// Output selected events, and count out-of-order events.
 pub struct DiagOutput {
-    every_event: bool,
+    // Configuration
+    event_mask: EventMask,
+    check_order: bool,
+    // Runtime
     last_ts: EventTime,
     out_of_order: usize,
 }
 
 impl Output for DiagOutput {
     fn from_config(config: toml::Table) -> UResult<Self> {
+        let mask = config.get("event_mask").and_then(|v| v.as_str()).unwrap_or("ALL_COOKED");
+        let mask = bitflag_attr::parser::from_text(mask)
+            .with_context(|| {
+                format!("Invalid event_mask: {} - valid flags are {} and can be combined with '|'",
+                        mask, EventMask::all().iter_names().map(|(name, _)| name).join(", "))
+            })?;
+
         Ok(DiagOutput {
-            every_event: config.get("every_event").and_then(|v| v.as_bool()).unwrap_or(false),
+            event_mask: mask,
+            check_order: config.get("check_order").and_then(|v| v.as_bool()).unwrap_or(false),
             last_ts: EventTime::zero(),
             out_of_order: 0,
         })
@@ -136,13 +174,28 @@ impl Output for DiagOutput {
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
         for ev in events {
             let ev_ts = ev.time;
-            if ev_ts < self.last_ts {
-                // lprintln!(INFO, "Out of order event: last_ts={:?}, \
-                           // ev_ts={:?}", self.last_ts, ev_ts);
+            if self.check_order && ev_ts < self.last_ts {
+                lprintln!(INFO, "Out of order event: last_ts={:?}, \
+                                 ev_ts={:?}", self.last_ts, ev_ts);
                 self.out_of_order += 1;
             }
             self.last_ts = ev_ts;
-            if self.every_event {
+            let display = self.event_mask.contains(match ev.data {
+                EventData::RawNeutron { .. } => EventMask::RAW_NEUTRON,
+                EventData::RawEdge { .. } => EventMask::RAW_EDGE,
+                EventData::RawAnalog1 { .. } => EventMask::RAW_ANALOG,
+                EventData::RawAnalog2 { .. } => EventMask::RAW_ANALOG,
+                EventData::RawDigital { .. } => EventMask::RAW_DIGITAL,
+                EventData::RawData { .. } => EventMask::RAW_DATA,
+                EventData::Heartbeat => EventMask::HEARTBEAT,
+                EventData::Neutron { .. } => EventMask::NEUTRON,
+                EventData::Monitor { .. } => EventMask::MONITOR,
+                EventData::Tzero => EventMask::TZERO,
+                EventData::Gate { .. } => EventMask::GATE,
+                EventData::AuxSignal { .. } => EventMask::AUX,
+                EventData::Void => EventMask::VOID,
+            });
+            if display {
                 lprintln!(INFO, "{}", ev.dump());
             }
         }
