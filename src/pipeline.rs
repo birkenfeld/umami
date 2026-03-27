@@ -26,6 +26,7 @@ pub enum PipeItem {
     ModuleState(ModuleId, ModuleState),
     SetMode(String, toml::Table, channel::Sender<CommandReply>),
     GetState(channel::Sender<CommandReply>),
+    SaveHisto(String, usize, channel::Sender<CommandReply>),
 }
 
 pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {

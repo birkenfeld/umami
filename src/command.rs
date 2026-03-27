@@ -27,6 +27,7 @@ pub enum Command {
     SetMode { name: String, params: toml::Table },
     Config { module: ModuleId, name: String, value: Value },
     GetConfig { module: ModuleId, name: String },
+    SaveHisto { path: String, max_nt: usize},
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -163,6 +164,11 @@ impl CommandHandler {
                         format!("Module {} not found", module.0),
                     )
                 }
+            }
+            Command::SaveHisto { path, max_nt } => {
+                self.post_send.send(PipeItem::SaveHisto(path, max_nt, rep_send))
+                              .expect("postprocessor command receiver died");
+                rep_recv.recv().expect("postprocessor command sender died")
             }
         }
     }

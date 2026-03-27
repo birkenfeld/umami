@@ -32,6 +32,8 @@ enum Cmd {
     Clear,
     /// Reset the input modules.  Does not clear the histogram.
     Reset,
+    /// Save the current histogram to the given path, can be called while running
+    SaveHisto { path: String, max_nt: usize },
     /// Enable and set the path to the raw dump files.
     Raw { path: String },
     /// Disable raw dump files.
@@ -61,6 +63,7 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
         Cmd::Stop => Command::Stop,
         Cmd::Clear => Command::Clear,
         Cmd::Reset => Command::Reset,
+        Cmd::SaveHisto { path, max_nt } => Command::SaveHisto { path, max_nt },
         Cmd::Raw { path } => Command::SetRawDump { enable: true, path },
         Cmd::NoRaw => Command::SetRawDump { enable: false, path: String::new() },
         Cmd::Mode { name, params } =>

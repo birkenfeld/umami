@@ -1,6 +1,8 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
+use std::fs::File;
+use std::io::{Write, BufWriter};
 use std::num::NonZeroUsize;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{self, NonNull};
@@ -51,6 +53,31 @@ impl ShmBox {
                 ptr::write(place_ptr, place_ptr.read() + 1);
             }
         }
+    }
+
+    pub fn save_to_file(&self, filename: &str, max_nt: usize) -> UResult<()> {
+        let nt = self.nt.min(max_nt as u32);
+        let size = (self.nx * self.ny * nt) as usize;
+        let histo_slice = unsafe {
+            let histo_ptr = self.ptr.as_ptr().add(1) as *const u32;
+            std::slice::from_raw_parts(histo_ptr, size)
+        };
+        let file = File::create(filename)
+            .context("Creating histogram output file")?;
+        let mut writer = BufWriter::new(file);
+        for t in 0..nt {
+            for y in 0..self.ny {
+                for x in 0..self.nx {
+                    let off = t * (self.nx * self.ny) + y * self.nx + x;
+                    let count = histo_slice[off as usize];
+                    write!(&mut writer, " {}", count)
+                        .context("Writing histogram data to file")?;
+                }
+                write!(&mut writer, "\n").context("Writing histogram data to file")?;
+            }
+            write!(&mut writer, "\n\n").context("Writing histogram data to file")?;
+        }
+        Ok(())
     }
 }
 

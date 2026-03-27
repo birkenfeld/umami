@@ -129,6 +129,15 @@ impl PostProcessor {
                         .expect("param reply receiver died");
                     continue;
                 }
+                PipeItem::SaveHisto(filename, max_nt, send) => {
+                    send.send(match self.shm.save_to_file(&filename, max_nt) {
+                        Ok(_) => CommandReply::Ok,
+                        Err(e) => CommandReply::new_error(
+                            None, format!("Failed to save histogram: {e:#}")
+                        )
+                    }).expect("param reply receiver died");
+                    continue;
+                }
             }
             self.output.send(item).expect("output sender closed");
         }
