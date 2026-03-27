@@ -1,7 +1,7 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-use std::{fs::File, io::BufWriter, path::PathBuf};
+use std::{fs::File, io::BufWriter, path::PathBuf, time::Instant};
 use anyhow::{anyhow, Context};
 use hdf5;
 use itertools::Itertools;
@@ -43,6 +43,7 @@ pub trait Output: Send {
     fn main_loop(mut self, common: OutputCommon)
     where Self: Sized
     {
+        let mut current_run = String::new();
         while let Ok(item) = common.input.recv() {
             match &item {
                 PipeItem::Events(events) => {
@@ -52,6 +53,7 @@ pub trait Output: Send {
                     }
                 },
                 PipeItem::StartOfRun(run) => {
+                    current_run = run.clone();
                     if let Err(e) = self.handle_start_of_run(run) {
                         lprintln!(ERROR, "Output {}: error handling start of run: {e:#}",
                                   common.name);
@@ -62,6 +64,7 @@ pub trait Output: Send {
                         lprintln!(ERROR, "Output {}: error handling end of run: {e:#}",
                                   common.name);
                     }
+                    lprintln!(INFO, "Output {}: finished with run {:?}", common.name, current_run);
                 },
                 _ => {},
             }
@@ -136,23 +139,34 @@ pub struct DiagOutput {
     // Configuration
     event_mask: EventMask,
     check_order: bool,
+    print_every: usize,
     // Runtime
+    started: Instant,
+    ev_count: usize,
+    debug_at: usize,
     last_ts: EventTime,
     out_of_order: usize,
 }
 
 impl Output for DiagOutput {
     fn from_config(config: toml::Table) -> UResult<Self> {
-        let mask = config.get("event_mask").and_then(|v| v.as_str()).unwrap_or("ALL_COOKED");
-        let mask = bitflag_attr::parser::from_text(mask)
+        let mask = config.get("event_mask").and_then(|v| v.as_str()).unwrap_or("");
+        let mask: EventMask = bitflag_attr::parser::from_text(mask)
             .with_context(|| {
                 format!("Invalid event_mask: {} - valid flags are {} and can be combined with '|'",
                         mask, EventMask::all().iter_names().map(|(name, _)| name).join(", "))
             })?;
+        if mask.is_empty() {
+            lprintln!(INFO, "Set an `event_mask` to print individual events in diag output");
+        }
 
         Ok(DiagOutput {
             event_mask: mask,
             check_order: config.get("check_order").and_then(|v| v.as_bool()).unwrap_or(false),
+            print_every: config.get("print_every").and_then(|v| v.as_integer()).unwrap_or(i64::MAX) as usize,
+            started: Instant::now(),
+            ev_count: 0,
+            debug_at: 0,
             last_ts: EventTime::zero(),
             out_of_order: 0,
         })
@@ -163,12 +177,19 @@ impl Output for DiagOutput {
     // }
 
     fn handle_start_of_run(&mut self, _run: &str) -> UResult<()> {
-        self.out_of_order = 0;
+        self.started = Instant::now();
+        self.ev_count = 0;
+        self.debug_at = self.print_every;
         self.last_ts = EventTime::zero();
+        self.out_of_order = 0;
         Ok(())
     }
 
     fn handle_end_of_run(&mut self) -> UResult<()> {
+        let time = self.started.elapsed().as_secs_f32();
+        let rate = if time > 0.0 { self.ev_count as f32 / time } else { 0.0 };
+        lprintln!(INFO, "Ran for {:.3} s, total events: {}, rate: {} ev/s",
+                  time, self.ev_count, rate);
         if self.out_of_order > 0 {
             lprintln!(INFO, "Total out of order: {}", self.out_of_order);
         }
@@ -176,6 +197,12 @@ impl Output for DiagOutput {
     }
 
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
+        self.ev_count += events.len();
+        if self.ev_count >= self.debug_at {
+            lprintln!(DEBUG, "Received {} events", self.debug_at);
+            self.debug_at += self.print_every;
+        }
+
         for ev in events {
             let ev_ts = ev.time;
             if self.check_order && ev_ts < self.last_ts {

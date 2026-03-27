@@ -15,8 +15,8 @@ use crate::input::{ModuleCommon, ModuleState};
 use crate::shm::{ShmInterface, MAX_MODULES};
 use crate::util::wait_for_signal;
 
-const EV_CHANNEL_SIZE: usize = 128; // TODO tune more
-const OUT_CHANNEL_SIZE: usize = 1024; // give outputs some slack
+const EV_CHANNEL_SIZE: usize = 128; // TODO tune more?
+const OUT_CHANNEL_SIZE: usize = 16384; // give outputs some slack
 
 pub enum PipeItem {
     Events(Vec<Event>),

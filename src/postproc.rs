@@ -2,7 +2,6 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use std::collections::BTreeMap;
-use std::time::Instant;
 use anyhow::Context;
 use crate::{lprintln, ltrace};
 use crate::channel::{Receiver, Sender};
@@ -47,9 +46,7 @@ impl PostProcessor {
     }
 
     pub fn main(mut self) {
-        let mut started = None;
-        let mut debug_at = 0;
-        let mut ev_count: usize = 0;
+        let mut current_run = String::new();
 
         // use the default recipe at first
         let mut cur_recipe = String::from("default");
@@ -61,13 +58,8 @@ impl PostProcessor {
         while let Ok(mut item) = self.input.recv() {
             match item {
                 PipeItem::Events(evs) => {
-                    ev_count += evs.len();
                     let evs = recipe.process(evs);
                     ltrace!("Processed events: {:?}", evs);
-                    if ev_count > debug_at {
-                        lprintln!(DEBUG, "Received {ev_count} events");
-                        debug_at += 1000000;
-                    }
                     for ev in &evs {
                         if let EventData::Neutron { x, y, t } = ev.data {
                             self.shm.add_histo(x, y, t);
@@ -76,18 +68,12 @@ impl PostProcessor {
                     item = PipeItem::Events(evs);
                 }
                 PipeItem::StartOfRun(ref run_id) => {
-                    lprintln!(INFO, "Starting run {run_id}");
+                    current_run = run_id.clone();
+                    lprintln!(INFO, "Run {current_run:?} started");
                     self.shm.set_run_id(run_id);
-                    ev_count = 0;
-                    debug_at = 0;
-                    started = Some(Instant::now());
                 }
                 PipeItem::EndOfRun => {
-                    if let Some(ts) = started {
-                        lprintln!(INFO, "Run finished: {} events in {:.3} s",
-                                  ev_count, ts.elapsed().as_secs_f32());
-                        started = None;
-                    }
+                    lprintln!(INFO, "Run {current_run:?} finished");
                 }
                 PipeItem::Clear => {
                     lprintln!(INFO, "Clearing histogram");
