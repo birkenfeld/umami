@@ -25,6 +25,7 @@ pub enum PipeItem {
     StartOfRun(String),
     EndOfRun,
     ModuleState(ModuleId, ModuleState),
+    GetModes(channel::Sender<CommandReply>),
     SetMode(String, channel::Sender<CommandReply>),
     GetParams(channel::Sender<(String, ParamMap)>),
     SetParams(BTreeMap<String, ParamMap>, channel::Sender<CommandReply>),
@@ -65,7 +66,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         let (command_send, command_recv) = channel::bounded(1);
         let common = ModuleCommon::new(
             mid, postproc_send.clone(), event_send, command_recv,
-            recipe::from_config(&config.recipes, &module_config.recipe)?
+            recipe::from_config(&config.input_recipes, &module_config.recipe)?
         );
         command_sends.insert(mid, command_send);
 
@@ -126,15 +127,16 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     }
 
     let mut post_recipes = BTreeMap::new();
-    for (name, recipe) in config.process_modes {
-        post_recipes.insert(name, recipe::from_config(&config.recipes, &recipe)?);
+    for name in config.process_modes.recipes.keys() {
+        post_recipes.insert(name.into(), recipe::from_config(&config.process_modes.recipes, &name)?);
     }
-    if !post_recipes.contains_key("default") {
+    if !post_recipes.contains_key(&config.process_modes.default) {
         Err(anyhow!("No default mode configured"))?;
     }
 
     let postproc = postproc::PostProcessor::new(
         post_recipes,
+        config.process_modes.default,
         postproc_recv,
         first_output_send,
         shm_area,

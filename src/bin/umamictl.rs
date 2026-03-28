@@ -37,11 +37,13 @@ enum Cmd {
     Raw { path: String },
     /// Disable raw dump files.
     NoRaw,
-    /// Set mode name and parameters for histogramming.
-    Mode { name: String },
-    /// Get parameters and their current values
+    /// Get mode names for postprocessing.
+    GetModes,
+    /// Set mode name for postprocessing.
+    SetMode { name: String },
+    /// Get available parameters and their current values.
     GetParams,
-    /// Set parameter values
+    /// Set some parameter values.
     SetParams { params: ParamMap },
     /// Get the current state.
     State,
@@ -69,7 +71,8 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
         Cmd::SaveHisto { path, max_nt } => Command::SaveHisto { path, max_nt },
         Cmd::Raw { path } => Command::SetRawDump { enable: true, path },
         Cmd::NoRaw => Command::SetRawDump { enable: false, path: String::new() },
-        Cmd::Mode { name } => Command::SetMode { name },
+        Cmd::GetModes => Command::GetModes,
+        Cmd::SetMode { name } => Command::SetMode { name },
         Cmd::GetParams => Command::GetParams,
         Cmd::SetParams { params } => Command::SetParams { params },
         Cmd::State => Command::GetState,

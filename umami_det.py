@@ -105,7 +105,6 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         self._nx = config['histogram']['nx']
         self._ny = config['histogram']['ny']
         self._max_nt = config['histogram']['max_nt']
-        self._measure_modes = list(config['process_modes'])
 
         # start the UMAMI subprocess
         ipc_name = 'umami-tango-' + self._worker_name.replace('/', '-')
@@ -143,6 +142,10 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         # enable raw data dumping
         if self.rawdatadir:
             self._send_cmd('set_raw_dump', enable=True, path=self.rawdatadir)
+
+        # query measure modes and parameters
+        self._measure_modes = self._send_cmd('get_modes')
+        self._all_params = self._send_cmd('get_params')
 
     def delete(self):
         if self._cmd:
@@ -196,8 +199,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         if mode_name not in self._measure_modes:
             raise InvalidOperation(
                 f'Measure mode {mode_name!r} not supported by UMAMI')
-        self._send_cmd('set_mode', name=mode_name,
-                       params={'use_gate': not self._ignoregate})
+        self._send_cmd('set_mode', name=mode_name)
         self._mode = value
 
     def get_measureMode_unit(self):
@@ -207,8 +209,11 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         return self._ignoregate
 
     def write_ignoreGate(self, value):
-        self._send_cmd('set_mode', name=MODE_NAMES[self._mode],
-                       params={'use_gate': not value})
+        send_params = {}
+        for param in self._all_params:
+            if param.endswith('.use_gate'):
+                send_params[param] = not value
+        self._send_cmd('set_params', params=send_params)
         self._ignoregate = value
 
     def get_ignoreGate_unit(self):
@@ -220,8 +225,11 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         return self._tofbins
 
     def write_tofRange(self, value):
-        self._send_cmd('set_mode', name=MODE_NAMES[self._mode],
-                       params={'time_bins': list(t/1e6 for t in value)})
+        send_params = {}
+        for param in self._all_params:
+            if param.endswith('.time_bins'):
+                send_params[param] = [int(t * 1e3) for t in value]
+        self._send_cmd('set_params', params=send_params)
         # first and last bin are reserved for underflow and overflow
         self._ntofbins = len(value) + 2
         self._tofbins = value

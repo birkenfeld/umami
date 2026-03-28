@@ -25,6 +25,7 @@ pub enum Command {
     Reset,
     GetState,
     SetRawDump { enable: bool, path: String },
+    GetModes,
     SetMode { name: String },
     GetParams,
     SetParams { params: ParamMap },
@@ -129,6 +130,11 @@ impl CommandHandler {
             }
             Command::GetState => {
                 self.post_send.send(PipeItem::GetState(rep_send))
+                              .expect("postprocessor command receiver died");
+                rep_recv.recv().expect("postprocessor command sender died")
+            }
+            Command::GetModes => {
+                self.post_send.send(PipeItem::GetModes(rep_send))
                               .expect("postprocessor command receiver died");
                 rep_recv.recv().expect("postprocessor command sender died")
             }

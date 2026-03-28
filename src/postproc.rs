@@ -16,6 +16,7 @@ use crate::shm::ShmBox;
 pub struct PostProcessor {
     recipe_names: BTreeMap<String, usize>,
     recipes: Vec<Box<dyn Recipe>>,
+    default_recipe: String,
     input: Receiver<PipeItem>,
     output: Sender<PipeItem>,
     module_state: BTreeMap<ModuleId, ModuleState>,
@@ -25,6 +26,7 @@ pub struct PostProcessor {
 impl PostProcessor {
     pub fn new(
         recipe_map: BTreeMap<String, Box<dyn Recipe>>,
+        default_recipe: String,
         input: Receiver<PipeItem>,
         output: Sender<PipeItem>,
         data: ShmBox,
@@ -39,6 +41,7 @@ impl PostProcessor {
         Self {
             recipe_names,
             recipes,
+            default_recipe,
             input,
             output,
             module_state: BTreeMap::new(),
@@ -59,7 +62,8 @@ impl PostProcessor {
 
         // use the default recipe at first
         let mut cur_recipe = String::from("default");
-        let mut recipe = *self.recipe_names.get("default").expect("default recipe");
+        let mut recipe = *self.recipe_names.get(&self.default_recipe)
+                                           .expect("default recipe exists");
 
         self.shm.set_initialized();
 
@@ -119,6 +123,12 @@ impl PostProcessor {
                 // Meta items, not sent on to outputs
                 PipeItem::ModuleState(module, state) => {
                     self.module_state.insert(module, state);
+                    continue;
+                }
+                PipeItem::GetModes(send) => {
+                    let modes = self.recipe_names.keys().cloned().collect::<Vec<_>>();
+                    send.send(CommandReply::Data { value: modes.into() })
+                        .expect("param reply receiver died");
                     continue;
                 }
                 PipeItem::SetMode(name, send) => {

@@ -56,7 +56,7 @@ UMAMI is configured from a TOML file.
 At the top level, the configuration contains these sections:
 
 * `modules`: detector input modules keyed by a user-chosen module name
-* `recipes`: named event-processing recipes used by modules and postprocessing
+* `input_recipes`: named event-processing recipes used by modules and postprocessing
 * `process_modes`: named postprocessing modes; `default` must exist
 * `histogram`: histogram dimensions
 * `ipc_name`: optional IPC name shared by `umami` and `umamictl`
@@ -82,7 +82,7 @@ Modules
 Each entry in `[modules]` defines one detector input.  Every module needs:
 
 * `id`: numeric module ID used internally and for raw dump file names
-* `recipe`: name of a recipe from `[recipes]` applied to that module's events
+* `recipe`: name of a recipe from `[input_recipes]` applied to that module's events
 * `type`: input backend type
 
 The supported module types are:
@@ -140,8 +140,8 @@ Otherwise it is opened as a replay file.
 Recipes and processing modes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-`[recipes]` is a named pool of recipe configurations.  Recipes are referenced
-both by input modules and by postprocessing modes.
+`[input_recipes]` is a named pool of recipe configurations referenced by input
+modules.
 
 Currently implemented recipe types are:
 
@@ -152,21 +152,19 @@ Currently implemented recipe types are:
 
 Module recipes are selected through the `recipe` key in each module.
 
-Postprocessing modes are configured in `[process_modes]` as a map from mode
-name to recipe name.  Example:
+Postprocessing recipes are configured in `[process_modes]`.  Example:
 
 ```toml
 [process_modes]
-default = "nontof"
-tof = "tof"
+default = "std"
+std = { type = "histo_std" }
+tof = { type = "histo_tof", bin_x = 2, bin_y = 2 }
 ```
 
-The `default` mode is mandatory and is active when UMAMI starts.
+The `default` is mandatory and is active when UMAMI starts.
 
-Runtime-switchable mode parameters depend on the selected recipe:
-
-* `histo_std`: supports `use_gate = true|false`
-* `tof_std`: supports `use_gate`, `aux_mode`, and `time_bins`
+Postprocessing recipes can have runtime-changeable parameters depending on the
+selected recipe.
 
 
 Histogram section

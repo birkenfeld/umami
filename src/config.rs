@@ -85,6 +85,13 @@ pub struct OutputConfig {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ProcessModesConfig {
+    pub default: String,
+    #[serde(flatten)]
+    pub recipes: BTreeMap<String, RecipeConfig>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct HistoConfig {
     pub nx: usize,
     pub ny: usize,
@@ -94,9 +101,9 @@ pub struct HistoConfig {
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub modules: BTreeMap<String, ModuleConfig>,
-    pub recipes: BTreeMap<String, RecipeConfig>,
+    pub input_recipes: BTreeMap<String, RecipeConfig>,
     pub outputs: Option<BTreeMap<String, OutputConfig>>,
-    pub process_modes: BTreeMap<String, String>,
+    pub process_modes: ProcessModesConfig,
     pub histogram: HistoConfig,
     #[serde(default = "default_ipc_name")]
     pub ipc_name: String,
