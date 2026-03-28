@@ -9,7 +9,7 @@ use rkyv::{api::high::to_bytes_in, ser::writer::IoWriter};
 use crate::error::UResult;
 use crate::event::Event;
 use crate::params::HasParams;
-use super::Output;
+use super::{Output, OutputCommon};
 
 #[derive(HasParams)]
 pub struct FileOutput {
@@ -28,7 +28,7 @@ impl FileOutput {
 }
 
 impl Output for FileOutput {
-    fn from_config(config: toml::Table) -> UResult<Self> where Self: Sized {
+    fn from_config(_: &OutputCommon, config: toml::Table) -> UResult<Self> where Self: Sized {
         let dir = config.get("dir")
             .ok_or_else(|| anyhow!("Missing 'dir' in file output config"))?
             .as_str()

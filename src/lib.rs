@@ -52,6 +52,15 @@ macro_rules! ldebug {
 
 #[macro_export]
 macro_rules! ltrace {
+    ([$mod:expr] $($tt:tt)+) => {{
+        #[cfg(feature = "trace")]
+        if $crate::TRACE.load(std::sync::atomic::Ordering::Relaxed) {
+            eprint!("{} : TRACE : [{}] ",
+                    jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.9f"),
+                    $mod);
+            eprintln!($($tt)+);
+        }
+    }};
     ($($tt:tt)+) => {{
         #[cfg(feature = "trace")]
         if $crate::TRACE.load(std::sync::atomic::Ordering::Relaxed) {
@@ -63,16 +72,16 @@ macro_rules! ltrace {
 
 #[macro_export]
 macro_rules! lprintln {
+    ($lvl:expr, [$mod:expr] $($tt:tt)+) => {{
+        eprint!("{} : {:-5} : [{}] ",
+                jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.9f"),
+                stringify!($lvl),
+                $mod);
+        eprintln!($($tt)+);
+    }};
     ($lvl:expr, $($tt:tt)+) => {{
         eprint!("{} : {:-5} : ", jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.9f"),
                 stringify!($lvl));
         eprintln!($($tt)+);
-    }};
-}
-
-#[macro_export]
-macro_rules! lpanic {
-    ($($tt:tt)+) => {{
-        { lprintln!(ERROR, $($tt)+); std::process::exit(1); }
     }};
 }

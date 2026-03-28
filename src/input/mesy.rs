@@ -124,15 +124,13 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
 
         let buf_length = S::E::read_u16(&buffer) as usize * 2;
         if buf_length != n {
-            lprintln!(WARN, "MCPD {}: got packet of size {}, expected {}",
-                      self.source.description(), n, buf_length);
+            lprintln!(WARN, [self.name] "Got packet of size {n}, expected {buf_length}");
             return Ok(vec![]);
         }
         let btype = S::E::read_u16(&buffer[2..4]);
         if btype >> 15 != 0 {
             // not a data buffer
-            lprintln!(WARN, "MCPD {}: got an unexpected command buffer",
-                      self.source.description());
+            lprintln!(WARN, [self.name] "Got an unexpected command buffer");
             return Ok(vec![]);
         }
 
@@ -143,15 +141,15 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
         let mcpd_id = id_status as u64 >> 8;
         let pkt_ts = read_48bit::<S::E>(&buffer[12..]);
         if status & 1 != 1 {
-            lprintln!(WARN, "MCPD {mcpd_id}: got event buffer but daq stopped");
+            lprintln!(WARN, [self.name] "Got event buffer but daq stopped");
             return Ok(vec![]);
         }
         if let Some(prev) = self.buf_serial && buf_serial != prev.wrapping_add(1) {
-            lprintln!(WARN, "MCPD {mcpd_id}: skipped {} buffer(s): serial {} -> {}",
+            lprintln!(WARN, [self.name] "Skipped {} buffer(s): serial {} -> {}",
                       buf_serial.wrapping_sub(prev + 1), prev, buf_serial);
         }
         self.buf_serial = Some(buf_serial);
-        //lprintln!(DEBUG, "MCPD {mcpd_id}: got a data buffer");
+        //lprintln!(DEBUG, [self.name] "Got a data buffer");
 
         let mut events = Vec::with_capacity(nevents);
 

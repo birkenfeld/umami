@@ -35,7 +35,9 @@ impl OutputCommon {
 
 
 pub trait Output: Send + HasParams {
-    fn from_config(config: toml::Table) -> UResult<Self> where Self: Sized;
+    fn from_config(common: &OutputCommon, config: toml::Table) -> UResult<Self>
+    where Self: Sized;
+
     fn handle_events(&mut self, events: &[Event]) -> UResult<()>;
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()>;
     fn handle_end_of_run(&mut self) -> UResult<()>;
@@ -44,43 +46,39 @@ pub trait Output: Send + HasParams {
     where Self: Sized
     {
         let mut current_run = String::new();
+        let name = common.name;
         while let Ok(mut item) = common.input.recv() {
             match &mut item {
                 PipeItem::Events(events) => {
                     if let Err(e) = self.handle_events(events) {
-                        lprintln!(ERROR, "Output {}: error handling events: {e:#}",
-                                  common.name);
+                        lprintln!(ERROR, [name] "Error handling events: {e:#}");
                     }
                 }
                 PipeItem::StartOfRun(run) => {
                     current_run = run.clone();
                     if let Err(e) = self.handle_start_of_run(run) {
-                        lprintln!(ERROR, "Output {}: error handling start of run: {e:#}",
-                                  common.name);
+                        lprintln!(ERROR, [name] "Error handling start of run: {e:#}");
                     }
                 }
                 PipeItem::EndOfRun => {
                     if let Err(e) = self.handle_end_of_run() {
-                        lprintln!(ERROR, "Output {}: error handling end of run: {e:#}",
-                                  common.name);
+                        lprintln!(ERROR, [name] "Error handling end of run: {e:#}");
                     }
-                    lprintln!(INFO, "Output {}: finished with run {:?}", common.name, current_run);
+                    lprintln!(INFO, [name] "Finished with run {:?}", current_run);
                 }
                 PipeItem::GetParams(send) => {
                     match self.get_params() {
                         Ok(params) => send.send((common.name, params))
                                           .expect("param reply receiver died"),
                         Err(e) => {
-                            lprintln!(ERROR, "Output {}: error getting params: {e:#}",
-                                      common.name);
+                            lprintln!(ERROR, [name] "Error getting params: {e:#}");
                         }
                     }
                 }
                 PipeItem::SetParams(param_map, send) => {
                     if let Some(params) = param_map.remove(&common.name) {
                         if let Err(e) = self.update_params(common.name, params) {
-                            lprintln!(ERROR, "Error setting parameters for output {}: {e:#}",
-                                      common.name);
+                            lprintln!(ERROR, [name] "Error setting parameters: {e:#}");
                             send.send(CommandReply::new_mod_error(
                                 common.name,
                                 format!("Failed to set parameters: {e:#}")
@@ -101,7 +99,7 @@ pub trait Output: Send + HasParams {
     fn start(self, common: OutputCommon) -> UResult<()>
     where Self: Sized + 'static
     {
-        lprintln!(INFO, "Initialized output {}", common.name);
+        lprintln!(INFO, [common.name] "Initialized output");
         std::thread::Builder::new()
             .name(format!("O: {}", common.name))
             .spawn(move || self.main_loop(common))
@@ -115,7 +113,7 @@ pub trait Output: Send + HasParams {
 pub struct NullOutput {}
 
 impl Output for NullOutput {
-    fn from_config(_: toml::Table) -> UResult<Self> {
+    fn from_config(_: &OutputCommon, _: toml::Table) -> UResult<Self> {
         Ok(NullOutput {})
     }
 
@@ -137,10 +135,10 @@ impl Output for NullOutput {
 
 pub fn start(config: OutputConfig, common: OutputCommon) -> UResult<()> {
     match config.r#type.as_str() {
-        "none" => Ok(NullOutput::from_config(config.config)?.start(common)?),
-        "diag" => Ok(diag::DiagOutput::from_config(config.config)?.start(common)?),
-        "hdf5" => Ok(hdf5::HDF5EventsOutput::from_config(config.config)?.start(common)?),
-        "file" => Ok(file::FileOutput::from_config(config.config)?.start(common)?),
+        "none" => Ok(NullOutput::from_config(&common, config.config)?.start(common)?),
+        "diag" => Ok(diag::DiagOutput::from_config(&common, config.config)?.start(common)?),
+        "hdf5" => Ok(hdf5::HDF5EventsOutput::from_config(&common, config.config)?.start(common)?),
+        "file" => Ok(file::FileOutput::from_config(&common, config.config)?.start(common)?),
         _ => Err(anyhow!("Unknown output type: {}", config.r#type).into()),
     }
 }

@@ -158,7 +158,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
                 EventType::External =>
                     continue,
                 _ => {
-                    lprintln!(WARN, "Canon source: unknown event type: {}", cev);
+                    lprintln!(WARN, [self.name] "Unknown event type: {}", cev);
                     continue;
                 }
             };

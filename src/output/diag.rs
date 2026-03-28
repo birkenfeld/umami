@@ -5,10 +5,11 @@ use std::time::Instant;
 use anyhow::Context;
 use itertools::Itertools;
 use crate::lprintln;
+use crate::command::ModuleId;
 use crate::error::UResult;
 use crate::event::{Event, EventData, EventTime};
 use crate::params::HasParams;
-use super::Output;
+use super::{Output, OutputCommon};
 
 #[bitflag_attr::bitflag(u16)]
 #[allow(non_camel_case_types)]
@@ -37,6 +38,7 @@ pub enum EventMask {
 /// Output selected events, and count out-of-order events.
 #[derive(HasParams)]
 pub struct DiagOutput {
+    name: ModuleId,
     // Configuration
     event_mask: EventMask,
     check_order: bool,
@@ -50,7 +52,7 @@ pub struct DiagOutput {
 }
 
 impl Output for DiagOutput {
-    fn from_config(config: toml::Table) -> UResult<Self> {
+    fn from_config(common: &OutputCommon, config: toml::Table) -> UResult<Self> {
         let mask = config.get("event_mask").and_then(|v| v.as_str()).unwrap_or("");
         let mask: EventMask = bitflag_attr::parser::from_text(mask)
             .with_context(|| {
@@ -58,13 +60,18 @@ impl Output for DiagOutput {
                         mask, EventMask::all().iter_names().map(|(name, _)| name).join(", "))
             })?;
         if mask.is_empty() {
-            lprintln!(INFO, "Set an `event_mask` to print individual events in diag output");
+            lprintln!(INFO, [common.name] "Set an `event_mask` to print individual events");
         }
 
         Ok(DiagOutput {
+            name: common.name,
             event_mask: mask,
-            check_order: config.get("check_order").and_then(|v| v.as_bool()).unwrap_or(false),
-            print_every: config.get("print_every").and_then(|v| v.as_integer()).unwrap_or(i64::MAX) as usize,
+            check_order: config.get("check_order")
+                               .and_then(|v| v.as_bool())
+                               .unwrap_or(false),
+            print_every: config.get("print_every")
+                               .and_then(|v| v.as_integer())
+                               .unwrap_or(i64::MAX) as usize,
             started: Instant::now(),
             ev_count: 0,
             debug_at: 0,
@@ -89,10 +96,10 @@ impl Output for DiagOutput {
     fn handle_end_of_run(&mut self) -> UResult<()> {
         let time = self.started.elapsed().as_secs_f32();
         let rate = if time > 0.0 { self.ev_count as f32 / time } else { 0.0 };
-        lprintln!(INFO, "Ran for {:.3} s, total events: {}, rate: {} ev/s",
+        lprintln!(INFO, [self.name] "Ran for {:.3} s, total events: {}, rate: {} ev/s",
                   time, self.ev_count, rate);
         if self.out_of_order > 0 {
-            lprintln!(INFO, "Total out of order: {}", self.out_of_order);
+            lprintln!(INFO, [self.name] "Total out of order: {}", self.out_of_order);
         }
         Ok(())
     }
@@ -100,15 +107,15 @@ impl Output for DiagOutput {
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
         self.ev_count += events.len();
         if self.ev_count >= self.debug_at {
-            lprintln!(DEBUG, "Received {} events", self.debug_at);
+            lprintln!(DEBUG, [self.name] "Received {} events", self.debug_at);
             self.debug_at += self.print_every;
         }
 
         for ev in events {
             let ev_ts = ev.time;
             if self.check_order && ev_ts < self.last_ts {
-                lprintln!(INFO, "Out of order event: last_ts={:?}, \
-                                 ev_ts={:?}", self.last_ts, ev_ts);
+                lprintln!(INFO, [self.name]
+                          "Out of order event: last_ts={:?}, ev_ts={ev_ts:?}", self.last_ts);
                 self.out_of_order += 1;
             }
             self.last_ts = ev_ts;
@@ -128,7 +135,7 @@ impl Output for DiagOutput {
                 EventData::Void => EventMask::VOID,
             });
             if display {
-                lprintln!(INFO, "{}", ev.dump());
+                lprintln!(INFO, [self.name] "{}", ev.dump());
             }
         }
         Ok(())

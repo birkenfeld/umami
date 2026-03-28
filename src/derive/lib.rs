@@ -70,7 +70,8 @@ pub fn derive_has_params(input: proc_macro::TokenStream) -> proc_macro::TokenStr
         };
         setters.push(quip! {
             if let Some(value) = params.remove(#name) {
-                crate::lprintln!(INFO, #{format!("{{name}}: Setting parameter {name} to {{value}}")});
+                crate::lprintln!(INFO, [name]
+                                 #{format!("Setting parameter {name} to {{value}}")});
                 let errmsg = format!(#msg, value);
                 let parsed = serde_json::from_value(value).context(errmsg)?;
                 #setting

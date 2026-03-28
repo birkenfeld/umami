@@ -5,7 +5,7 @@ use anyhow::Context;
 use crate::event::{Event, EventData};
 use crate::error::UResult;
 use crate::params::HasParams;
-use super::Output;
+use super::{Output, OutputCommon};
 
 // TODO:
 // - behind feature?
@@ -55,7 +55,7 @@ impl HDF5EventsOutput {
 }
 
 impl Output for HDF5EventsOutput {
-    fn from_config(_config: toml::Table) -> UResult<Self> where Self: Sized {
+    fn from_config(_: &OutputCommon, _: toml::Table) -> UResult<Self> where Self: Sized {
         Ok(HDF5EventsOutput {
             file: None,
             id_buffer: Vec::with_capacity(2 * Self::BUFFER_SIZE),
