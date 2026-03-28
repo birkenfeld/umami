@@ -78,7 +78,7 @@ pub trait Output: Send {
     {
         lprintln!(INFO, "Initialized output {}", common.name);
         std::thread::Builder::new()
-            .name("Output".into())
+            .name(format!("Output {}", common.name))
             .spawn(move || self.main_loop(common))
             .context("Spawning output thread")?;
         Ok(())
