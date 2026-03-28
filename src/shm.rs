@@ -73,9 +73,9 @@ impl ShmBox {
                     write!(&mut writer, " {}", count)
                         .context("Writing histogram data to file")?;
                 }
-                write!(&mut writer, "\n").context("Writing histogram data to file")?;
+                writeln!(&mut writer).context("Writing histogram data to file")?;
             }
-            write!(&mut writer, "\n\n").context("Writing histogram data to file")?;
+            writeln!(&mut writer, "\n").context("Writing histogram data to file")?;
         }
         Ok(())
     }

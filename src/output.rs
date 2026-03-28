@@ -3,7 +3,6 @@
 
 use std::{fs::File, io::BufWriter, path::PathBuf, time::Instant};
 use anyhow::{anyhow, Context};
-use hdf5;
 use itertools::Itertools;
 use rkyv::{api::high::to_bytes_in, ser::writer::IoWriter};
 use crate::lprintln;
@@ -47,7 +46,7 @@ pub trait Output: Send {
         while let Ok(item) = common.input.recv() {
             match &item {
                 PipeItem::Events(events) => {
-                    if let Err(e) = self.handle_events(&events) {
+                    if let Err(e) = self.handle_events(events) {
                         lprintln!(ERROR, "Output {}: error handling events: {e:#}",
                                   common.name);
                     }
@@ -212,7 +211,7 @@ impl Output for DiagOutput {
             }
             self.last_ts = ev_ts;
             let display = self.event_mask.contains(match ev.data {
-                EventData::RawNeutron { .. } => EventMask::RAW_NEUTRON,
+                EventData::RawNeutron => EventMask::RAW_NEUTRON,
                 EventData::RawEdge { .. } => EventMask::RAW_EDGE,
                 EventData::RawAnalog1 { .. } => EventMask::RAW_ANALOG,
                 EventData::RawAnalog2 { .. } => EventMask::RAW_ANALOG,
