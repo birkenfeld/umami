@@ -65,7 +65,6 @@ pub enum SpecificInputConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct InputConfig {
-    pub id: u16,
     pub recipe: String,
     #[serde(flatten)]
     pub specific: SpecificInputConfig,

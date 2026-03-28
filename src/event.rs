@@ -64,13 +64,6 @@ impl std::ops::Sub for EventTime {
     }
 }
 
-/// Numeric order of the input module
-// TODO: replace by amplitude?
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[derive(Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
-pub struct ModuleId(pub u16);
-
 /// Input channel of the event - a tube or pixel ID for neutrons, or a signal
 /// for edges or other kinds of events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +142,7 @@ pub struct Event {
     pub time: EventTime,
     pub rel_time: EventTime,  // zeroed until determined
     pub flags: EventFlags,
+    // TODO: use 16 bits of data here
     pub channel: ChannelId,
     pub data: EventData,
 }

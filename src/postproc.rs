@@ -3,20 +3,21 @@
 
 use std::collections::BTreeMap;
 use anyhow::Context;
+use itertools::Itertools;
 use crate::{lprintln, ltrace};
 use crate::channel::{Receiver, Sender};
-use crate::command::CommandReply;
+use crate::command::{CommandReply, ModuleId};
 use crate::error::{UResult};
-use crate::event::{EventData, ModuleId};
+use crate::event::EventData;
 use crate::input::InputState;
 use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
 use crate::shm::ShmBox;
 
 pub struct PostProcessor {
-    recipe_names: BTreeMap<String, usize>,
+    recipe_names: BTreeMap<ModuleId, usize>,
     recipes: Vec<Box<dyn Recipe>>,
-    default_recipe: String,
+    default_recipe: ModuleId,
     input: Receiver<PipeItem>,
     output: Sender<PipeItem>,
     input_state: BTreeMap<ModuleId, InputState>,
@@ -25,8 +26,8 @@ pub struct PostProcessor {
 
 impl PostProcessor {
     pub fn new(
-        recipe_map: BTreeMap<String, Box<dyn Recipe>>,
-        default_recipe: String,
+        recipe_map: BTreeMap<ModuleId, Box<dyn Recipe>>,
+        default_recipe: ModuleId,
         input: Receiver<PipeItem>,
         output: Sender<PipeItem>,
         data: ShmBox,
@@ -61,7 +62,7 @@ impl PostProcessor {
         let mut current_run = String::new();
 
         // use the default recipe at first
-        let mut cur_recipe = String::from("default");
+        let mut cur_recipe = ModuleId::new("default".into());
         let mut recipe = *self.recipe_names.get(&self.default_recipe)
                                            .expect("default recipe exists");
 
@@ -97,7 +98,7 @@ impl PostProcessor {
                     for (name, &index) in &self.recipe_names {
                         match self.recipes[index].get_params() {
                             Ok(params) => {
-                                send.send((name.into(), params)).expect("param reply receiver died");
+                                send.send((*name, params)).expect("param reply receiver died");
                             }
                             Err(e) => {
                                 lprintln!(ERROR, "Error getting parameters for recipe {}: {e:#}", name);
@@ -108,7 +109,7 @@ impl PostProcessor {
                 PipeItem::SetParams(ref mut param_map, ref send) => {
                     for (name, &index) in &self.recipe_names {
                         if let Some(params) = param_map.remove(name) {
-                            if let Err(e) = self.recipes[index].update_params(name, params) {
+                            if let Err(e) = self.recipes[index].update_params(*name, params) {
                                 lprintln!(ERROR, "Error setting parameters for recipe {}: {e:#}", name);
                                 send.send(CommandReply::new_error(
                                     None, format!("Failed to set parameters for recipe {}: {e:#}", name)))
@@ -126,7 +127,7 @@ impl PostProcessor {
                     continue;
                 }
                 PipeItem::GetModes(send) => {
-                    let modes = self.recipe_names.keys().cloned().collect::<Vec<_>>();
+                    let modes = self.recipe_names.keys().map(|s| s.to_string()).collect_vec();
                     send.send(CommandReply::Data { value: modes.into() })
                         .expect("param reply receiver died");
                     continue;
@@ -147,7 +148,7 @@ impl PostProcessor {
                 PipeItem::GetState(send) => {
                     let inputs = self.input_state.iter().map(|(mid, state)| {
                         let state = serde_json::to_value(state).expect("ok");
-                        (mid.0.to_string(), state)
+                        (mid.to_string(), state)
                     }).collect::<serde_json::Map<_, _>>();
                     let mut map = serde_json::Map::new();
                     map.insert("inputs".into(), inputs.into());

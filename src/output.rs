@@ -4,7 +4,7 @@
 use anyhow::{anyhow, Context};
 use crate::lprintln;
 use crate::channel::{Receiver, Sender};
-use crate::command::CommandReply;
+use crate::command::{CommandReply, ModuleId};
 use crate::config::OutputConfig;
 use crate::error::UResult;
 use crate::event::Event;
@@ -18,14 +18,14 @@ mod hdf5;
 // TODO: file-based outputs: filename (needs to come from Command)?
 
 pub struct OutputCommon {
-    name: String,
+    name: ModuleId,
     input: Receiver<PipeItem>,
     output: Option<Sender<PipeItem>>,
 }
 
 impl OutputCommon {
     pub fn new(
-        name: String,
+        name: ModuleId,
         input: Receiver<PipeItem>,
         output: Option<Sender<PipeItem>>,
     ) -> Self {
@@ -68,7 +68,7 @@ pub trait Output: Send + HasParams {
                 }
                 PipeItem::GetParams(send) => {
                     match self.get_params() {
-                        Ok(params) => send.send((common.name.clone(), params))
+                        Ok(params) => send.send((common.name, params))
                                           .expect("param reply receiver died"),
                         Err(e) => {
                             lprintln!(ERROR, "Output {}: error getting params: {e:#}",
@@ -78,7 +78,7 @@ pub trait Output: Send + HasParams {
                 }
                 PipeItem::SetParams(param_map, send) => {
                     if let Some(params) = param_map.remove(&common.name) {
-                        if let Err(e) = self.update_params(&common.name, params) {
+                        if let Err(e) = self.update_params(common.name, params) {
                             lprintln!(ERROR, "Error setting parameters for output {}: {e:#}",
                                       common.name);
                             send.send(CommandReply::new_error(

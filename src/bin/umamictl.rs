@@ -94,7 +94,7 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
     match reply {
         CommandReply::Ok => println!("OK"),
         CommandReply::Error { module, message } => {
-            let module_str = module.map_or("".to_string(), |m| format!("Module {}: ", m.0));
+            let module_str = module.map_or("".to_string(), |m| format!("Module {}: ", m));
             bail!("{}{}", module_str, message);
         },
         CommandReply::Data { value } => {

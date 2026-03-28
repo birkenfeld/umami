@@ -17,6 +17,7 @@ byteorder = "1.5.0"
 clap = { version = "4.5.60", features = ["derive"] }
 flume = { version = "0.12.0", default-features = false }
 hdf5= { package = "hdf5-metno", version = "0.12.4" }
+internment = { version = "0.8.6", features = ["serde"] }
 itertools = "0.14.0"
 jemallocator = "0.5.4"
 jiff = "0.2.21"
@@ -30,7 +31,10 @@ thiserror = "2.0.18"
 toml = "1.0.3"
 uds = "0.4.2"
 zerocopy = { version = "0.8.39", features = ["derive"] }
-umami-derive = { version = "0.1", path = "src/derive" }
+
+[dependencies.umami-derive]
+version = "0.1"
+path = "src/derive"
 
 [features]
 trace = []

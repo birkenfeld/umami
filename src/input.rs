@@ -15,10 +15,10 @@ use anyhow::Context;
 use serde::Serialize;
 use crate::{lprintln, ltrace};
 use crate::channel::{Sender, Receiver, TryRecvError};
-use crate::command::{Command, CommandReply};
+use crate::command::{Command, CommandReply, ModuleId};
 use crate::config::SpecificInputConfig;
 use crate::error::{UError, UResult};
-use crate::event::{Event, ModuleId};
+use crate::event::Event;
 use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
 use crate::util::resolve;
@@ -33,8 +33,8 @@ pub enum InputState {
 }
 
 pub struct InputCommon {
+    name: ModuleId,
     state: InputState,
-    module: ModuleId,
     state_send: Sender<PipeItem>,
     events: Sender<PipeItem>,
     command: Receiver<(Command, Sender<CommandReply>)>,
@@ -43,15 +43,15 @@ pub struct InputCommon {
 
 impl InputCommon {
     pub fn new(
-        module: ModuleId,
+        name: ModuleId,
         state_send: Sender<PipeItem>,
         events: Sender<PipeItem>,
         command: Receiver<(Command, Sender<CommandReply>)>,
         recipe: Box<dyn Recipe>,
     ) -> Self {
         Self {
+            name,
             state: InputState::Idle,
-            module,
             state_send,
             events,
             command,
@@ -64,10 +64,10 @@ impl InputCommon {
             self.events.send(PipeItem::EndOfRun).expect("event channel closed");
         }
         if let InputState::Error(e) = &state {
-            lprintln!(ERROR, "Input {} entered error state: {}", self.module.0, e);
+            lprintln!(ERROR, "Input {} entered error state: {}", self.name, e);
         }
         self.state = state.clone();
-        self.state_send.send(PipeItem::InputState(self.module, state))
+        self.state_send.send(PipeItem::InputState(self.name, state))
                        .expect("state channel closed");
     }
 }
@@ -104,7 +104,7 @@ pub trait Input: Send {
     }
 
     fn main_loop_command(&mut self, cmd: Command, rep: Sender<CommandReply>, common: &mut InputCommon) {
-        let mid = common.module;
+        let mid = common.name;
         let reply = match cmd {
             Command::Start { run_id } => match &common.state {
                 InputState::Error(e) => {
@@ -377,7 +377,7 @@ impl DumpHandler {
         if let Some(path) = &self.path {
             let full_path = path.join(run_id);
             std::fs::create_dir_all(&full_path).context("Creating raw data directory")?;
-            let file_name = full_path.join(format!("{:02}", module.0));
+            let file_name = full_path.join(format!("{}", module));
             let raw_file = File::create(file_name).context("Creating raw data file")?;
             self.file = Some(raw_file);
         }

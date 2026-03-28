@@ -88,7 +88,7 @@ pub fn derive_has_params(input: proc_macro::TokenStream) -> proc_macro::TokenStr
                 Ok(params)
             }
 
-            fn update_params(&mut self, name: &str,
+            fn update_params(&mut self, name: crate::command::ModuleId,
                              mut params: crate::params::ParamMap) -> crate::error::UResult<()> {
                 use anyhow::Context;
                 #(#setters)*

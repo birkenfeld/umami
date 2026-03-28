@@ -8,16 +8,16 @@ use std::time::Duration;
 use anyhow::Context;
 use byteorder::{ByteOrder, ReadBytesExt, WriteBytesExt, BE};
 use crate::lprintln;
-use crate::command::{Command, CommandReply};
+use crate::command::{Command, CommandReply, ModuleId};
 use crate::config::{CanonConfig, SourceConfig};
 use crate::error::{UError, UResult};
-use crate::event::{ModuleId, ChannelId, Event, EventTime, EventFlags, EventData};
+use crate::event::{ChannelId, Event, EventTime, EventFlags, EventData};
 use crate::input::{ReplayFile, DumpHandler};
 use super::{Source, Input, InputCommon};
 
 pub struct CanonInput<S> {
     source: S,
-    module: ModuleId,
+    name: ModuleId,
     dump: DumpHandler,
     is_gate: bool,
     channel_ofs: u32,
@@ -46,7 +46,7 @@ impl<S: CanonSource> CanonInput<S> {
     pub fn start_with_source(source: S, config: CanonConfig, common: InputCommon) -> UResult<()> {
         let input = Self {
             source,
-            module: common.module,
+            name: common.name,
             dump: Default::default(),
             channel_ofs: config.channel_offset,
             is_gate: config.gatenet,
@@ -63,7 +63,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
         format!(
             "{} {} at {}",
             if self.is_gate { "GateNet" } else { "NeuNet" },
-            self.module.0,
+            self.name,
             self.source.description()
         )
     }
@@ -76,7 +76,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
     }
 
     fn start(&mut self, run_id: String) -> UResult<()> {
-        self.dump.start(self.module, &run_id)?;
+        self.dump.start(self.name, &run_id)?;
         self.source.rewind()?;
         Ok(())
     }

@@ -11,9 +11,10 @@ use uds::UnixDatagramExt;
 use crate::{ldebug, lprintln};
 use crate::channel::Sender;
 use crate::error::UResult;
-use crate::event::ModuleId;
 use crate::params::ParamMap;
 use crate::pipeline::PipeItem;
+
+pub type ModuleId = internment::Intern<String>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
@@ -37,7 +38,6 @@ pub enum Command {
 pub enum CommandReply {
     Ok,
     Data { value: Value },
-    // TODO: change to module name
     Error { module: Option<ModuleId>, message: String },
 }
 
@@ -140,7 +140,7 @@ impl CommandHandler {
                 rep_recv.recv().expect("postprocessor command sender died")
             }
             Command::SetMode { name } => {
-                self.post_send.send(PipeItem::SetMode(name, rep_send))
+                self.post_send.send(PipeItem::SetMode(ModuleId::new(name), rep_send))
                               .expect("postprocessor command receiver died");
                 rep_recv.recv().expect("postprocessor command sender died")
             }
@@ -191,7 +191,7 @@ impl CommandHandler {
                                            form <module>.<param>"));
                     }
                     let (module, param) = name.split_once('.').unwrap();
-                    new_map.entry(module.to_string())
+                    new_map.entry(ModuleId::new(module.into()))
                            .or_insert_with(ParamMap::new)
                            .insert(param.into(), value);
                 }

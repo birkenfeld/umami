@@ -6,11 +6,11 @@ use std::net::TcpStream;
 use std::path::Path;
 use anyhow::{anyhow, Context};
 use byteorder::{ByteOrder, LE};
-use crate::command::{Command, CommandReply};
+use crate::command::{Command, CommandReply, ModuleId};
 use crate::config::{GEConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::input::{ReplayFile, DumpHandler};
-use crate::event::{ModuleId, ChannelId, Event, EventTime, EventFlags, EventData};
+use crate::event::{ChannelId, Event, EventTime, EventFlags, EventData};
 use super::{Source, Input, InputCommon};
 
 const PACKET_NORMAL:     u32 = 0x1000;
@@ -22,7 +22,7 @@ const MAX_PACKET_SIZE: usize = 65536;
 
 pub struct GeInput<S> {
     source: S,
-    module: ModuleId,
+    name: ModuleId,
     dump: DumpHandler,
     queue: Vec<Event>,
     is_ts: bool,
@@ -50,7 +50,7 @@ impl<S: Source> GeInput<S> {
         let input = Self {
             source,
             dump: Default::default(),
-            module: common.module,
+            name: common.name,
             queue: Vec::with_capacity(1024),
             is_ts: config.timestamper,
         };
@@ -64,7 +64,7 @@ impl<S: Source> Input for GeInput<S> {
         format!(
             "GE {} {} at {}",
             if self.is_ts { "TS" } else { "EP" },
-            self.module.0,
+            self.name,
             self.source.description()
         )
     }
@@ -77,7 +77,7 @@ impl<S: Source> Input for GeInput<S> {
     }
 
     fn start(&mut self, run_id: String) -> UResult<()> {
-        self.dump.start(self.module, &run_id)?;
+        self.dump.start(self.name, &run_id)?;
         self.source.rewind()?;
         self.queue.clear();
         Ok(())

@@ -7,10 +7,10 @@ use anyhow::{anyhow, Context};
 use crate::output::OutputCommon;
 use crate::{channel, ldebug, lprintln, output};
 use crate::{command, input, postproc, recipe, sorter};
-use crate::command::{Command, CommandReply};
+use crate::command::{Command, CommandReply, ModuleId};
 use crate::config::{Config, OutputConfig};
 use crate::error::UResult;
-use crate::event::{Event, ModuleId};
+use crate::event::Event;
 use crate::input::{InputCommon, InputState};
 use crate::params::ParamMap;
 use crate::shm::{ShmInterface, MAX_INPUTS};
@@ -26,9 +26,9 @@ pub enum PipeItem {
     EndOfRun,
     InputState(ModuleId, InputState),
     GetModes(channel::Sender<CommandReply>),
-    SetMode(String, channel::Sender<CommandReply>),
-    GetParams(channel::Sender<(String, ParamMap)>),
-    SetParams(BTreeMap<String, ParamMap>, channel::Sender<CommandReply>),
+    SetMode(ModuleId, channel::Sender<CommandReply>),
+    GetParams(channel::Sender<(ModuleId, ParamMap)>),
+    SetParams(BTreeMap<ModuleId, ParamMap>, channel::Sender<CommandReply>),
     GetState(channel::Sender<CommandReply>),
     SaveHisto(String, usize, channel::Sender<CommandReply>),
 }
@@ -53,7 +53,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     let confdir = config.filename.parent().unwrap_or_else(|| Path::new("."));
 
     for (input_name, input_config) in config.inputs {
-        let mid = ModuleId(input_config.id);
+        let input_name = ModuleId::new(input_name);
         ldebug!("Initializing input {input_name}: {:?}", input_config);
 
         let event_send = if n_inputs == 1 {
@@ -65,10 +65,10 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         };
         let (command_send, command_recv) = channel::bounded(1);
         let common = InputCommon::new(
-            mid, postproc_send.clone(), event_send, command_recv,
+            input_name, postproc_send.clone(), event_send, command_recv,
             recipe::from_config(&config.input_recipes, &input_config.recipe)?
         );
-        command_sends.insert(mid, command_send);
+        command_sends.insert(input_name, command_send);
 
         if let Err(e) = input::start(input_config.specific, confdir, common) {
             lprintln!(ERROR, "Failed to initialize input {input_name}: {e:#}");
@@ -112,14 +112,15 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         (0..outputs.len()).map(|_| channel::bounded(OUT_CHANNEL_SIZE)).unzip();
     let first_output_send = output_sends.pop().expect("at least one");
 
-    for (name, out_config) in outputs {
-        ldebug!("Initializing output {name}: {:?}", out_config);
-        let common = OutputCommon::new(name.clone(),
+    for (out_name, out_config) in outputs {
+        let out_name = ModuleId::new(out_name);
+        ldebug!("Initializing output {out_name}: {:?}", out_config);
+        let common = OutputCommon::new(out_name,
                                        output_recvs.pop().expect("one per output"),
                                        output_sends.pop());
         if let Err(e) = output::start(out_config, common) {
             init_errors = true;
-            lprintln!(ERROR, "Failed to initialize output {}: {e:#}", name);
+            lprintln!(ERROR, "Failed to initialize output {out_name}: {e:#}");
         }
     }
     if init_errors {
@@ -128,15 +129,17 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
 
     let mut post_recipes = BTreeMap::new();
     for name in config.process_modes.recipes.keys() {
-        post_recipes.insert(name.into(), recipe::from_config(&config.process_modes.recipes, &name)?);
+        let recipe_name = ModuleId::new(name.into());
+        post_recipes.insert(recipe_name, recipe::from_config(&config.process_modes.recipes, &recipe_name)?);
     }
-    if !post_recipes.contains_key(&config.process_modes.default) {
+    let default_name = ModuleId::new(config.process_modes.default);
+    if !post_recipes.contains_key(&default_name) {
         Err(anyhow!("No default mode configured"))?;
     }
 
     let postproc = postproc::PostProcessor::new(
         post_recipes,
-        config.process_modes.default,
+        default_name,
         postproc_recv,
         first_output_send,
         shm_area,

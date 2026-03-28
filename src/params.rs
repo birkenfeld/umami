@@ -4,6 +4,7 @@
 //! Parameters for inputs, outputs, and post-processing steps.
 
 use serde::Serialize;
+use crate::command::ModuleId;
 use crate::error::UResult;
 
 pub use umami_derive::HasParams;
@@ -12,7 +13,7 @@ pub type ParamMap = serde_json::Map<String, serde_json::Value>;
 
 pub trait HasParams {
     fn get_params(&self) -> UResult<ParamMap>;
-    fn update_params(&mut self, name: &str, params: ParamMap) -> UResult<()>;
+    fn update_params(&mut self, name: ModuleId, params: ParamMap) -> UResult<()>;
 }
 
 #[derive(Serialize, Debug)]

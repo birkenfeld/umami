@@ -8,10 +8,10 @@ use std::path::Path;
 use anyhow::Context;
 use byteorder::{ByteOrder, BE, LE};
 use crate::lprintln;
-use crate::command::{Command, CommandReply};
+use crate::command::{Command, CommandReply, ModuleId};
 use crate::config::{MesyConfig, SourceConfig};
 use crate::error::{UError, UResult};
-use crate::event::{ModuleId, Event, EventFlags, EventData, EventTime, ChannelId};
+use crate::event::{Event, EventFlags, EventData, EventTime, ChannelId};
 use crate::input::{ReplayFile, DumpHandler};
 use super::{Source, Input, InputCommon, UdpReader};
 
@@ -30,7 +30,7 @@ pub struct MesyInput<S, C> {
     command_handler: C,
     dump: DumpHandler,
     // configuration
-    module: ModuleId,
+    name: ModuleId,
     #[allow(unused)]
     is_master: bool,
     // run-time
@@ -63,7 +63,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
             source,
             command_handler: commands,
             dump: Default::default(),
-            module: common.module,
+            name: common.name,
             is_master: config.is_master,
             buf_serial: None,
             no_event_buffers: 0,
@@ -75,7 +75,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
 
 impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
     fn description(&self) -> String {
-        format!("MCPD {} at {}", self.module.0, self.source.description())
+        format!("MCPD {} at {}", self.name, self.source.description())
     }
 
     fn handle(&mut self, cmd: Command) -> UResult<CommandReply> {
@@ -86,7 +86,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
     }
 
     fn start(&mut self, run_id: String) -> UResult<()> {
-        self.dump.start(self.module, &run_id)?;
+        self.dump.start(self.name, &run_id)?;
         self.dump.write(FULL_HEADER)?;
         self.dump.write(BEG_MARKER)?;
         self.source.rewind()?;
