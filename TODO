@@ -1,5 +1,4 @@
 - How to deal with systems that only provide relative timestamps?
 - Parse recipe TOML config from HasParams too?
 - Need to make sure namespace of outputs/recipes has unique name
-- Rename module -> input
 - Are we always logging when returning a CommandReply::Error?

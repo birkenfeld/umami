@@ -101,7 +101,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         with open(self.config) as f:
             content = f.read()
         config = toml.Parser(self.config, content).parse_doc()
-        self._nmod = len(config['modules'])
+        self._nmod = len(config['inputs'])
         self._nx = config['histogram']['nx']
         self._ny = config['histogram']['ny']
         self._max_nt = config['histogram']['max_nt']
@@ -253,7 +253,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
     def state(self):
         if not (self._proc and self._proc.poll() is None):
             return FAULT, 'UMAMI process exited'
-        state = self._send_cmd('get_state')['modules']
+        state = self._send_cmd('get_state')['inputs']
         if any(st == 'running' for st in state.values()):
             return BUSY, 'counting'
         elif any(st == 'error' for st in state.values()):

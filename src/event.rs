@@ -64,7 +64,7 @@ impl std::ops::Sub for EventTime {
     }
 }
 
-/// Numeric order of the module
+/// Numeric order of the input module
 // TODO: replace by amplitude?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[derive(Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]

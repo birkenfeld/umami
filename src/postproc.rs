@@ -8,7 +8,7 @@ use crate::channel::{Receiver, Sender};
 use crate::command::CommandReply;
 use crate::error::{UResult};
 use crate::event::{EventData, ModuleId};
-use crate::input::ModuleState;
+use crate::input::InputState;
 use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
 use crate::shm::ShmBox;
@@ -19,7 +19,7 @@ pub struct PostProcessor {
     default_recipe: String,
     input: Receiver<PipeItem>,
     output: Sender<PipeItem>,
-    module_state: BTreeMap<ModuleId, ModuleState>,
+    input_state: BTreeMap<ModuleId, InputState>,
     shm: ShmBox,
 }
 
@@ -44,7 +44,7 @@ impl PostProcessor {
             default_recipe,
             input,
             output,
-            module_state: BTreeMap::new(),
+            input_state: BTreeMap::new(),
             shm: data,
         }
     }
@@ -121,8 +121,8 @@ impl PostProcessor {
                 }
 
                 // Meta items, not sent on to outputs
-                PipeItem::ModuleState(module, state) => {
-                    self.module_state.insert(module, state);
+                PipeItem::InputState(module, state) => {
+                    self.input_state.insert(module, state);
                     continue;
                 }
                 PipeItem::GetModes(send) => {
@@ -145,12 +145,12 @@ impl PostProcessor {
                     continue;
                 }
                 PipeItem::GetState(send) => {
-                    let modules = self.module_state.iter().map(|(mid, state)| {
+                    let inputs = self.input_state.iter().map(|(mid, state)| {
                         let state = serde_json::to_value(state).expect("ok");
                         (mid.0.to_string(), state)
                     }).collect::<serde_json::Map<_, _>>();
                     let mut map = serde_json::Map::new();
-                    map.insert("modules".into(), modules.into());
+                    map.insert("inputs".into(), inputs.into());
                     map.insert("mode".into(), cur_recipe.as_str().into());
                     // TODO mode parameters
                     send.send(CommandReply::Data { value: map.into() })

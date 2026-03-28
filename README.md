@@ -36,11 +36,11 @@ How it works
 One UMAMI process is configured by a config file that configures and starts
 several components (many in separate threads) that act as a data pipeline:
 
-* Input modules: connect to a detector/data source and reads events into the
+* Inputs: connect to a detector/data source and reads events into the
   common internal event structure, dumping raw data to disk if wanted
 * Input recipes: transform event data to assign logical meaning to event types
   and locations
-* Sorters: merge events from all modules into a single data stream, sorted by
+* Sorters: merge events from all inputs into a single data stream, sorted by
   absolute timestamp
 * Postprocess recipes: run transformations only possible looking at the sorted
   data stream, e.g. assigning a relative timestamp to events
@@ -55,9 +55,9 @@ UMAMI is configured from a TOML file.
 
 At the top level, the configuration contains these sections:
 
-* `modules`: detector input modules keyed by a user-chosen module name
-* `input_recipes`: named event-processing recipes used by modules and postprocessing
-* `process_modes`: named postprocessing modes; `default` must exist
+* `inputs`: detector input modules keyed by a user-chosen input name
+* `input_recipes`: named event-processing recipes used by inputs
+* `process_modes`: named postprocessing recipes; `default` must exist
 * `histogram`: histogram dimensions
 * `ipc_name`: optional IPC name shared by `umami` and `umamictl`
 * `debug`: optional boolean enabling debug logging
@@ -76,16 +76,16 @@ Global settings
   on from the command line with `--debug`.
 
 
-Modules
-~~~~~~~
+Inputs
+~~~~~~
 
-Each entry in `[modules]` defines one detector input.  Every module needs:
+Each entry in `[inputs]` defines one detector input module.  Every input needs:
 
-* `id`: numeric module ID used internally and for raw dump file names
-* `recipe`: name of a recipe from `[input_recipes]` applied to that module's events
+* `id`: numeric input ID used internally and for raw dump file names
+* `recipe`: name of a recipe from `[input_recipes]` applied to that input's events
 * `type`: input backend type
 
-The supported module types are:
+The supported input types are:
 
 `type = "ge"`
 : Generic GE detector input.
@@ -140,8 +140,7 @@ Otherwise it is opened as a replay file.
 Recipes and processing modes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-`[input_recipes]` is a named pool of recipe configurations referenced by input
-modules.
+`[input_recipes]` is a named pool of recipe configurations referenced by inputs.
 
 Currently implemented recipe types are:
 
@@ -150,7 +149,7 @@ Currently implemented recipe types are:
 * `histo_std`: standard histogramming postprocessing
 * `tof_std`: time-of-flight postprocessing
 
-Module recipes are selected through the `recipe` key in each module.
+Input recipes are selected through the `recipe` key in each input.
 
 Postprocessing recipes are configured in `[process_modes]`.  Example:
 
@@ -217,7 +216,7 @@ umamictl [--ipc umami] <command>
 Available commands are:
 
 `start RUN_ID`
-: Starts a run with the given run ID.  If a run is already active, modules are
+: Starts a run with the given run ID.  If a run is already active, inputs are
   restarted with the new run ID.
 
 `stop`
@@ -229,7 +228,7 @@ Available commands are:
 
 `raw PATH`
 : Enables raw data dumping below `PATH`.  For run `1234`, UMAMI creates the
-  directory `PATH/1234/` and stores one file per module using two-digit module
+  directory `PATH/1234/` and stores one file per module using two-digit input
   IDs such as `00`, `01`, `18`.
 
 `no-raw`
@@ -240,7 +239,7 @@ Available commands are:
   parameters.  Parameters are passed as a JSON object.
 
 `state`
-: Prints a JSON object containing the current mode and the per-module states.
+: Prints a JSON object containing the current mode and the per-input states.
 
 Examples:
 
@@ -254,13 +253,13 @@ umamictl --ipc umami stop
 umamictl --ipc umami no-raw
 ```
 
-Module states are reported as one of:
+Input states are reported as one of:
 
-* `init`: module created but not yet initialized for operation
+* `init`: input created but not yet initialized for operation
 * `idle`: ready to start
 * `running`: actively acquiring
 * `ended`: replay input reached end of file
-* `error`: module hit an error and requires operator attention
+* `error`: input hit an error and requires operator attention
 
 
 Inspecting the histogram

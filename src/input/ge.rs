@@ -11,7 +11,7 @@ use crate::config::{GEConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::input::{ReplayFile, DumpHandler};
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
-use super::{Source, Module, ModuleCommon};
+use super::{Source, Input, InputCommon};
 
 const PACKET_NORMAL:     u32 = 0x1000;
 const PACKET_NORM_FAKE:  u32 = 0x1100;
@@ -20,7 +20,7 @@ const PACKET_DIAG_FAKE:  u32 = 0x3100;
 const PACKET_HEARTBT:    u32 = 0x5000;
 const MAX_PACKET_SIZE: usize = 65536;
 
-pub struct GeModule<S> {
+pub struct GeInput<S> {
     source: S,
     module: ModuleId,
     dump: DumpHandler,
@@ -34,35 +34,35 @@ fn read_time(buf: &[u8]) -> EventTime {
     EventTime::from_sec_nsec(sec, nsec)
 }
 
-impl GeModule<()> {
-    pub fn start(config: GEConfig, confdir: &Path, common: ModuleCommon) -> UResult<()> {
+impl GeInput<()> {
+    pub fn start(config: GEConfig, confdir: &Path, common: InputCommon) -> UResult<()> {
         match &config.source {
-            SourceConfig::IP(addr) => GeModule::start_with_source(
+            SourceConfig::IP(addr) => GeInput::start_with_source(
                 TcpStream::from_config(addr, confdir)?, config, common),
-            SourceConfig::File(path) => GeModule::start_with_source(
+            SourceConfig::File(path) => GeInput::start_with_source(
                 ReplayFile::from_config(path, confdir)?, config, common),
         }
     }
 }
 
-impl<S: Source> GeModule<S> {
-    fn start_with_source(source: S, config: GEConfig, common: ModuleCommon) -> UResult<()> {
-        let module = Self {
+impl<S: Source> GeInput<S> {
+    fn start_with_source(source: S, config: GEConfig, common: InputCommon) -> UResult<()> {
+        let input = Self {
             source,
             dump: Default::default(),
             module: common.module,
             queue: Vec::with_capacity(1024),
             is_ts: config.timestamper,
         };
-        module.start_main_loop(common)?;
+        input.start_main_loop(common)?;
         Ok(())
     }
 }
 
-impl<S: Source> Module for GeModule<S> {
+impl<S: Source> Input for GeInput<S> {
     fn description(&self) -> String {
         format!(
-            "GE {} module {} at {}",
+            "GE {} {} at {}",
             if self.is_ts { "TS" } else { "EP" },
             self.module.0,
             self.source.description()

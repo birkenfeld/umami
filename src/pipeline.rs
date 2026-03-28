@@ -11,9 +11,9 @@ use crate::command::{Command, CommandReply};
 use crate::config::{Config, OutputConfig};
 use crate::error::UResult;
 use crate::event::{Event, ModuleId};
-use crate::input::{ModuleCommon, ModuleState};
+use crate::input::{InputCommon, InputState};
 use crate::params::ParamMap;
-use crate::shm::{ShmInterface, MAX_MODULES};
+use crate::shm::{ShmInterface, MAX_INPUTS};
 use crate::util::wait_for_signal;
 
 const EV_CHANNEL_SIZE: usize = 128; // TODO tune more?
@@ -24,7 +24,7 @@ pub enum PipeItem {
     Clear,
     StartOfRun(String),
     EndOfRun,
-    ModuleState(ModuleId, ModuleState),
+    InputState(ModuleId, InputState),
     GetModes(channel::Sender<CommandReply>),
     SetMode(String, channel::Sender<CommandReply>),
     GetParams(channel::Sender<(String, ParamMap)>),
@@ -34,11 +34,11 @@ pub enum PipeItem {
 }
 
 pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
-    let n_modules = config.modules.len();
-    if n_modules == 0 {
-        Err(anyhow!("No modules configured"))?;
-    } else if n_modules > MAX_MODULES {
-        Err(anyhow!("Too many modules: {}, max is {}", n_modules, MAX_MODULES))?;
+    let n_inputs = config.inputs.len();
+    if n_inputs == 0 {
+        Err(anyhow!("No inputs configured"))?;
+    } else if n_inputs > MAX_INPUTS {
+        Err(anyhow!("Too many inputs: {}, max is {}", n_inputs, MAX_INPUTS))?;
     }
 
     let shm_area = ShmInterface::create(&config.ipc_name, &config.histogram)?;
@@ -52,11 +52,11 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     let mut command_sends = BTreeMap::new();
     let confdir = config.filename.parent().unwrap_or_else(|| Path::new("."));
 
-    for (module_name, module_config) in config.modules {
-        let mid = ModuleId(module_config.id);
-        ldebug!("Initializing module {module_name}: {:?}", module_config);
+    for (input_name, input_config) in config.inputs {
+        let mid = ModuleId(input_config.id);
+        ldebug!("Initializing input {input_name}: {:?}", input_config);
 
-        let event_send = if n_modules == 1 {
+        let event_send = if n_inputs == 1 {
             postproc_send.clone()
         } else {
             let (send, recv) = channel::bounded(EV_CHANNEL_SIZE);
@@ -64,22 +64,22 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
             send
         };
         let (command_send, command_recv) = channel::bounded(1);
-        let common = ModuleCommon::new(
+        let common = InputCommon::new(
             mid, postproc_send.clone(), event_send, command_recv,
-            recipe::from_config(&config.input_recipes, &module_config.recipe)?
+            recipe::from_config(&config.input_recipes, &input_config.recipe)?
         );
         command_sends.insert(mid, command_send);
 
-        if let Err(e) = input::start(module_config.specific, confdir, common) {
-            lprintln!(ERROR, "Failed to initialize module {module_name}: {e:#}");
+        if let Err(e) = input::start(input_config.specific, confdir, common) {
+            lprintln!(ERROR, "Failed to initialize input {input_name}: {e:#}");
             init_errors = true;
         }
     }
     if init_errors {
-        Err(anyhow!("Some modules failed to initialize"))?;
+        Err(anyhow!("Some inputs failed to initialize"))?;
     }
 
-    // create event sorters if we have more than one module
+    // create event sorters if we have more than one input
     while pipe_recvs.len() > 1 {
         let read_1 = pipe_recvs.pop().expect("len checked");
         let read_2 = pipe_recvs.pop().expect("len checked");

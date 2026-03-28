@@ -12,7 +12,7 @@ use nix::sys::{mman::{shm_open, mmap, MapFlags, ProtFlags}, stat::Mode};
 use crate::config::HistoConfig;
 use crate::error::UResult;
 
-pub const MAX_MODULES: usize = 128;
+pub const MAX_INPUTS: usize = 128;
 pub const MAX_HISTO_SIZE: usize = 1024 * 1024 * 1024;  // 1 GB shmem
 
 pub struct ShmBox {

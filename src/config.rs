@@ -56,18 +56,18 @@ pub enum MesyModuleConfig {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum SpecificModuleConfig {
+pub enum SpecificInputConfig {
     GE(GEConfig),
     Canon(CanonConfig),
     Mesy(MesyConfig),
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ModuleConfig {
+pub struct InputConfig {
     pub id: u16,
     pub recipe: String,
     #[serde(flatten)]
-    pub specific: SpecificModuleConfig,
+    pub specific: SpecificInputConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -100,7 +100,7 @@ pub struct HistoConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    pub modules: BTreeMap<String, ModuleConfig>,
+    pub inputs: BTreeMap<String, InputConfig>,
     pub input_recipes: BTreeMap<String, RecipeConfig>,
     pub outputs: Option<BTreeMap<String, OutputConfig>>,
     pub process_modes: ProcessModesConfig,

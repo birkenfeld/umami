@@ -37,6 +37,7 @@ pub enum Command {
 pub enum CommandReply {
     Ok,
     Data { value: Value },
+    // TODO: change to module name
     Error { module: Option<ModuleId>, message: String },
 }
 
@@ -53,21 +54,21 @@ impl CommandReply {
 
 pub struct CommandHandler {
     sock: net::UnixDatagram,
-    mod_send: BTreeMap<ModuleId, Sender<(Command, Sender<CommandReply>)>>,
+    input_send: BTreeMap<ModuleId, Sender<(Command, Sender<CommandReply>)>>,
     post_send: Sender<PipeItem>,
 }
 
 impl CommandHandler {
     pub fn new(
         socket_name: &str,
-        mod_send: BTreeMap<ModuleId, Sender<(Command, Sender<CommandReply>)>>,
+        input_send: BTreeMap<ModuleId, Sender<(Command, Sender<CommandReply>)>>,
         post_send: Sender<PipeItem>,
     ) -> UResult<Self> {
         let addr = uds::UnixSocketAddr::from_abstract(socket_name.as_bytes())
             .context("Creating abstract socket address")?;
         let sock = net::UnixDatagram::bind_unix_addr(&addr)
             .with_context(|| format!("Binding command listener to {}", addr))?;
-        Ok(Self { sock, mod_send, post_send })
+        Ok(Self { sock, input_send, post_send })
     }
 
     pub fn start(mut self) -> anyhow::Result<()> {
@@ -117,7 +118,7 @@ impl CommandHandler {
     }
 
     pub fn handle(&self, cmd: Command) -> CommandReply {
-        let (rep_send, rep_recv) = crate::channel::bounded(self.mod_send.len());
+        let (rep_send, rep_recv) = crate::channel::bounded(self.input_send.len());
         match cmd {
             Command::Ping => {
                 let version = format!("UMAMI {}", env!("CARGO_PKG_VERSION"));
@@ -150,11 +151,11 @@ impl CommandHandler {
                                   .expect("postprocessor command receiver died");
                 }
                 let cmd_and_send = (cmd, rep_send);
-                for mod_send in self.mod_send.values() {
-                    mod_send.send(cmd_and_send.clone()).expect("module command receiver died");
+                for sender in self.input_send.values() {
+                    sender.send(cmd_and_send.clone()).expect("input command receiver died");
                 }
-                let replies = (0..self.mod_send.len()).map(
-                    |_| rep_recv.recv().expect("module command sender died")
+                let replies = (0..self.input_send.len()).map(
+                    |_| rep_recv.recv().expect("input command sender died")
                 ).collect_vec();
                 if let Some(err) = replies.into_iter().find(|r| r.is_error()) {
                     return err;
@@ -186,7 +187,8 @@ impl CommandHandler {
                 for (name, value) in params {
                     if !name.contains('.') {
                         return CommandReply::new_error(
-                            None, format!("Invalid param key {name}, needs to be of the form <module>.<param>"));
+                            None, format!("Invalid param key {name}, needs to be of the \
+                                           form <module>.<param>"));
                     }
                     let (module, param) = name.split_once('.').unwrap();
                     new_map.entry(module.to_string())

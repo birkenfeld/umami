@@ -16,7 +16,7 @@ use serde::Serialize;
 use crate::{lprintln, ltrace};
 use crate::channel::{Sender, Receiver, TryRecvError};
 use crate::command::{Command, CommandReply};
-use crate::config::SpecificModuleConfig;
+use crate::config::SpecificInputConfig;
 use crate::error::{UError, UResult};
 use crate::event::{Event, ModuleId};
 use crate::pipeline::PipeItem;
@@ -25,15 +25,15 @@ use crate::util::resolve;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ModuleState {
+pub enum InputState {
     Idle,
     Running,
     Ended,
     Error(String),
 }
 
-pub struct ModuleCommon {
-    state: ModuleState,
+pub struct InputCommon {
+    state: InputState,
     module: ModuleId,
     state_send: Sender<PipeItem>,
     events: Sender<PipeItem>,
@@ -41,7 +41,7 @@ pub struct ModuleCommon {
     recipe: Box<dyn Recipe>,
 }
 
-impl ModuleCommon {
+impl InputCommon {
     pub fn new(
         module: ModuleId,
         state_send: Sender<PipeItem>,
@@ -50,7 +50,7 @@ impl ModuleCommon {
         recipe: Box<dyn Recipe>,
     ) -> Self {
         Self {
-            state: ModuleState::Idle,
+            state: InputState::Idle,
             module,
             state_send,
             events,
@@ -59,29 +59,29 @@ impl ModuleCommon {
         }
     }
 
-    fn set_state(&mut self, state: ModuleState) {
-        if self.state == ModuleState::Running {
+    fn set_state(&mut self, state: InputState) {
+        if self.state == InputState::Running {
             self.events.send(PipeItem::EndOfRun).expect("event channel closed");
         }
-        if let ModuleState::Error(e) = &state {
-            lprintln!(ERROR, "Module {} entered error state: {}", self.module.0, e);
+        if let InputState::Error(e) = &state {
+            lprintln!(ERROR, "Input {} entered error state: {}", self.module.0, e);
         }
         self.state = state.clone();
-        self.state_send.send(PipeItem::ModuleState(self.module, state))
+        self.state_send.send(PipeItem::InputState(self.module, state))
                        .expect("state channel closed");
     }
 }
 
-pub fn start(config: SpecificModuleConfig, confdir: &Path, common: ModuleCommon) -> UResult<()> {
+pub fn start(config: SpecificInputConfig, confdir: &Path, common: InputCommon) -> UResult<()> {
     match config {
-        SpecificModuleConfig::GE(cfg) => ge::GeModule::start(cfg, confdir, common)?,
-        SpecificModuleConfig::Canon(cfg) => canon::CanonModule::start(cfg, confdir, common)?,
-        SpecificModuleConfig::Mesy(cfg) => mesy::MesyModule::start(cfg, confdir, common)?,
+        SpecificInputConfig::GE(cfg) => ge::GeInput::start(cfg, confdir, common)?,
+        SpecificInputConfig::Canon(cfg) => canon::CanonInput::start(cfg, confdir, common)?,
+        SpecificInputConfig::Mesy(cfg) => mesy::MesyInput::start(cfg, confdir, common)?,
     }
     Ok(())
 }
 
-pub trait Module: Send {
+pub trait Input: Send {
     fn description(&self) -> String;
     fn handle(&mut self, cmd: Command) -> UResult<CommandReply>;
     fn start(&mut self, run_id: String) -> UResult<()>;
@@ -91,7 +91,7 @@ pub trait Module: Send {
 
     // Rest of methods are all fully implemented
 
-    fn start_main_loop(self, common: ModuleCommon) -> UResult<()>
+    fn start_main_loop(self, common: InputCommon) -> UResult<()>
     where Self: Sized + 'static
     {
         let desc = self.description();
@@ -99,76 +99,76 @@ pub trait Module: Send {
         thread::Builder::new()
             .name(format!("M: {}", self.description()))
             .spawn(move || self.main_loop(common))
-            .context(format!("Spawning module thread for {desc}"))?;
+            .context(format!("Spawning input thread for {desc}"))?;
         Ok(())
     }
 
-    fn main_loop_command(&mut self, cmd: Command, rep: Sender<CommandReply>, common: &mut ModuleCommon) {
+    fn main_loop_command(&mut self, cmd: Command, rep: Sender<CommandReply>, common: &mut InputCommon) {
         let mid = common.module;
         let reply = match cmd {
             Command::Start { run_id } => match &common.state {
-                ModuleState::Error(e) => {
+                InputState::Error(e) => {
                     CommandReply::new_error(
                         Some(mid),
-                        format!("Cannot start module in error state. Last error: {e:#}")
+                        format!("Cannot start input in error state. Last error: {e:#}")
                     )
                 }
                 _ => {
-                    if common.state == ModuleState::Running {
+                    if common.state == InputState::Running {
                         if let Err(e) = self.stop() {
-                            let msg = format!("Failed to stop module for restart: {e:#}");
-                            common.set_state(ModuleState::Error(msg.clone()));
+                            let msg = format!("Failed to stop input for restart: {e:#}");
+                            common.set_state(InputState::Error(msg.clone()));
                             rep.send(CommandReply::new_error(Some(mid), msg))
                                .expect("command channel closed");
                             return;
                         } else {
-                            common.set_state(ModuleState::Idle);
+                            common.set_state(InputState::Idle);
                         }
                     }
                     if let Err(e) = self.start(run_id) {
-                        let msg = format!("Failed to start module: {e:#}");
-                        common.set_state(ModuleState::Error(msg.clone()));
+                        let msg = format!("Failed to start input: {e:#}");
+                        common.set_state(InputState::Error(msg.clone()));
                         CommandReply::new_error(Some(mid), msg)
                     } else {
-                        common.set_state(ModuleState::Running);
+                        common.set_state(InputState::Running);
                         CommandReply::Ok
                     }
                 }
             }
             Command::Stop => match &common.state {
-                ModuleState::Error(e) => {
+                InputState::Error(e) => {
                     CommandReply::new_error(
                         Some(mid),
-                        format!("Cannot stop module in error state. Last error: {e:#}")
+                        format!("Cannot stop input in error state. Last error: {e:#}")
                     )
                 }
-                ModuleState::Idle => {
+                InputState::Idle => {
                     CommandReply::Ok
                 }
-                ModuleState::Ended => {
-                    common.set_state(ModuleState::Idle);
+                InputState::Ended => {
+                    common.set_state(InputState::Idle);
                     CommandReply::Ok
                 }
-                ModuleState::Running => {
+                InputState::Running => {
                     if let Err(e) = self.stop() {
-                        let msg = format!("Failed to stop module: {e:#}");
-                        common.set_state(ModuleState::Error(msg.clone()));
+                        let msg = format!("Failed to stop input: {e:#}");
+                        common.set_state(InputState::Error(msg.clone()));
                         CommandReply::new_error(Some(mid), msg)
                     } else {
-                        common.set_state(ModuleState::Idle);
+                        common.set_state(InputState::Idle);
                         CommandReply::Ok
                     }
                 }
             }
             Command::Reset => match common.state {
-                ModuleState::Error(_) => {
+                InputState::Error(_) => {
                     if let Err(e) = self.reset() {
-                        let msg = format!("Failed to reset module: {e:#}");
-                        common.set_state(ModuleState::Error(msg.clone()));
+                        let msg = format!("Failed to reset input: {e:#}");
+                        common.set_state(InputState::Error(msg.clone()));
                         CommandReply::new_error(Some(mid), msg)
                     } else {
                         lprintln!(INFO, "Reset {}", self.description());
-                        common.set_state(ModuleState::Idle);
+                        common.set_state(InputState::Idle);
                         CommandReply::Ok
                     }
                 }
@@ -183,11 +183,11 @@ pub trait Module: Send {
         rep.send(reply).expect("command channel closed");
     }
 
-    fn main_loop(mut self, mut common: ModuleCommon)
+    fn main_loop(mut self, mut common: InputCommon)
     where Self: Sized
     {
         let desc = self.description();
-        common.set_state(ModuleState::Idle);
+        common.set_state(InputState::Idle);
 
         loop {
             match common.command.try_recv() {
@@ -199,11 +199,11 @@ pub trait Module: Send {
                 }
             }
 
-            if !matches!(common.state, ModuleState::Error(_)) {
+            if !matches!(common.state, InputState::Error(_)) {
                 match self.read_events() {
                     Ok(ev) => {
                         ltrace!("{} | Incoming events: {:?}", desc, ev);
-                        if common.state == ModuleState::Running {
+                        if common.state == InputState::Running {
                             let ev = common.recipe.process(ev);
                             ltrace!("{} | Processed events: {:?}", desc, ev);
                             common.events.send(PipeItem::Events(ev)).expect("event channel closed");
@@ -213,11 +213,11 @@ pub trait Module: Send {
                     Err(UError::Other(e)) => {
                         let msg = format!("Error reading events: {e:#}");
                         lprintln!(ERROR, "Cannot read events for {desc}: {e:#}");
-                        common.set_state(ModuleState::Error(msg));
+                        common.set_state(InputState::Error(msg));
                         // wait for commands below
                     }
                     Err(UError::NoMoreData) => {
-                        common.set_state(ModuleState::Ended);
+                        common.set_state(InputState::Ended);
                         // wait for commands below
                     }
                 }

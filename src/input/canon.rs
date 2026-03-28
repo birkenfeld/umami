@@ -13,9 +13,9 @@ use crate::config::{CanonConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
 use crate::input::{ReplayFile, DumpHandler};
-use super::{Source, Module, ModuleCommon};
+use super::{Source, Input, InputCommon};
 
-pub struct CanonModule<S> {
+pub struct CanonInput<S> {
     source: S,
     module: ModuleId,
     dump: DumpHandler,
@@ -30,20 +30,20 @@ const EVENT_SIZE: usize = 8;
 // 01/01/2008 00:00:00 UTC, the epoch for Canon device time
 const EPOCH: EventTime = EventTime::from_sec_nsec(1199145600, 0);
 
-impl CanonModule<()> {
-    pub fn start(config: CanonConfig, confdir: &Path, common: ModuleCommon) -> UResult<()> {
+impl CanonInput<()> {
+    pub fn start(config: CanonConfig, confdir: &Path, common: InputCommon) -> UResult<()> {
         match &config.source {
-            SourceConfig::IP(addr) => CanonModule::start_with_source(
+            SourceConfig::IP(addr) => CanonInput::start_with_source(
                 TcpStream::from_config(addr, confdir)?, config, common),
-            SourceConfig::File(path) => CanonModule::start_with_source(
+            SourceConfig::File(path) => CanonInput::start_with_source(
                 ReplayFile::from_config(path, confdir)?, config, common),
         }
     }
 }
 
-impl<S: CanonSource> CanonModule<S> {
-    pub fn start_with_source(source: S, config: CanonConfig, common: ModuleCommon) -> UResult<()> {
-        let module = Self {
+impl<S: CanonSource> CanonInput<S> {
+    pub fn start_with_source(source: S, config: CanonConfig, common: InputCommon) -> UResult<()> {
+        let input = Self {
             source,
             module: common.module,
             dump: Default::default(),
@@ -51,15 +51,15 @@ impl<S: CanonSource> CanonModule<S> {
             time_ofs: EventTime::zero(),
             buffer: vec![0; EVENT_SIZE * MAX_EVENTS],
         };
-        module.start_main_loop(common)?;
+        input.start_main_loop(common)?;
         Ok(())
     }
 }
 
-impl<S: CanonSource> Module for CanonModule<S> {
+impl<S: CanonSource> Input for CanonInput<S> {
     fn description(&self) -> String {
         format!(
-            "{} module {} at {}",
+            "{} {} at {}",
             if self.is_gate { "GateNet" } else { "NeuNet" },
             self.module.0,
             self.source.description()
