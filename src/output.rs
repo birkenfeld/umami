@@ -341,6 +341,10 @@ pub struct FileOutput {
     writer: Option<IoWriter<BufWriter<File>>>,
 }
 
+impl FileOutput {
+    const BUFFER_SIZE: usize = 1 << 15;
+}
+
 impl Output for FileOutput {
     fn from_config(config: toml::Table) -> UResult<Self> where Self: Sized {
         let dir = config.get("dir")
@@ -352,15 +356,13 @@ impl Output for FileOutput {
 
     // TODO: config api to set the filename
 
-    fn handle_start_of_run(&mut self, _run: &str) -> UResult<()> {
-        if let Some(filename) = &self.filename {
-            let path = self.dir.join(filename);
-            let file = File::create(&path)
-                .with_context(|| format!("Creating output file {}", path.display()))?;
-            self.writer = Some(IoWriter::new(BufWriter::with_capacity(1 << 20, file)));
-        } else {
-            self.writer = None;
-        }
+    fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
+        let filename = self.filename.as_deref().unwrap_or(run);
+        let path = self.dir.join(filename);
+        let file = File::create(&path)
+            .with_context(|| format!("Creating output file {}", path.display()))?;
+        let buffered = BufWriter::with_capacity(Self::BUFFER_SIZE, file);
+        self.writer = Some(IoWriter::new(buffered));
         Ok(())
     }
 
