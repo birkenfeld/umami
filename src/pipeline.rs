@@ -41,12 +41,36 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         Err(anyhow!("Too many inputs: {}, max is {}", n_inputs, MAX_INPUTS))?;
     }
 
-    let shm_area = ShmInterface::create(&config.ipc_name, &config.histogram)?;
-
-    lprintln!(INFO, "IPC interfaces are available under the name {:?}", config.ipc_name);
-
     let (postproc_send, postproc_recv) = channel::bounded(EV_CHANNEL_SIZE);
 
+    // check uniqueness of names for modules (input, output, recipes)
+    let mut all_names = BTreeMap::new();
+    for input_name in config.inputs.keys() {
+        if let Some(prev) = all_names.insert(input_name, "input") {
+            Err(anyhow!("Duplicate module name: input {input_name}, \
+                         already used as {prev}"))?;
+        }
+    }
+    for output_name in config.outputs.as_ref().map(|k| k.keys()).into_iter().flatten() {
+        if let Some(prev) = all_names.insert(output_name, "output") {
+            Err(anyhow!("Duplicate module name: output {output_name}, \
+                         already used as {prev}"))?;
+        }
+    }
+    for recipe_name in config.process_modes.recipes.keys() {
+        if let Some(prev) = all_names.insert(recipe_name, "process mode") {
+            Err(anyhow!("Duplicate module name: mode {recipe_name}, \
+                         already used as {prev}"))?;
+        }
+    }
+    for recipe_name in config.input_recipes.keys() {
+        if let Some(prev) = all_names.insert(recipe_name, "input recipe") {
+            Err(anyhow!("Duplicate module name: input recipe {recipe_name}, \
+                         already used as {prev}"))?;
+        }
+    }
+
+    // create inputs
     let mut init_errors = false;
     let mut pipe_recvs = vec![];
     let mut command_sends = BTreeMap::new();
@@ -140,6 +164,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         Err(anyhow!("No default mode configured"))?;
     }
 
+    let shm_area = ShmInterface::create(&config.ipc_name, &config.histogram)?;
     let postproc = postproc::PostProcessor::new(
         post_recipes,
         default_name,
@@ -147,9 +172,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         first_output_send,
         shm_area,
     );
-
     postproc.start()?;
-
 
     if let Some(path) = config.raw_dir {
         lprintln!(INFO, "Raw dump enabled, dumping to {:?}", path.display());
@@ -160,7 +183,9 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         handler.handle(Command::Start { run_id: "auto".to_string() });
     }
 
-    lprintln!(INFO, "Init done, waiting for commands");
+    lprintln!(INFO, "Init done, IPC interfaces are available under the name {:?}",
+              config.ipc_name);
+
     handler.start()?;
 
     wait_for_signal().context("Setting signal handler")?;

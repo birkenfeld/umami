@@ -1,4 +1,3 @@
 - How to deal with systems that only provide relative timestamps?
 - Parse recipe TOML config from HasParams too?
-- Need to make sure namespace of outputs/recipes has unique name
 - Make sure channel ID is reassigned to pixel ID for Neutron events?
