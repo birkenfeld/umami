@@ -192,9 +192,10 @@ impl CommandHandler {
                     if !name.contains('.') {
                         return CommandReply::new_error(
                             format!("Invalid param key {name}, needs to be of the \
-                                     form <module>.<param>"));
+                                     form <module>.<param>")
+                        );
                     }
-                    let (module, param) = name.split_once('.').unwrap();
+                    let (module, param) = name.split_once('.').expect("checked");
                     new_map.entry(ModuleId::new(module.into()))
                            .or_insert_with(ParamMap::new)
                            .insert(param.into(), value);

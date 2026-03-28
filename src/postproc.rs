@@ -101,7 +101,8 @@ impl PostProcessor {
                                 send.send((name, params)).expect("param reply receiver died");
                             }
                             Err(e) => {
-                                lprintln!(ERROR, "Error getting parameters for recipe {}: {e:#}", name);
+                                lprintln!(ERROR, "Error getting parameters for recipe {}: {e:#}",
+                                          name);
                             }
                         }
                     }
@@ -110,7 +111,8 @@ impl PostProcessor {
                     for (&name, &index) in &self.recipe_names {
                         if let Some(params) = param_map.remove(&name) {
                             if let Err(e) = self.recipes[index].update_params(name, params) {
-                                lprintln!(ERROR, "Error setting parameters for recipe {}: {e:#}", name);
+                                lprintln!(ERROR, "Error setting parameters for recipe {}: {e:#}",
+                                          name);
                                 send.send(CommandReply::new_mod_error(
                                     name, format!("Failed to set parameters: {e:#}")
                                 )).expect("param reply receiver died");
@@ -133,13 +135,13 @@ impl PostProcessor {
                     continue;
                 }
                 PipeItem::SetMode(name, send) => {
-                    lprintln!(INFO, "Using processing recipe {name}");
                     if !self.recipe_names.contains_key(&name) {
                         send.send(CommandReply::new_error(
                             format!("Recipe {} not found", name)))
                             .expect("param reply receiver died");
                         continue;
                     }
+                    lprintln!(INFO, "Using processing recipe {name}");
                     recipe = *self.recipe_names.get(&name).expect("checked above");
                     cur_recipe = name;
                     send.send(CommandReply::Ok).expect("param reply receiver died");
@@ -161,9 +163,13 @@ impl PostProcessor {
                 PipeItem::SaveHisto(filename, max_nt, send) => {
                     send.send(match self.shm.save_to_file(&filename, max_nt) {
                         Ok(_) => CommandReply::Ok,
-                        Err(e) => CommandReply::new_error(
-                            format!("Failed to save histogram: {e:#}")
-                        )
+                        Err(e) => {
+                            lprintln!(ERROR, "Error saving histogram to file \
+                                              {filename}: {e:#}");
+                            CommandReply::new_error(
+                                format!("Failed to save histogram: {e:#}")
+                            )
+                        }
                     }).expect("param reply receiver died");
                     continue;
                 }

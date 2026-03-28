@@ -177,10 +177,12 @@ pub trait Input: Send {
             }
             _ => match self.handle(cmd) {
                 Ok(reply) => reply,
-                Err(e) => CommandReply::new_mod_error(
-                    name,
-                    format!("Failed to handle command: {e:#}"),
-                ),
+                Err(e) => {
+                    lprintln!(ERROR, "Error handling command for {}: {e:#}",
+                              self.description());
+                    CommandReply::new_mod_error(
+                        name, format!("Failed to handle command: {e:#}"))
+                }
             }
         };
         rep.send(reply).expect("command channel closed");
