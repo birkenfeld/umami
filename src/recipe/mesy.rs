@@ -6,20 +6,17 @@ use serde::Deserialize;
 use crate::config::RecipeConfig;
 use crate::error::UResult;
 use crate::event::{Event, EventData};
+use crate::params::HasParams;
 use super::Recipe;
 
 // TODO: amplitude modes
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct Mpsd;
+#[derive(Debug, Deserialize, Clone, HasParams)]
+pub struct Mpsd {}
 
 impl Recipe for Mpsd {
     fn from_config(_: toml::Table, _: &BTreeMap<String, RecipeConfig>) -> UResult<Self> {
-        Ok(Self)
-    }
-
-    fn update_config(&mut self, _: toml::Table) -> UResult<()> {
-        Ok(())
+        Ok(Self {})
     }
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
@@ -42,16 +39,12 @@ impl Recipe for Mpsd {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct Mdll;
+#[derive(Debug, Deserialize, Clone, HasParams)]
+pub struct Mdll {}
 
 impl Recipe for Mdll {
     fn from_config(_: toml::Table, _: &BTreeMap<String, RecipeConfig>) -> UResult<Self> {
-        Ok(Self)
-    }
-
-    fn update_config(&mut self, _: toml::Table) -> UResult<()> {
-        Ok(())
+        Ok(Self {})
     }
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {

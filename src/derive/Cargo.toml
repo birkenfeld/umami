@@ -1,0 +1,20 @@
+[package]
+name = "umami-derive"
+version = "0.1.0"
+edition = "2024"
+authors = ["Georg Brandl <g.brandl@fz-juelich.de>",
+           "Alexander Zaft <a.zaft@fz-juelich.de>"]
+license = "GPL-3.0-or-later"
+description = "Derive macros for UMAMI"
+rust-version = "1.88"
+
+[lib]
+proc-macro = true
+path = "lib.rs"
+
+[dependencies]
+syn = "2.0"
+quote = "1.0"
+darling = "0.23.0"
+proc-macro2 = "1.0.106"
+quip = "0.2.0"

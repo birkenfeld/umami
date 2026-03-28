@@ -4,9 +4,11 @@
 use anyhow::{anyhow, Context};
 use crate::lprintln;
 use crate::channel::{Receiver, Sender};
+use crate::command::CommandReply;
 use crate::config::OutputConfig;
 use crate::error::UResult;
 use crate::event::Event;
+use crate::params::HasParams;
 use crate::pipeline::PipeItem;
 
 mod diag;
@@ -32,9 +34,8 @@ impl OutputCommon {
 }
 
 
-pub trait Output: Send {
+pub trait Output: Send + HasParams {
     fn from_config(config: toml::Table) -> UResult<Self> where Self: Sized;
-    // fn update_config(&mut self, _: toml::Table) -> UResult<()>;
     fn handle_events(&mut self, events: &[Event]) -> UResult<()>;
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()>;
     fn handle_end_of_run(&mut self) -> UResult<()>;
@@ -43,29 +44,53 @@ pub trait Output: Send {
     where Self: Sized
     {
         let mut current_run = String::new();
-        while let Ok(item) = common.input.recv() {
-            match &item {
+        while let Ok(mut item) = common.input.recv() {
+            match &mut item {
                 PipeItem::Events(events) => {
                     if let Err(e) = self.handle_events(events) {
                         lprintln!(ERROR, "Output {}: error handling events: {e:#}",
                                   common.name);
                     }
-                },
+                }
                 PipeItem::StartOfRun(run) => {
                     current_run = run.clone();
                     if let Err(e) = self.handle_start_of_run(run) {
                         lprintln!(ERROR, "Output {}: error handling start of run: {e:#}",
                                   common.name);
                     }
-                },
+                }
                 PipeItem::EndOfRun => {
                     if let Err(e) = self.handle_end_of_run() {
                         lprintln!(ERROR, "Output {}: error handling end of run: {e:#}",
                                   common.name);
                     }
                     lprintln!(INFO, "Output {}: finished with run {:?}", common.name, current_run);
-                },
-                _ => {},
+                }
+                PipeItem::GetParams(send) => {
+                    match self.get_params() {
+                        Ok(params) => send.send((common.name.clone(), params))
+                                          .expect("param reply receiver died"),
+                        Err(e) => {
+                            lprintln!(ERROR, "Output {}: error getting params: {e:#}",
+                                      common.name);
+                        }
+                    }
+                }
+                PipeItem::SetParams(param_map, send) => {
+                    if let Some(params) = param_map.remove(&common.name) {
+                        if let Err(e) = self.update_params(params) {
+                            lprintln!(ERROR, "Error setting parameters for output {}: {e:#}",
+                                      common.name);
+                            send.send(CommandReply::new_error(
+                                None, format!("Failed to set parameters for output {}: {e:#}",
+                                              common.name)
+                            )).expect("param reply receiver died");
+                        } else {
+                            send.send(CommandReply::Ok).expect("param reply receiver died");
+                        }
+                    }
+                }
+                _ => {}
             }
             if let Some(sender) = &common.output {
                 let _ = sender.send(item);
@@ -86,16 +111,13 @@ pub trait Output: Send {
 }
 
 /// Absorb all events without action.
-pub struct NullOutput;
+#[derive(HasParams)]
+pub struct NullOutput {}
 
 impl Output for NullOutput {
     fn from_config(_: toml::Table) -> UResult<Self> {
-        Ok(NullOutput)
+        Ok(NullOutput {})
     }
-
-    // fn update_config(&mut self, _: toml::Table) -> UResult<()> {
-    //     Ok(())
-    // }
 
     fn handle_start_of_run(&mut self, _run: &str) -> UResult<()> {
         Ok(())

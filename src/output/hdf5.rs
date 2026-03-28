@@ -4,6 +4,7 @@
 use anyhow::Context;
 use crate::event::{Event, EventData};
 use crate::error::UResult;
+use crate::params::HasParams;
 use super::Output;
 
 // TODO:
@@ -18,6 +19,7 @@ use super::Output;
 ///  "cue_index"
 ///  "pulse_height"
 ///
+#[derive(HasParams)]
 pub struct HDF5EventsOutput {
     file: Option<hdf5::File>,
     id_buffer: Vec<u32>,

@@ -12,6 +12,7 @@ use crate::config::{Config, OutputConfig};
 use crate::error::UResult;
 use crate::event::{Event, ModuleId};
 use crate::input::{ModuleCommon, ModuleState};
+use crate::params::ParamMap;
 use crate::shm::{ShmInterface, MAX_MODULES};
 use crate::util::wait_for_signal;
 
@@ -24,7 +25,9 @@ pub enum PipeItem {
     StartOfRun(String),
     EndOfRun,
     ModuleState(ModuleId, ModuleState),
-    SetMode(String, toml::Table, channel::Sender<CommandReply>),
+    SetMode(String, channel::Sender<CommandReply>),
+    GetParams(channel::Sender<(String, ParamMap)>),
+    SetParams(BTreeMap<String, ParamMap>, channel::Sender<CommandReply>),
     GetState(channel::Sender<CommandReply>),
     SaveHisto(String, usize, channel::Sender<CommandReply>),
 }

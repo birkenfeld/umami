@@ -7,6 +7,7 @@ mod error;
 mod event;
 mod input;
 mod output;
+mod params;
 mod pipeline;
 mod postproc;
 mod recipe;
@@ -23,6 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub use self::command::{Command, CommandReply};
 pub use self::config::load_config;
 pub use self::error::UResult;
+pub use self::params::ParamMap;
 pub use self::pipeline::run_pipeline;
 
 static DEBUG: AtomicBool = AtomicBool::new(false);

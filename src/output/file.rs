@@ -8,11 +8,16 @@ use anyhow::{anyhow, Context};
 use rkyv::{api::high::to_bytes_in, ser::writer::IoWriter};
 use crate::error::UResult;
 use crate::event::Event;
+use crate::params::HasParams;
 use super::Output;
 
+#[derive(HasParams)]
 pub struct FileOutput {
     // Configuration
+    #[param(help="Directory to write raw event files to")]
     dir: PathBuf,
+    #[param(help="Filename to write raw events, within 'dir', null to use run no",
+            datatype="null or string")]
     filename: Option<String>,
     // Runtime
     writer: Option<IoWriter<BufWriter<File>>>,

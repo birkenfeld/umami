@@ -7,9 +7,10 @@ use serde::Deserialize;
 use crate::config::RecipeConfig;
 use crate::error::UResult;
 use crate::event::{Event, EventData};
+use crate::params::HasParams;
 use super::Recipe;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, HasParams)]
 pub struct Psd {
     reso: usize,
 }
@@ -17,10 +18,6 @@ pub struct Psd {
 impl Recipe for Psd {
     fn from_config(cfg: toml::Table, _: &BTreeMap<String, RecipeConfig>) -> UResult<Self> {
         Ok(cfg.try_into().context("Configuring Canon recipe")?)
-    }
-
-    fn update_config(&mut self, _: toml::Table) -> UResult<()> {
-        Ok(())
     }
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {

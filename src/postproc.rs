@@ -14,7 +14,8 @@ use crate::recipe::Recipe;
 use crate::shm::ShmBox;
 
 pub struct PostProcessor {
-    recipes: BTreeMap<String, Box<dyn Recipe>>,
+    recipe_names: BTreeMap<String, usize>,
+    recipes: Vec<Box<dyn Recipe>>,
     input: Receiver<PipeItem>,
     output: Sender<PipeItem>,
     module_state: BTreeMap<ModuleId, ModuleState>,
@@ -23,12 +24,20 @@ pub struct PostProcessor {
 
 impl PostProcessor {
     pub fn new(
-        recipes: BTreeMap<String, Box<dyn Recipe>>,
+        recipe_map: BTreeMap<String, Box<dyn Recipe>>,
         input: Receiver<PipeItem>,
         output: Sender<PipeItem>,
         data: ShmBox,
     ) -> Self {
+        let mut recipe_names = BTreeMap::new();
+        let mut recipes = vec![];
+        for (name, recipe) in recipe_map {
+            recipe_names.insert(name, recipes.len());
+            recipes.push(recipe);
+        }
+
         Self {
+            recipe_names,
             recipes,
             input,
             output,
@@ -50,15 +59,14 @@ impl PostProcessor {
 
         // use the default recipe at first
         let mut cur_recipe = String::from("default");
-        let recipe_names = self.recipes.keys().cloned().collect::<Vec<_>>();
-        let mut recipe = self.recipes.get_mut("default").expect("default recipe").as_mut();
+        let mut recipe = *self.recipe_names.get("default").expect("default recipe");
 
         self.shm.set_initialized();
 
         while let Ok(mut item) = self.input.recv() {
             match item {
                 PipeItem::Events(evs) => {
-                    let evs = recipe.process(evs);
+                    let evs = self.recipes[recipe].process(evs);
                     ltrace!("Processed events: {:?}", evs);
                     for ev in &evs {
                         if let EventData::Neutron { x, y, t } = ev.data {
@@ -80,26 +88,50 @@ impl PostProcessor {
                     self.shm.clear_histo();
                 }
 
-                // Meta items, not sent on to output
+                // Meta items, sent on to outputs
+                PipeItem::GetParams(ref send) => {
+                    for (name, &index) in &self.recipe_names {
+                        match self.recipes[index].get_params() {
+                            Ok(params) => {
+                                send.send((name.into(), params)).expect("param reply receiver died");
+                            }
+                            Err(e) => {
+                                lprintln!(ERROR, "Error getting parameters for recipe {}: {e:#}", name);
+                            }
+                        }
+                    }
+                }
+                PipeItem::SetParams(ref mut param_map, ref send) => {
+                    for (name, &index) in &self.recipe_names {
+                        if let Some(params) = param_map.remove(name) {
+                            if let Err(e) = self.recipes[index].update_params(params) {
+                                lprintln!(ERROR, "Error setting parameters for recipe {}: {e:#}", name);
+                                send.send(CommandReply::new_error(
+                                    None, format!("Failed to set parameters for recipe {}: {e:#}", name)))
+                                    .expect("param reply receiver died");
+                            } else {
+                                send.send(CommandReply::Ok).expect("param reply receiver died");
+                            }
+                        }
+                    }
+                }
+
+                // Meta items, not sent on to outputs
                 PipeItem::ModuleState(module, state) => {
                     self.module_state.insert(module, state);
                     continue;
                 }
-                PipeItem::SetMode(name, params, send) => {
-                    lprintln!(INFO, "Using processing recipe {name} with {params:?}");
-                    if !recipe_names.contains(&name) {
+                PipeItem::SetMode(name, send) => {
+                    lprintln!(INFO, "Using processing recipe {name}");
+                    if !self.recipe_names.contains_key(&name) {
                         send.send(CommandReply::new_error(
                             None, format!("Recipe {} not found", name)))
                             .expect("param reply receiver died");
                         continue;
                     }
-                    recipe = self.recipes.get_mut(&name).expect("checked above").as_mut();
+                    recipe = *self.recipe_names.get(&name).expect("checked above");
                     cur_recipe = name;
-                    send.send(match recipe.update_config(params) {
-                        Ok(_) => CommandReply::Ok,
-                        Err(e) => CommandReply::new_error(
-                            None, format!("Failed to update recipe config: {e:#}")),
-                    }).expect("param reply receiver died");
+                    send.send(CommandReply::Ok).expect("param reply receiver died");
                     continue;
                 }
                 PipeItem::GetState(send) => {
@@ -111,7 +143,7 @@ impl PostProcessor {
                     map.insert("modules".into(), modules.into());
                     map.insert("mode".into(), cur_recipe.as_str().into());
                     // TODO mode parameters
-                    send.send(CommandReply::Data { module: None, value: map.into() })
+                    send.send(CommandReply::Data { value: map.into() })
                         .expect("param reply receiver died");
                     continue;
                 }

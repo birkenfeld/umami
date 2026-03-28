@@ -11,26 +11,23 @@ use anyhow::{anyhow, Context};
 use crate::config::RecipeConfig;
 use crate::error::UResult;
 use crate::event::Event;
+use crate::params::HasParams;
 
 /// A "recipe" is an instruction of how to "cook" raw events into events with logical
 /// meaning, assigning them to X/Y coordinates and signal meanings.
-pub trait Recipe : Send {
+pub trait Recipe : Send + HasParams {
     fn from_config(cfg: toml::Table, all: &BTreeMap<String, RecipeConfig>) -> UResult<Self>
         where Self: Sized;
-    fn update_config(&mut self, cfg: toml::Table) -> UResult<()>;
     fn process(&mut self, events: Vec<Event>) -> Vec<Event>;
 }
 
 
-pub struct NoRecipe;
+#[derive(HasParams)]
+pub struct NoRecipe {}
 
 impl Recipe for NoRecipe {
     fn from_config(_: toml::Table, _: &BTreeMap<String, RecipeConfig>) -> UResult<Self> {
-        Ok(NoRecipe)
-    }
-
-    fn update_config(&mut self, _: toml::Table) -> UResult<()> {
-        Ok(())
+        Ok(NoRecipe {})
     }
 
     fn process(&mut self, events: Vec<Event>) -> Vec<Event> {
@@ -47,7 +44,7 @@ pub fn from_config(map: &BTreeMap<String, RecipeConfig>, name: &str)
     macro_rules! recipes {
         ($($name:literal => $typ:ty,)*) => {
             match this.r#type.as_str() {
-                "none" => Ok(Box::new(NoRecipe)),
+                "none" => Ok(Box::new(NoRecipe {})),
                 $(
                     $name => Ok(Box::new(
                         <$typ>::from_config(this.config, map)

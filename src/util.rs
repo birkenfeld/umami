@@ -4,7 +4,6 @@
 use std::io;
 use std::net::ToSocketAddrs;
 use anyhow::anyhow;
-use serde::Deserialize;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 use crate::lprintln;
@@ -26,30 +25,4 @@ pub fn wait_for_signal() -> io::Result<()> {
     signals.wait();
     lprintln!(INFO, "Termination signal received, shutting down.");
     Ok(())
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(untagged)]
-pub enum FalseOr<T> {
-    #[default]
-    #[serde(deserialize_with = "deserialize_false")]
-    False,
-    Value(T),
-}
-
-impl<T> FalseOr<T> {
-    pub fn is_false(&self) -> bool {
-        matches!(self, FalseOr::False)
-    }
-}
-
-fn deserialize_false<'de, D>(deserializer: D) -> Result<(), D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    if bool::deserialize(deserializer)? {
-        Err(serde::de::Error::custom("Expected 'false'"))
-    } else {
-        Ok(())
-    }
 }

@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "umami"
 version = "0.1.0"
@@ -28,6 +30,7 @@ thiserror = "2.0.18"
 toml = "1.0.3"
 uds = "0.4.2"
 zerocopy = { version = "0.8.39", features = ["derive"] }
+umami-derive = { version = "0.1", path = "src/derive" }
 
 [features]
 trace = []

@@ -7,6 +7,7 @@ use serde::Deserialize;
 use crate::config::RecipeConfig;
 use crate::event::{Event, EventData};
 use crate::error::UResult;
+use crate::params::HasParams;
 use super::Recipe;
 
 const TUBE_RESOLUTION:  u32 = 256;
@@ -18,7 +19,7 @@ const PIXEL_PER_PACK:   u32 = 8192;
 
 const EXT_START: u32 = 1;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, HasParams)]
 #[serde(deny_unknown_fields)]
 pub struct KWSGERecipe {
     #[serde(default)]
@@ -34,10 +35,6 @@ impl Recipe for KWSGERecipe {
         let this = config.try_into()
             .context("parsing config for tof_std recipe")?;
         Ok(this)
-    }
-
-    fn update_config(&mut self, _: toml::Table) -> UResult<()> {
-        Ok(())
     }
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {

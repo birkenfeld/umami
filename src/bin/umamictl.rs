@@ -6,9 +6,8 @@ use std::os::unix::net;
 use std::time::Duration;
 use anyhow::{bail, Context};
 use clap::{Parser, Subcommand};
-use serde_json::value;
 use uds::UnixDatagramExt;
-use umami::{Command, CommandReply};
+use umami::{Command, CommandReply, ParamMap};
 
 #[derive(Parser)]
 #[clap(disable_help_subcommand = true)]
@@ -39,7 +38,11 @@ enum Cmd {
     /// Disable raw dump files.
     NoRaw,
     /// Set mode name and parameters for histogramming.
-    Mode { name: String, params: value::Map<String, value::Value> },
+    Mode { name: String },
+    /// Get parameters and their current values
+    GetParams,
+    /// Set parameter values
+    SetParams { params: ParamMap },
     /// Get the current state.
     State,
     /// Get Umami version.
@@ -66,8 +69,9 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
         Cmd::SaveHisto { path, max_nt } => Command::SaveHisto { path, max_nt },
         Cmd::Raw { path } => Command::SetRawDump { enable: true, path },
         Cmd::NoRaw => Command::SetRawDump { enable: false, path: String::new() },
-        Cmd::Mode { name, params } =>
-            Command::SetMode { name, params: toml::Table::try_from(params)? },
+        Cmd::Mode { name } => Command::SetMode { name },
+        Cmd::GetParams => Command::GetParams,
+        Cmd::SetParams { params } => Command::SetParams { params },
         Cmd::State => Command::GetState,
         Cmd::Ping => Command::Ping,
     };
@@ -90,12 +94,8 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
             let module_str = module.map_or("".to_string(), |m| format!("Module {}: ", m.0));
             bail!("{}{}", module_str, message);
         },
-        CommandReply::Data { module, value } => {
-            if let Some(module) = module {
-                println!("Module {}: {}", module.0, value);
-            } else {
-                println!("{}", value);
-            }
+        CommandReply::Data { value } => {
+            println!("{}", value);
         }
     }
 

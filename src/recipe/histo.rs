@@ -7,21 +7,29 @@ use serde::Deserialize;
 use crate::config::RecipeConfig;
 use crate::error::UResult;
 use crate::event::{Event, EventData, EventFlags, EventTime};
+use crate::params::HasParams;
 use crate::recipe::Recipe;
-use crate::util::FalseOr;
 
+#[derive(HasParams)]
 pub struct Tof {
     // Configuration
     /// Binning in spatial directions.
+    #[param(help="Binning in x direction")]
     bin_x: u32,
+    #[param(help="Binning in y direction")]
     bin_y: u32,
     /// Whether to use the gate signal to filter events. If false, gate signals
     /// are ignored.
+    #[param(help="Whether to use gate signal")]
     use_gate: bool,
     /// If set, this is the value of the AuxSignal that is used as T0. If None,
     /// T0 is given by Tzero events.
-    aux_mode: FalseOr<u32>,
+    #[param(help="Aux signal number to use as T0, or false to use explicit T0 events",
+            datatype="null or integer")]
+    aux_mode: Option<u32>,
     /// Contains end of time bins since T0.
+    #[param(help="Time binning end times (first bin always starts at offset 0)",
+            datatype="array of integers (nanoseconds)")]
     time_bins: Vec<EventTime>,
     // Run-time state
     gate_up: bool,
@@ -35,8 +43,8 @@ pub struct TofConfig {
     pub bin_x: Option<u32>,
     pub bin_y: Option<u32>,
     pub use_gate: Option<bool>,
-    pub aux_mode: Option<FalseOr<u32>>,
-    pub time_bins: Option<Vec<f64>>,
+    pub aux_mode: Option<u32>,
+    pub time_bins: Option<Vec<EventTime>>,
 }
 
 impl Recipe for Tof {
@@ -47,53 +55,25 @@ impl Recipe for Tof {
             bin_x: config.bin_x.unwrap_or(1),
             bin_y: config.bin_y.unwrap_or(1),
             use_gate: config.use_gate.unwrap_or(false),
-            aux_mode: config.aux_mode.unwrap_or(FalseOr::False),
-            time_bins: config.time_bins.unwrap_or_default()
-                                       .into_iter()
-                                       .map(EventTime::from_floating_sec)
-                                       .chain(Some(EventTime::MAX))
-                                       .collect(),
+            aux_mode: config.aux_mode,
+            time_bins: config.time_bins.unwrap_or_default(),
             gate_up: false,
             last_t0: EventTime::zero(),
             cur_bin: 0
         })
     }
 
-    fn update_config(&mut self, config: toml::Table) -> UResult<()> {
-        let config: TofConfig = config.try_into()
-            .context("parsing config for tof_std recipe")?;
-        if let Some(bin_x) = config.bin_x {
-            self.bin_x = bin_x;
-        }
-        if let Some(bin_y) = config.bin_y {
-            self.bin_y = bin_y;
-        }
-        if let Some(use_gate) = config.use_gate {
-            self.use_gate = use_gate;
-        }
-        if let Some(aux_mode) = config.aux_mode {
-            self.aux_mode = aux_mode;
-        }
-        if let Some(time_bins) = config.time_bins {
-            self.time_bins = time_bins.into_iter()
-                                      .map(EventTime::from_floating_sec)
-                                      .chain(Some(EventTime::MAX))
-                                      .collect();
-        }
-        Ok(())
-    }
-
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
         for event in &mut events {
             match event.data {
                 EventData::Tzero => {
-                    if self.aux_mode.is_false() {
+                    if self.aux_mode.is_none() {
                         self.last_t0 = event.time;
                         self.cur_bin = 0;
                     }
                 }
                 EventData::AuxSignal { number, up: true } => {
-                    if self.aux_mode == FalseOr::Value(number) {
+                    if self.aux_mode == Some(number) {
                         self.last_t0 = event.time;
                         self.cur_bin = 0;
                     }
@@ -131,14 +111,19 @@ impl Recipe for Tof {
 }
 
 
+#[derive(HasParams)]
 pub struct Std {
     // Configuration
     /// Binning in spatial directions.
+    #[param(help="Binning in x direction")]
     bin_x: u32,
+    #[param(help="Binning in y direction")]
     bin_y: u32,
     /// Whether to use the gate signal to filter events. If false, gate signals
     /// are ignored.
+    #[param(help="Whether to use gate signal")]
     use_gate: bool,
+
     // Run-time state
     gate_up: bool,
 }
@@ -161,21 +146,6 @@ impl Recipe for Std {
             use_gate: config.use_gate.unwrap_or(false),
             gate_up: false,
         })
-    }
-
-    fn update_config(&mut self, config: toml::Table) -> UResult<()> {
-        let config: StdConfig = config.try_into()
-            .context("parsing config for tof_std recipe")?;
-        if let Some(bin_x) = config.bin_x {
-            self.bin_x = bin_x;
-        }
-        if let Some(bin_y) = config.bin_y {
-            self.bin_y = bin_y;
-        }
-        if let Some(use_gate) = config.use_gate {
-            self.use_gate = use_gate;
-        }
-        Ok(())
     }
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {

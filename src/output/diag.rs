@@ -7,6 +7,7 @@ use itertools::Itertools;
 use crate::lprintln;
 use crate::error::UResult;
 use crate::event::{Event, EventData, EventTime};
+use crate::params::HasParams;
 use super::Output;
 
 #[bitflag_attr::bitflag(u16)]
@@ -34,6 +35,7 @@ pub enum EventMask {
 
 
 /// Output selected events, and count out-of-order events.
+#[derive(HasParams)]
 pub struct DiagOutput {
     // Configuration
     event_mask: EventMask,

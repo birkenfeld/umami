@@ -9,6 +9,7 @@ use rkyv::{Archive, Serialize, Deserialize};
 /// Should be absolute (relative to UNIX epoch) if possible.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[derive(Archive, Serialize, Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct EventTime(i64);
 
 impl Display for EventTime {

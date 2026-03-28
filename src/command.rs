@@ -12,6 +12,7 @@ use crate::{ldebug, lprintln};
 use crate::channel::Sender;
 use crate::error::UResult;
 use crate::event::ModuleId;
+use crate::params::ParamMap;
 use crate::pipeline::PipeItem;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -24,18 +25,18 @@ pub enum Command {
     Reset,
     GetState,
     SetRawDump { enable: bool, path: String },
-    SetMode { name: String, params: toml::Table },
-    Config { module: ModuleId, name: String, value: Value },
-    GetConfig { module: ModuleId, name: String },
-    SaveHisto { path: String, max_nt: usize},
+    SetMode { name: String },
+    GetParams,
+    SetParams { params: ParamMap },
+    SaveHisto { path: String, max_nt: usize },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum CommandReply {
     Ok,
+    Data { value: Value },
     Error { module: Option<ModuleId>, message: String },
-    Data { module: Option<ModuleId>, value: Value },
 }
 
 impl CommandReply {
@@ -119,7 +120,7 @@ impl CommandHandler {
         match cmd {
             Command::Ping => {
                 let version = format!("UMAMI {}", env!("CARGO_PKG_VERSION"));
-                CommandReply::Data { module: None, value: version.into() }
+                CommandReply::Data { value: version.into() }
             }
             Command::Clear => {
                 self.post_send.send(PipeItem::Clear)
@@ -131,8 +132,8 @@ impl CommandHandler {
                               .expect("postprocessor command receiver died");
                 rep_recv.recv().expect("postprocessor command sender died")
             }
-            Command::SetMode { name, params } => {
-                self.post_send.send(PipeItem::SetMode(name, params, rep_send))
+            Command::SetMode { name } => {
+                self.post_send.send(PipeItem::SetMode(name, rep_send))
                               .expect("postprocessor command receiver died");
                 rep_recv.recv().expect("postprocessor command sender died")
             }
@@ -154,21 +155,49 @@ impl CommandHandler {
                 }
                 CommandReply::Ok
             }
-            Command::Config { module, .. } | Command::GetConfig { module, .. } => {
-                if let Some(mod_send) = self.mod_send.get(&module) {
-                    mod_send.send((cmd, rep_send)).expect("module command receiver died");
-                    rep_recv.recv().expect("module command sender died")
-                } else {
-                    CommandReply::new_error(
-                        Some(module),
-                        format!("Module {} not found", module.0),
-                    )
-                }
-            }
             Command::SaveHisto { path, max_nt } => {
                 self.post_send.send(PipeItem::SaveHisto(path, max_nt, rep_send))
                               .expect("postprocessor command receiver died");
                 rep_recv.recv().expect("postprocessor command sender died")
+            }
+            Command::GetParams => {
+                // this command need a differently typed channel
+                let (rep_send, rep_recv) = crate::channel::unbounded();
+                self.post_send.send(PipeItem::GetParams(rep_send))
+                              .expect("postprocessor command receiver died");
+                // aggregate parameters from all HasParams into a single map
+                let mut map = ParamMap::new();
+                for (name, params) in rep_recv {
+                    for (param, info) in params {
+                        map.insert(format!("{name}.{param}"), info);
+                    }
+                }
+                CommandReply::Data { value: map.into() }
+            }
+            Command::SetParams { params } => {
+                // parse parameters from single map into multiple maps
+                let mut new_map = BTreeMap::new();
+                for (name, value) in params {
+                    if !name.contains('.') {
+                        return CommandReply::new_error(
+                            None, format!("Invalid param key {name}, needs to be of the form <module>.<param>"));
+                    }
+                    let (module, param) = name.split_once('.').unwrap();
+                    new_map.entry(module.to_string())
+                           .or_insert_with(ParamMap::new)
+                           .insert(param.into(), value);
+                }
+
+                self.post_send.send(PipeItem::SetParams(new_map, rep_send))
+                              .expect("postprocessor command receiver died");
+                // aggregate errors, if any
+                let errors = rep_recv.into_iter().filter(|r| r.is_error()).collect_vec();
+                if errors.is_empty() {
+                    CommandReply::Ok
+                } else {
+                    // TODO aggregate error messages into one reply
+                    errors.into_iter().next().unwrap()
+                }
             }
         }
     }
