@@ -42,8 +42,12 @@ pub enum CommandReply {
 }
 
 impl CommandReply {
-    pub fn new_error(module: Option<ModuleId>, message: String) -> Self {
-        CommandReply::Error { module, message }
+    pub fn new_error(message: String) -> Self {
+        CommandReply::Error { module: None, message }
+    }
+
+    pub fn new_mod_error(module: ModuleId, message: String) -> Self {
+        CommandReply::Error { module: Some(module), message }
     }
 
     pub fn is_error(&self) -> bool {
@@ -100,12 +104,12 @@ impl CommandHandler {
     fn message(&mut self, buf: &[u8]) -> CommandReply {
         match str::from_utf8(buf) {
             Err(_) => {
-                CommandReply::new_error(None, "Invalid UTF-8 in telegram".into())
+                CommandReply::new_error("Invalid UTF-8 in telegram".into())
             }
             Ok(s) => match serde_json::from_str::<Command>(s) {
                 Err(e) => {
                     lprintln!(ERROR, "Received invalid command {s:?}: {e:#}");
-                    CommandReply::new_error(None, format!("Invalid JSON or invalid command: {e:#}"))
+                    CommandReply::new_error(format!("Invalid JSON or invalid command: {e:#}"))
                 }
                 Ok(cmd) => {
                     ldebug!("Received command: {cmd:?}");
@@ -187,8 +191,8 @@ impl CommandHandler {
                 for (name, value) in params {
                     if !name.contains('.') {
                         return CommandReply::new_error(
-                            None, format!("Invalid param key {name}, needs to be of the \
-                                           form <module>.<param>"));
+                            format!("Invalid param key {name}, needs to be of the \
+                                     form <module>.<param>"));
                     }
                     let (module, param) = name.split_once('.').unwrap();
                     new_map.entry(ModuleId::new(module.into()))

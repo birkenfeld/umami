@@ -95,10 +95,10 @@ impl PostProcessor {
 
                 // Meta items, sent on to outputs
                 PipeItem::GetParams(ref send) => {
-                    for (name, &index) in &self.recipe_names {
+                    for (&name, &index) in &self.recipe_names {
                         match self.recipes[index].get_params() {
                             Ok(params) => {
-                                send.send((*name, params)).expect("param reply receiver died");
+                                send.send((name, params)).expect("param reply receiver died");
                             }
                             Err(e) => {
                                 lprintln!(ERROR, "Error getting parameters for recipe {}: {e:#}", name);
@@ -107,13 +107,13 @@ impl PostProcessor {
                     }
                 }
                 PipeItem::SetParams(ref mut param_map, ref send) => {
-                    for (name, &index) in &self.recipe_names {
-                        if let Some(params) = param_map.remove(name) {
-                            if let Err(e) = self.recipes[index].update_params(*name, params) {
+                    for (&name, &index) in &self.recipe_names {
+                        if let Some(params) = param_map.remove(&name) {
+                            if let Err(e) = self.recipes[index].update_params(name, params) {
                                 lprintln!(ERROR, "Error setting parameters for recipe {}: {e:#}", name);
-                                send.send(CommandReply::new_error(
-                                    None, format!("Failed to set parameters for recipe {}: {e:#}", name)))
-                                    .expect("param reply receiver died");
+                                send.send(CommandReply::new_mod_error(
+                                    name, format!("Failed to set parameters: {e:#}")
+                                )).expect("param reply receiver died");
                             } else {
                                 send.send(CommandReply::Ok).expect("param reply receiver died");
                             }
@@ -136,7 +136,7 @@ impl PostProcessor {
                     lprintln!(INFO, "Using processing recipe {name}");
                     if !self.recipe_names.contains_key(&name) {
                         send.send(CommandReply::new_error(
-                            None, format!("Recipe {} not found", name)))
+                            format!("Recipe {} not found", name)))
                             .expect("param reply receiver died");
                         continue;
                     }
@@ -162,7 +162,7 @@ impl PostProcessor {
                     send.send(match self.shm.save_to_file(&filename, max_nt) {
                         Ok(_) => CommandReply::Ok,
                         Err(e) => CommandReply::new_error(
-                            None, format!("Failed to save histogram: {e:#}")
+                            format!("Failed to save histogram: {e:#}")
                         )
                     }).expect("param reply receiver died");
                     continue;

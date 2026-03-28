@@ -81,9 +81,9 @@ pub trait Output: Send + HasParams {
                         if let Err(e) = self.update_params(common.name, params) {
                             lprintln!(ERROR, "Error setting parameters for output {}: {e:#}",
                                       common.name);
-                            send.send(CommandReply::new_error(
-                                None, format!("Failed to set parameters for output {}: {e:#}",
-                                              common.name)
+                            send.send(CommandReply::new_mod_error(
+                                common.name,
+                                format!("Failed to set parameters: {e:#}")
                             )).expect("param reply receiver died");
                         } else {
                             send.send(CommandReply::Ok).expect("param reply receiver died");

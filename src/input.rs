@@ -103,14 +103,15 @@ pub trait Input: Send {
         Ok(())
     }
 
-    fn main_loop_command(&mut self, cmd: Command, rep: Sender<CommandReply>, common: &mut InputCommon) {
-        let mid = common.name;
+    fn main_loop_command(&mut self, cmd: Command, rep: Sender<CommandReply>,
+                         common: &mut InputCommon) {
+        let name = common.name;
         let reply = match cmd {
             Command::Start { run_id } => match &common.state {
                 InputState::Error(e) => {
-                    CommandReply::new_error(
-                        Some(mid),
-                        format!("Cannot start input in error state. Last error: {e:#}")
+                    CommandReply::new_mod_error(
+                        name,
+                        format!("Cannot start input in error state. Last error: {e:#}"),
                     )
                 }
                 _ => {
@@ -118,7 +119,7 @@ pub trait Input: Send {
                         if let Err(e) = self.stop() {
                             let msg = format!("Failed to stop input for restart: {e:#}");
                             common.set_state(InputState::Error(msg.clone()));
-                            rep.send(CommandReply::new_error(Some(mid), msg))
+                            rep.send(CommandReply::new_mod_error(name, msg))
                                .expect("command channel closed");
                             return;
                         } else {
@@ -128,7 +129,7 @@ pub trait Input: Send {
                     if let Err(e) = self.start(run_id) {
                         let msg = format!("Failed to start input: {e:#}");
                         common.set_state(InputState::Error(msg.clone()));
-                        CommandReply::new_error(Some(mid), msg)
+                        CommandReply::new_mod_error(name, msg)
                     } else {
                         common.set_state(InputState::Running);
                         CommandReply::Ok
@@ -137,9 +138,9 @@ pub trait Input: Send {
             }
             Command::Stop => match &common.state {
                 InputState::Error(e) => {
-                    CommandReply::new_error(
-                        Some(mid),
-                        format!("Cannot stop input in error state. Last error: {e:#}")
+                    CommandReply::new_mod_error(
+                        name,
+                        format!("Cannot stop input in error state. Last error: {e:#}"),
                     )
                 }
                 InputState::Idle => {
@@ -153,7 +154,7 @@ pub trait Input: Send {
                     if let Err(e) = self.stop() {
                         let msg = format!("Failed to stop input: {e:#}");
                         common.set_state(InputState::Error(msg.clone()));
-                        CommandReply::new_error(Some(mid), msg)
+                        CommandReply::new_mod_error(name, msg)
                     } else {
                         common.set_state(InputState::Idle);
                         CommandReply::Ok
@@ -165,7 +166,7 @@ pub trait Input: Send {
                     if let Err(e) = self.reset() {
                         let msg = format!("Failed to reset input: {e:#}");
                         common.set_state(InputState::Error(msg.clone()));
-                        CommandReply::new_error(Some(mid), msg)
+                        CommandReply::new_mod_error(name, msg)
                     } else {
                         lprintln!(INFO, "Reset {}", self.description());
                         common.set_state(InputState::Idle);
@@ -176,8 +177,10 @@ pub trait Input: Send {
             }
             _ => match self.handle(cmd) {
                 Ok(reply) => reply,
-                Err(e) => CommandReply::new_error(Some(mid),
-                                                  format!("Failed to handle command: {e:#}")),
+                Err(e) => CommandReply::new_mod_error(
+                    name,
+                    format!("Failed to handle command: {e:#}"),
+                ),
             }
         };
         rep.send(reply).expect("command channel closed");

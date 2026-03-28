@@ -130,7 +130,10 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     let mut post_recipes = BTreeMap::new();
     for name in config.process_modes.recipes.keys() {
         let recipe_name = ModuleId::new(name.into());
-        post_recipes.insert(recipe_name, recipe::from_config(&config.process_modes.recipes, &recipe_name)?);
+        post_recipes.insert(
+            recipe_name,
+            recipe::from_config(&config.process_modes.recipes, &recipe_name)?,
+        );
     }
     let default_name = ModuleId::new(config.process_modes.default);
     if !post_recipes.contains_key(&default_name) {
