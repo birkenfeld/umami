@@ -10,7 +10,7 @@ use crate::command::{Command, CommandReply};
 use crate::config::{GEConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::input::{ReplayFile, DumpHandler};
-use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
+use crate::event::{ModuleId, ChannelId, Event, EventTime, EventFlags, EventData};
 use super::{Source, Input, InputCommon};
 
 const PACKET_NORMAL:     u32 = 0x1000;
@@ -121,7 +121,7 @@ impl<S: Source> Input for GeInput<S> {
                     header_time,
                     EventTime::zero(),
                     self.module,
-                    InputId(0),
+                    ChannelId(0),
                     EventFlags::None,
                     EventData::Heartbeat,
                 )]);
@@ -169,7 +169,7 @@ impl<S: Source> Input for GeInput<S> {
                 read_time(&buffer[offset..]),
                 EventTime::zero(),
                 self.module,
-                InputId(detid),
+                ChannelId(detid),
                 flags,
                 data,
             );

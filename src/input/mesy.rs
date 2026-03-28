@@ -11,7 +11,7 @@ use crate::lprintln;
 use crate::command::{Command, CommandReply};
 use crate::config::{MesyConfig, SourceConfig};
 use crate::error::{UError, UResult};
-use crate::event::{ModuleId, Event, EventFlags, EventData, EventTime, InputId};
+use crate::event::{ModuleId, Event, EventFlags, EventData, EventTime, ChannelId};
 use crate::input::{ReplayFile, DumpHandler};
 use super::{Source, Input, InputCommon, UdpReader};
 
@@ -162,7 +162,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
                 events.push(Event::new(EventTime::from_ticks(TIME_BASE, pkt_ts as i64),
                                        EventTime::zero(),
                                        self.module,
-                                       InputId(0),
+                                       ChannelId(0),
                                        EventFlags::None,
                                        EventData::Heartbeat));
                 self.no_event_buffers = 0;
@@ -181,7 +181,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
                     EventTime::from_ticks(TIME_BASE, ts as i64),
                     EventTime::zero(),
                     self.module,
-                    InputId(data_id as u32),
+                    ChannelId(data_id as u32),
                     EventFlags::None,
                     EventData::RawEdge { up: true }
                 )
@@ -199,7 +199,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
                     EventTime::from_ticks(TIME_BASE, ts as i64),
                     EventTime::zero(),
                     self.module,
-                    InputId(xpos as u32),
+                    ChannelId(xpos as u32),
                     EventFlags::None,
                     EventData::RawDigital { value1: ypos as u32, value2: ampl as u32, value3: 0 }
                 )

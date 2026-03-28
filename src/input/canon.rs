@@ -11,7 +11,7 @@ use crate::lprintln;
 use crate::command::{Command, CommandReply};
 use crate::config::{CanonConfig, SourceConfig};
 use crate::error::{UError, UResult};
-use crate::event::{ModuleId, InputId, Event, EventTime, EventFlags, EventData};
+use crate::event::{ModuleId, ChannelId, Event, EventTime, EventFlags, EventData};
 use crate::input::{ReplayFile, DumpHandler};
 use super::{Source, Input, InputCommon};
 
@@ -111,7 +111,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
                         self.time_ofs,
                         EventTime::zero(),
                         self.module,
-                        InputId(0),
+                        ChannelId(0),
                         EventFlags::HasRelTime,
                         EventData::Tzero,
                     )
@@ -126,7 +126,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
                         self.time_ofs,
                         EventTime::zero(),
                         self.module,
-                        InputId(0),
+                        ChannelId(0),
                         EventFlags::HasRelTime,
                         EventData::Tzero,
                     )
@@ -137,7 +137,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
                         self.time_ofs + t,
                         t,
                         self.module,
-                        InputId(cev.p() as u32),
+                        ChannelId(cev.p() as u32),
                         EventFlags::HasRelTime,
                         EventData::RawDigital { value1: cev.pl() as u32,
                                                 value2: cev.pr() as u32,
@@ -150,7 +150,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
                         self.time_ofs + t,
                         t,
                         self.module,
-                        InputId(cev.p14() as u32),
+                        ChannelId(cev.p14() as u32),
                         EventFlags::HasRelTime,
                         EventData::RawDigital { value1: cev.pl14() as u32,
                                                 value2: cev.pr14() as u32,

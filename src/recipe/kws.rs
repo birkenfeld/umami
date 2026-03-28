@@ -43,7 +43,7 @@ impl Recipe for KWSGERecipe {
                 EventData::RawNeutron => {
                     let mut x;
                     let mut y;
-                    let mut id = event.input.0;
+                    let mut id = event.channel.0;
                     let n8p = id / PIXEL_PER_PACK;
                     id %= PIXEL_PER_PACK;
 
@@ -77,7 +77,7 @@ impl Recipe for KWSGERecipe {
                     event.data = EventData::Neutron { x, y, t: 0 };
                 }
                 EventData::RawEdge { up } => {
-                    match event.input.0 {
+                    match event.channel.0 {
                         0 =>
                             event.data = EventData::Gate { up: up ^ self.invert_ts },
                         1 if up ^ self.invert_ts =>

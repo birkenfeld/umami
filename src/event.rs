@@ -71,10 +71,11 @@ impl std::ops::Sub for EventTime {
 #[serde(transparent)]
 pub struct ModuleId(pub u16);
 
+/// Input channel of the event - a tube or pixel ID for neutrons, or a signal
+/// for edges or other kinds of events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
-// TODO: rename to pixel id?
-pub struct InputId(pub u32);
+pub struct ChannelId(pub u32);
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -149,14 +150,14 @@ pub struct Event {
     pub rel_time: EventTime,  // zeroed until determined
     pub flags: EventFlags,
     pub module: ModuleId,
-    pub input: InputId,
+    pub channel: ChannelId,
     pub data: EventData,
 }
 
 impl Event {
-    pub fn new(time: EventTime, rel_time: EventTime, module: ModuleId, input: InputId,
+    pub fn new(time: EventTime, rel_time: EventTime, module: ModuleId, channel: ChannelId,
                flags: EventFlags, data: EventData) -> Self {
-        Self { time, rel_time, module, input, flags, data }
+        Self { time, rel_time, module, channel, flags, data }
     }
 
     pub fn dump(&self) -> DumpEvent<'_> {
@@ -166,10 +167,10 @@ impl Event {
 
 impl Debug for Event {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "Event(time={:.9}, rel_time={:.9}, flags={:#x}, module={}, input={}, data={:?})",
+        write!(f, "Event(time={:.9}, rel_time={:.9}, flags={:#x}, module={}, channel={}, data={:?})",
                self.time.0 as f64 / 1_000_000_000.0,
                self.rel_time.0 as f64 / 1_000_000_000.0,
-               self.flags.0, self.module.0, self.input.0, self.data)
+               self.flags.0, self.module.0, self.channel.0, self.data)
     }
 }
 
@@ -193,7 +194,7 @@ impl Display for DumpEvent<'_> {
         write!(f, "{:.9} / {:.9} [{}] M{:2} I{:3} ",
                ev.time.0 as f64 / 1_000_000_000.0,
                ev.rel_time.0 as f64 / 1_000_000_000.0,
-               ev.flags, ev.module.0, ev.input.0)?;
+               ev.flags, ev.module.0, ev.channel.0)?;
         match ev.data {
             EventData::RawNeutron =>
                 write!(f, "RawNeutron"),
