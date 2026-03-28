@@ -149,15 +149,14 @@ pub struct Event {
     pub time: EventTime,
     pub rel_time: EventTime,  // zeroed until determined
     pub flags: EventFlags,
-    pub module: ModuleId,
     pub channel: ChannelId,
     pub data: EventData,
 }
 
 impl Event {
-    pub fn new(time: EventTime, rel_time: EventTime, module: ModuleId, channel: ChannelId,
+    pub fn new(time: EventTime, rel_time: EventTime, channel: ChannelId,
                flags: EventFlags, data: EventData) -> Self {
-        Self { time, rel_time, module, channel, flags, data }
+        Self { time, rel_time, channel, flags, data }
     }
 
     pub fn dump(&self) -> DumpEvent<'_> {
@@ -167,10 +166,10 @@ impl Event {
 
 impl Debug for Event {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "Event(time={:.9}, rel_time={:.9}, flags={:#x}, module={}, channel={}, data={:?})",
+        write!(f, "Event(time={:.9}, rel_time={:.9}, flags={:#x}, channel={}, data={:?})",
                self.time.0 as f64 / 1_000_000_000.0,
                self.rel_time.0 as f64 / 1_000_000_000.0,
-               self.flags.0, self.module.0, self.channel.0, self.data)
+               self.flags.0, self.channel.0, self.data)
     }
 }
 
@@ -191,10 +190,10 @@ pub struct DumpEvent<'a>(&'a Event);
 impl Display for DumpEvent<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         let ev = self.0;
-        write!(f, "{:.9} / {:.9} [{}] M{:2} I{:3} ",
+        write!(f, "{:.9} / {:.9} [{}] C{:3} ",
                ev.time.0 as f64 / 1_000_000_000.0,
                ev.rel_time.0 as f64 / 1_000_000_000.0,
-               ev.flags, ev.module.0, ev.channel.0)?;
+               ev.flags, ev.channel.0)?;
         match ev.data {
             EventData::RawNeutron =>
                 write!(f, "RawNeutron"),

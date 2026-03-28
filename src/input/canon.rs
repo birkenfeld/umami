@@ -20,6 +20,7 @@ pub struct CanonInput<S> {
     module: ModuleId,
     dump: DumpHandler,
     is_gate: bool,
+    channel_ofs: u32,
     time_ofs: EventTime,
     buffer: Vec<u8>,
 }
@@ -47,6 +48,7 @@ impl<S: CanonSource> CanonInput<S> {
             source,
             module: common.module,
             dump: Default::default(),
+            channel_ofs: config.channel_offset,
             is_gate: config.gatenet,
             time_ofs: EventTime::zero(),
             buffer: vec![0; EVENT_SIZE * MAX_EVENTS],
@@ -110,8 +112,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
                     Event::new(
                         self.time_ofs,
                         EventTime::zero(),
-                        self.module,
-                        ChannelId(0),
+                        ChannelId(self.channel_ofs),
                         EventFlags::HasRelTime,
                         EventData::Tzero,
                     )
@@ -125,8 +126,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
                     Event::new(
                         self.time_ofs,
                         EventTime::zero(),
-                        self.module,
-                        ChannelId(0),
+                        ChannelId(self.channel_ofs),
                         EventFlags::HasRelTime,
                         EventData::Tzero,
                     )
@@ -136,8 +136,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
                     Event::new(
                         self.time_ofs + t,
                         t,
-                        self.module,
-                        ChannelId(cev.p() as u32),
+                        ChannelId(self.channel_ofs + cev.p() as u32),
                         EventFlags::HasRelTime,
                         EventData::RawDigital { value1: cev.pl() as u32,
                                                 value2: cev.pr() as u32,
@@ -149,8 +148,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
                     Event::new(
                         self.time_ofs + t,
                         t,
-                        self.module,
-                        ChannelId(cev.p14() as u32),
+                        ChannelId(self.channel_ofs + cev.p14() as u32),
                         EventFlags::HasRelTime,
                         EventData::RawDigital { value1: cev.pl14() as u32,
                                                 value2: cev.pr14() as u32,

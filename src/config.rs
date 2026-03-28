@@ -24,6 +24,7 @@ pub struct GEConfig {
 #[derive(Debug, Deserialize)]
 pub struct CanonConfig {
     pub source: SourceConfig,
+    pub channel_offset: u32,
     #[serde(default)]
     pub gatenet: bool,
 }

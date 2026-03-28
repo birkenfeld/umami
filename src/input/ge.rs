@@ -120,7 +120,6 @@ impl<S: Source> Input for GeInput<S> {
                 return Ok(vec![Event::new(
                     header_time,
                     EventTime::zero(),
-                    self.module,
                     ChannelId(0),
                     EventFlags::None,
                     EventData::Heartbeat,
@@ -168,7 +167,6 @@ impl<S: Source> Input for GeInput<S> {
             let event = Event::new(
                 read_time(&buffer[offset..]),
                 EventTime::zero(),
-                self.module,
                 ChannelId(detid),
                 flags,
                 data,

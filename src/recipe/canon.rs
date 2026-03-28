@@ -25,7 +25,7 @@ impl Recipe for Psd {
             match event.data {
                 EventData::RawDigital { value1: pl, value2: pr, .. } => {
                     // 8 tubes per module
-                    let x = (event.module.0 as u32) << 3 | event.channel.0;
+                    let x = event.channel.0;
                     // TODO: calibration
                     let y = ((pr as f64 / (pr + pl) as f64) * self.reso as f64) as u32;
                     event.data = EventData::Neutron { x, y, t: 0 };

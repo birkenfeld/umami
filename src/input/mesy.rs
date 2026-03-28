@@ -161,7 +161,6 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
             if self.no_event_buffers == 10 {
                 events.push(Event::new(EventTime::from_ticks(TIME_BASE, pkt_ts as i64),
                                        EventTime::zero(),
-                                       self.module,
                                        ChannelId(0),
                                        EventFlags::None,
                                        EventData::Heartbeat));
@@ -180,7 +179,6 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
                 Event::new(
                     EventTime::from_ticks(TIME_BASE, ts as i64),
                     EventTime::zero(),
-                    self.module,
                     ChannelId(data_id as u32),
                     EventFlags::None,
                     EventData::RawEdge { up: true }
@@ -198,7 +196,6 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
                 Event::new(
                     EventTime::from_ticks(TIME_BASE, ts as i64),
                     EventTime::zero(),
-                    self.module,
                     ChannelId(xpos as u32),
                     EventFlags::None,
                     EventData::RawDigital { value1: ypos as u32, value2: ampl as u32, value3: 0 }
