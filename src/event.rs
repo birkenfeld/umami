@@ -65,6 +65,7 @@ impl std::ops::Sub for EventTime {
 }
 
 /// Numeric order of the module
+// TODO: replace by amplitude?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[derive(Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
@@ -72,6 +73,7 @@ pub struct ModuleId(pub u16);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
+// TODO: rename to pixel id?
 pub struct InputId(pub u32);
 
 #[repr(u8)]

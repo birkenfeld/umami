@@ -103,7 +103,7 @@ pub trait Output: Send + HasParams {
     {
         lprintln!(INFO, "Initialized output {}", common.name);
         std::thread::Builder::new()
-            .name(format!("Output {}", common.name))
+            .name(format!("O: {}", common.name))
             .spawn(move || self.main_loop(common))
             .context("Spawning output thread")?;
         Ok(())

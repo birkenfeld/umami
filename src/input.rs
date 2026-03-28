@@ -97,7 +97,7 @@ pub trait Module: Send {
         let desc = self.description();
         lprintln!(INFO, "Initialized {desc}");
         thread::Builder::new()
-            .name(format!("Module {}", self.description()))
+            .name(format!("M: {}", self.description()))
             .spawn(move || self.main_loop(common))
             .context(format!("Spawning module thread for {desc}"))?;
         Ok(())
