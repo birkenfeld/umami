@@ -9,7 +9,7 @@ use rkyv::{api::high::to_bytes_in, ser::writer::IoWriter};
 use crate::lprintln;
 use crate::channel::{Receiver, Sender};
 use crate::config::OutputConfig;
-use crate::error::{UError, UResult};
+use crate::error::UResult;
 use crate::event::{Event, EventData, EventTime};
 use crate::pipeline::PipeItem;
 
@@ -248,59 +248,84 @@ impl Output for DiagOutput {
 ///
 pub struct HDF5EventsOutput {
     file: Option<hdf5::File>,
+    id_buffer: Vec<u32>,
+    offset_buffer: Vec<f64>,
 }
 
 impl HDF5EventsOutput {
+    const BUFFER_SIZE: usize = 8192;
+
     fn map_to_index(x: u32, y: u32) -> u32 {
-        x + 100 * y
+        1024 * y + x
+    }
+
+    fn write_chunk(&mut self) -> UResult<()> {
+        if let Some(file) = &self.file {
+            let event_id = file.dataset("event_id")
+                               .context("Getting event id dataset")?;
+            let event_offset = file.dataset("event_time_offset")
+                                   .context("Getting event time offset dataset")?;
+            let cur_size = event_id.size();
+            let new_size = cur_size + self.id_buffer.len();
+            event_id.resize(new_size).context("Resizing event id dataset")?;
+            event_id.write_slice(&self.id_buffer, cur_size..new_size)
+                    .context("Writing event id dataset")?;
+            event_offset.resize(new_size).context("Resizing event time offset dataset")?;
+            event_offset.write_slice(&self.offset_buffer, cur_size..new_size)
+                        .context("Writing event time offset dataset")?;
+        }
+        self.id_buffer.clear();
+        self.offset_buffer.clear();
+        Ok(())
     }
 }
 
 impl Output for HDF5EventsOutput {
     fn from_config(_config: toml::Table) -> UResult<Self> where Self: Sized {
-        Ok(HDF5EventsOutput { file: None })
-    }
-
-    fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
-        if let Some(file) = &self.file {
-            let event_id = file.dataset("event_id").map_err(|e| UError::Other(e.into()))?;
-            let event_offset = file.dataset("event_time_offset").map_err(|e| UError::Other(e.into()))?;
-            let mut ids = Vec::with_capacity(events.len());
-            let mut offsets: Vec<f64> = Vec::with_capacity(events.len());
-            for event in events {
-                match event.data {
-                    // TODO: zero timestamps handling (chopper?)
-                    EventData::Neutron { x, y, t } => {
-                        ids.push(HDF5EventsOutput::map_to_index(x, y));
-                        // TODO: What does t mean vs event.time?
-                        offsets.push(t.into());
-                    },
-                    _ => (),
-                }
-            }
-            event_id.resize(event_id.size() + ids.len()).map_err(|e| UError::Other(e.into()))?;
-            event_id.write_slice(&ids, 0..ids.len()).map_err(|e| UError::Other(e.into()))?;
-            event_offset.resize(event_offset.size() + offsets.len()).map_err(|e| UError::Other(e.into()))?;
-            event_offset.write_slice(&offsets, 0..offsets.len()).map_err(|e| UError::Other(e.into()))?;
-        }
-        Ok(())
+        Ok(HDF5EventsOutput {
+            file: None,
+            id_buffer: Vec::with_capacity(2 * Self::BUFFER_SIZE),
+            offset_buffer: Vec::with_capacity(2 * Self::BUFFER_SIZE),
+        })
     }
 
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
-        self.file = Some(hdf5::File::create(format!("{}.h5", run)).map_err(|e| UError::Other(e.into()))?);
-        let file = self.file.as_ref().unwrap();
-        // events
-        let builder = file.new_dataset::<f64>();
-        let _ = builder.shape(hdf5::Extent::resizable(0)).create("event_time_offset").map_err(|e| UError::Other(e.into()))?;
-        let builder = file.new_dataset::<u32>();
-        let _ = builder.shape(hdf5::Extent::resizable(0)).create("event_id").map_err(|e| UError::Other(e.into()))?;
+        let file = hdf5::File::create(format!("{}.h5", run))
+            .with_context(|| format!("Creating HDF5 output file at {}.h5", run))?;
+        let _ = file
+            .new_dataset::<f64>()
+            .shape(hdf5::Extent::resizable(0))
+            .create("event_time_offset")
+            .context("Creating time offset dataset")?;
+        let _ = file
+            .new_dataset::<u32>()
+            .shape(hdf5::Extent::resizable(0))
+            .create("event_id")
+            .context("Creating event id dataset")?;
+        self.file = Some(file);
         Ok(())
     }
 
     fn handle_end_of_run(&mut self) -> UResult<()> {
-        // let file = self.file.as_ref();
-        // drop(file);
+        self.write_chunk()?;
         self.file = None;
+        Ok(())
+    }
+
+    fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
+        for event in events {
+            match event.data {
+                // TODO: zero timestamps handling (chopper?)
+                EventData::Neutron { x, y, .. } => {
+                    self.id_buffer.push(HDF5EventsOutput::map_to_index(x, y));
+                    self.offset_buffer.push(event.rel_time.into());
+                },
+                _ => (),
+            }
+        }
+        if self.id_buffer.len() >= Self::BUFFER_SIZE {
+            self.write_chunk()?;
+        }
         Ok(())
     }
 }

@@ -41,6 +41,12 @@ impl EventTime {
     }
 }
 
+impl From<EventTime> for f64 {
+    fn from(value: EventTime) -> Self {
+        value.0 as f64 / 1_000_000_000.0
+    }
+}
+
 impl std::ops::Add for EventTime {
     type Output = Self;
 
