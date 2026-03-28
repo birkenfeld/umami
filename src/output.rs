@@ -78,7 +78,7 @@ pub trait Output: Send + HasParams {
                 }
                 PipeItem::SetParams(param_map, send) => {
                     if let Some(params) = param_map.remove(&common.name) {
-                        if let Err(e) = self.update_params(params) {
+                        if let Err(e) = self.update_params(&common.name, params) {
                             lprintln!(ERROR, "Error setting parameters for output {}: {e:#}",
                                       common.name);
                             send.send(CommandReply::new_error(

@@ -108,7 +108,7 @@ impl PostProcessor {
                 PipeItem::SetParams(ref mut param_map, ref send) => {
                     for (name, &index) in &self.recipe_names {
                         if let Some(params) = param_map.remove(name) {
-                            if let Err(e) = self.recipes[index].update_params(params) {
+                            if let Err(e) = self.recipes[index].update_params(name, params) {
                                 lprintln!(ERROR, "Error setting parameters for recipe {}: {e:#}", name);
                                 send.send(CommandReply::new_error(
                                     None, format!("Failed to set parameters for recipe {}: {e:#}", name)))
