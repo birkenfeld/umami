@@ -44,31 +44,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     let (postproc_send, postproc_recv) = channel::bounded(EV_CHANNEL_SIZE);
 
     // check uniqueness of names for modules (input, output, recipes)
-    let mut all_names = BTreeMap::new();
-    for input_name in config.inputs.keys() {
-        if let Some(prev) = all_names.insert(input_name, "input") {
-            Err(anyhow!("Duplicate module name: input {input_name}, \
-                         already used as {prev}"))?;
-        }
-    }
-    for output_name in config.outputs.as_ref().map(|k| k.keys()).into_iter().flatten() {
-        if let Some(prev) = all_names.insert(output_name, "output") {
-            Err(anyhow!("Duplicate module name: output {output_name}, \
-                         already used as {prev}"))?;
-        }
-    }
-    for recipe_name in config.process_modes.recipes.keys() {
-        if let Some(prev) = all_names.insert(recipe_name, "process mode") {
-            Err(anyhow!("Duplicate module name: mode {recipe_name}, \
-                         already used as {prev}"))?;
-        }
-    }
-    for recipe_name in config.input_recipes.keys() {
-        if let Some(prev) = all_names.insert(recipe_name, "input recipe") {
-            Err(anyhow!("Duplicate module name: input recipe {recipe_name}, \
-                         already used as {prev}"))?;
-        }
-    }
+    check_module_names(&config)?;
 
     // create inputs
     let mut init_errors = false;
@@ -151,6 +127,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
         Err(anyhow!("Some outputs failed to initialize"))?;
     }
 
+    // create the postprocessor
     let mut post_recipes = BTreeMap::new();
     for name in config.process_modes.recipes.keys() {
         let recipe_name = ModuleId::new(name.into());
@@ -190,5 +167,34 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
 
     wait_for_signal().context("Setting signal handler")?;
 
+    Ok(())
+}
+
+fn check_module_names(config: &Config) -> UResult<()> {
+    let mut all_names = BTreeMap::new();
+    for input_name in config.inputs.keys() {
+        if let Some(prev) = all_names.insert(input_name, "input") {
+            Err(anyhow!("Duplicate module name: input {input_name}, \
+                         already used as {prev}"))?;
+        }
+    }
+    for output_name in config.outputs.as_ref().map(|k| k.keys()).into_iter().flatten() {
+        if let Some(prev) = all_names.insert(output_name, "output") {
+            Err(anyhow!("Duplicate module name: output {output_name}, \
+                         already used as {prev}"))?;
+        }
+    }
+    for recipe_name in config.process_modes.recipes.keys() {
+        if let Some(prev) = all_names.insert(recipe_name, "process mode") {
+            Err(anyhow!("Duplicate module name: mode {recipe_name}, \
+                         already used as {prev}"))?;
+        }
+    }
+    for recipe_name in config.input_recipes.keys() {
+        if let Some(prev) = all_names.insert(recipe_name, "input recipe") {
+            Err(anyhow!("Duplicate module name: input recipe {recipe_name}, \
+                         already used as {prev}"))?;
+        }
+    }
     Ok(())
 }
