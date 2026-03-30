@@ -1,7 +1,9 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-use anyhow::Context;
+use std::path::PathBuf;
+
+use anyhow::{anyhow, Context};
 use crate::event::{Event, EventData};
 use crate::error::UResult;
 use crate::params::HasParams;
@@ -21,6 +23,10 @@ use super::{Output, OutputCommon};
 ///
 #[derive(HasParams)]
 pub struct HDF5EventsOutput {
+    #[param(help="Directory to write hdf5 event files to.")]
+    dir: PathBuf,
+    #[param(help="Name of file to create within dir, defaults to <run number>.h5", datatype="null or String")]
+    filename: Option<String>,
     file: Option<hdf5::File>,
     id_buffer: Vec<u32>,
     offset_buffer: Vec<f64>,
@@ -55,8 +61,14 @@ impl HDF5EventsOutput {
 }
 
 impl Output for HDF5EventsOutput {
-    fn from_config(_: &OutputCommon, _: toml::Table) -> UResult<Self> where Self: Sized {
+    fn from_config(_: &OutputCommon, config: toml::Table) -> UResult<Self> where Self: Sized {
+        let dir = config.get("dir")
+            .ok_or_else(|| anyhow!("Missing 'dir' in file output config"))?
+            .as_str()
+            .ok_or_else(|| anyhow!("'dir' in file output config must be a string"))?;
         Ok(HDF5EventsOutput {
+            dir: PathBuf::from(dir),
+            filename: None,
             file: None,
             id_buffer: Vec::with_capacity(2 * Self::BUFFER_SIZE),
             offset_buffer: Vec::with_capacity(2 * Self::BUFFER_SIZE),
@@ -64,8 +76,12 @@ impl Output for HDF5EventsOutput {
     }
 
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
-        let file = hdf5::File::create(format!("{}.h5", run))
-            .with_context(|| format!("Creating HDF5 output file at {}.h5", run))?;
+        let path = match self.filename.as_deref() {
+            Some(name) => self.dir.join(name),
+            None => self.dir.join(format!("{}.h5", run)),
+        };
+        let file = hdf5::File::create(&path)
+            .with_context(|| format!("Creating HDF5 output file at {}.", path.display()))?;
         let _ = file
             .new_dataset::<f64>()
             .shape(hdf5::Extent::resizable(0))
