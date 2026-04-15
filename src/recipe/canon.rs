@@ -27,7 +27,7 @@ impl Recipe for Psd {
                     // 8 tubes per module
                     let x = event.channel.0;
                     // TODO: calibration
-                    let y = ((pr as f64 / (pr + pl) as f64) * self.reso as f64) as u32;
+                    let y = ((f64::from(pr) / f64::from(pr + pl)) * self.reso as f64) as u32;
                     event.data = EventData::Neutron { x, y, t: 0 };
                 }
                 EventData::RawEdge { .. } => {

@@ -119,7 +119,7 @@ impl Display for EventFlags {
             return write!(f, "-");
         }
         let mut first = true;
-        for flag in self.iter() {
+        for flag in self {
             if !first {
                 write!(f, "|")?;
             }
@@ -150,7 +150,7 @@ pub struct Event {
 impl Event {
     pub fn new(time: EventTime, rel_time: EventTime, channel: ChannelId,
                flags: EventFlags, data: EventData) -> Self {
-        Self { time, rel_time, channel, flags, data }
+        Self { time, rel_time, flags, channel, data }
     }
 
     pub fn dump(&self) -> DumpEvent<'_> {
@@ -194,20 +194,18 @@ impl Display for DumpEvent<'_> {
             EventData::RawEdge { up } =>
                 write!(f, "RawEdge     {}", if up { "up" } else { "down" }),
             EventData::RawAnalog1 { value1, value2 } =>
-                write!(f, "RawAnalog1  value1={}, value2={}", value1, value2),
+                write!(f, "RawAnalog1  value1={value1}, value2={value2}"),
             EventData::RawAnalog2 { value1, value2, value3 } =>
-                write!(f, "RawAnalog2  value1={}, value2={}, value3={}",
-                       value1, value2, value3),
+                write!(f, "RawAnalog2  value1={value1}, value2={value2}, value3={value3}"),
             EventData::RawDigital { value1, value2, value3 } =>
-                write!(f, "RawDigital  value1={}, value2={}, value3={}",
-                       value1, value2, value3),
+                write!(f, "RawDigital  value1={value1}, value2={value2}, value3={value3}"),
             EventData::RawData { value, len } =>
                 write!(f, "RawData     len={}, data={:02x?}",
                        len, &value[..len as usize]),
             EventData::Heartbeat =>
                 write!(f, "Heartbeat"),
             EventData::Neutron { x, y, t } =>
-                write!(f, "Neutron     at {:3}, {:3}, {:3}", x, y, t),
+                write!(f, "Neutron     at {x:3}, {y:3}, {t:3}"),
             EventData::Monitor { index } =>
                 write!(f, "Monitor     index={index}"),
             EventData::Tzero =>

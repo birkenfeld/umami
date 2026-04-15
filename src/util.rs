@@ -13,9 +13,9 @@ use crate::error::UResult;
 pub fn resolve(addr: &str) -> UResult<std::net::SocketAddr> {
     Ok(addr
        .to_socket_addrs()
-       .map_err(|e| anyhow!("Invalid address '{}': {}", addr, e))?
+       .map_err(|e| anyhow!("Invalid address '{addr}': {e}"))?
        .find(|a| a.is_ipv4())
-       .ok_or_else(|| anyhow!("No addresses found for '{}'", addr))?
+       .ok_or_else(|| anyhow!("No addresses found for '{addr}'"))?
     )
 }
 

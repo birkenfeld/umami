@@ -98,15 +98,14 @@ impl<S: Source> Input for GeInput<S> {
         // read header
         let mut buffer = [0_u8; MAX_PACKET_SIZE];
         match self.source.read_exact(&mut buffer[..16]) {
-            Ok(_) => {},
+            Ok(()) => {},
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(vec![]),
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-                if !self.queue.is_empty() {
-                    self.queue.sort();
-                    return Ok(std::mem::take(&mut self.queue));
-                } else {
+                if self.queue.is_empty() {
                     return Err(UError::NoMoreData);
                 }
+                self.queue.sort();
+                return Ok(std::mem::take(&mut self.queue));
             }
             Err(e) => Err(e).context("Reading from source")?,
         }
@@ -125,7 +124,7 @@ impl<S: Source> Input for GeInput<S> {
                     EventData::Heartbeat,
                 )]);
             }
-            return Err(anyhow!("Received empty packet of type {:#x}", pktype).into());
+            return Err(anyhow!("Received empty packet of type {pktype:#x}").into());
         }
 
         // read the rest
@@ -136,7 +135,7 @@ impl<S: Source> Input for GeInput<S> {
             PACKET_NORM_FAKE => (12, EventFlags::Fake),
             PACKET_DIAG => (24, EventFlags::None),
             PACKET_DIAG_FAKE  => (24, EventFlags::Fake),
-            _ => return Err(anyhow!("Unsupported packet type {:#x}", pktype))?,
+            _ => return Err(anyhow!("Unsupported packet type {pktype:#x}"))?,
         };
         let nevents = (len - 24) / evlen;
         let mut offset = 40;

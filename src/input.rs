@@ -261,7 +261,7 @@ impl Source for ReplayFile {
 
     fn from_config(cfg: &Self::Config, confdir: &Path) -> UResult<Self> {
         let file = std::fs::File::open(confdir.join(cfg))
-           .with_context(|| format!("Opening source file {:?}", cfg))?;
+           .with_context(|| format!("Opening source file {cfg:?}"))?;
         Ok(Self {
             file,
             name: cfg.clone(),
@@ -294,7 +294,7 @@ impl Source for std::net::TcpStream {
     fn from_config(cfg: &Self::Config, _: &Path) -> UResult<Self> {
         let addr = resolve(cfg)?;
         let stream = std::net::TcpStream::connect(addr)
-            .with_context(|| format!("Connecting to {}", addr))?;
+            .with_context(|| format!("Connecting to {addr}"))?;
         stream.set_read_timeout(Some(Duration::from_millis(300)))
             .context("Setting socket timeout")?; // TODO configurable?
         Ok(stream)
@@ -312,7 +312,7 @@ impl Source for std::net::TcpStream {
         let addr = self.peer_addr()
             .context("Getting previous peer address")?;
         *self = std::net::TcpStream::connect(addr)
-            .with_context(|| format!("Connecting to {}", addr))?;
+            .with_context(|| format!("Connecting to {addr}"))?;
         self.set_read_timeout(Some(Duration::from_millis(300)))
             .context("Setting socket timeout")?; // TODO configurable?
         Ok(())
@@ -333,7 +333,7 @@ impl Source for UdpReader {
     fn from_config(cfg: &Self::Config, _: &Path) -> UResult<Self> {
         let addr = resolve(cfg)?;
         let sock = std::net::UdpSocket::bind(addr)
-            .context(format!("Binding to source socket {}", addr))?;
+            .context(format!("Binding to source socket {addr}"))?;
         sock.set_read_timeout(Some(Duration::from_millis(300)))
             .context("Setting socket timeout")?; // TODO configurable?
         Ok(UdpReader(sock, addr))
@@ -381,7 +381,7 @@ impl DumpHandler {
         if let Some(path) = &self.path {
             let full_path = path.join(run_id);
             std::fs::create_dir_all(&full_path).context("Creating raw data directory")?;
-            let file_name = full_path.join(format!("{}", module));
+            let file_name = full_path.join(format!("{module}"));
             let raw_file = File::create(file_name).context("Creating raw data file")?;
             self.file = Some(raw_file);
         }

@@ -39,7 +39,7 @@ impl ShmBox {
     pub fn clear_histo(&mut self) {
         let size = (self.nx * self.ny * self.nt) as usize;
         unsafe {
-            let histo_ptr = self.ptr.as_ptr().add(1) as *mut u32;
+            let histo_ptr = self.ptr.as_ptr().add(1).cast::<u32>();
             std::slice::from_raw_parts_mut(histo_ptr, size).fill(0);
         };
     }
@@ -48,7 +48,7 @@ impl ShmBox {
         if x < self.nx && y < self.ny && t < self.nt {
             let off = t * (self.nx * self.ny) + y * self.nx + x;
             unsafe {
-                let histo_ptr = self.ptr.as_ptr().add(1) as *mut u32;
+                let histo_ptr = self.ptr.as_ptr().add(1).cast::<u32>();
                 let place_ptr = histo_ptr.add(off as usize);
                 ptr::write(place_ptr, place_ptr.read() + 1);
             }
@@ -70,7 +70,7 @@ impl ShmBox {
                 for x in 0..self.nx {
                     let off = t * (self.nx * self.ny) + y * self.nx + x;
                     let count = histo_slice[off as usize];
-                    write!(&mut writer, " {}", count)
+                    write!(&mut writer, " {count}")
                         .context("Writing histogram data to file")?;
                 }
                 writeln!(&mut writer).context("Writing histogram data to file")?;
@@ -111,8 +111,7 @@ impl ShmInterface {
             Err(anyhow!("Requested histogram size is zero"))?;
         }
         if max_size > MAX_HISTO_SIZE {
-            Err(anyhow!("Requested histogram size {} exceeds maximum of {}",
-                        max_size, MAX_HISTO_SIZE))?;
+            Err(anyhow!("Requested histogram size {max_size} exceeds maximum of {MAX_HISTO_SIZE}"))?;
         }
 
         let total_size = size_of::<ShmInterface>() + max_size * size_of::<u32>();

@@ -136,10 +136,10 @@ impl<S: CanonSource> Input for CanonInput<S> {
                     Event::new(
                         self.time_ofs + t,
                         t,
-                        ChannelId(self.channel_ofs + cev.p() as u32),
+                        ChannelId(self.channel_ofs + u32::from(cev.p())),
                         EventFlags::HasRelTime,
-                        EventData::RawDigital { value1: cev.pl() as u32,
-                                                value2: cev.pr() as u32,
+                        EventData::RawDigital { value1: u32::from(cev.pl()),
+                                                value2: u32::from(cev.pr()),
                                                 value3: 0 },
                     )
                 },
@@ -148,10 +148,10 @@ impl<S: CanonSource> Input for CanonInput<S> {
                     Event::new(
                         self.time_ofs + t,
                         t,
-                        ChannelId(self.channel_ofs + cev.p14() as u32),
+                        ChannelId(self.channel_ofs + u32::from(cev.p14())),
                         EventFlags::HasRelTime,
-                        EventData::RawDigital { value1: cev.pl14() as u32,
-                                                value2: cev.pr14() as u32,
+                        EventData::RawDigital { value1: u32::from(cev.pl14()),
+                                                value2: u32::from(cev.pr14()),
                                                 value3: 0 },
                     )
                 },

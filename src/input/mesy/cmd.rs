@@ -243,9 +243,9 @@ impl MesyCommandHandler for CommandSocket {
 
         // exchange communication
         self.sock.send(packet.as_bytes())
-                 .with_context(|| format!("Sending command {:?} to command socket", cmd))?;
+                 .with_context(|| format!("Sending command {cmd:?} to command socket"))?;
         let mut nrecv = self.sock.recv(&mut self.buffer)
-                                 .with_context(|| format!("Receiving reply to command {:?}", cmd))?;
+                                 .with_context(|| format!("Receiving reply to command {cmd:?}"))?;
         // ldebug!("Mesytec reply buffer: {:?}", &self.buffer[..nrecv]);
         // some partners do not reply with trailing 0xFFFF
         if self.buffer[nrecv-2..nrecv] != [0xFF, 0xFF] {
@@ -256,7 +256,7 @@ impl MesyCommandHandler for CommandSocket {
             .map(|(pkt, _)| pkt)
             .map_err(|_| anyhow!("Reply packet has wrong length (expected {}, got {})",
                                  size_of::<Packet<Dout>>(), nrecv))
-            .with_context(|| format!("Sending command {:?}", cmd))?;
+            .with_context(|| format!("Sending command {cmd:?}"))?;
         ldebug!("Mesytec reply: {ret:?}");
 
         // consistency checks
@@ -275,9 +275,8 @@ impl MesyCommandHandler for CommandSocket {
         if ret.hdr.cmd_id != cmd_id {
             if ret.hdr.cmd_id == cmd_id | ERROR_FLAG {
                 return data_err("Command failed", ret.hdr.cmd_id, cmd_id);
-            } else {
-                return data_err("Reply packet has wrong command ID", ret.hdr.cmd_id, cmd_id);
             }
+            return data_err("Reply packet has wrong command ID", ret.hdr.cmd_id, cmd_id);
         }
         if ret.hdr.mcpd_id != self.mcpd_id {
             return data_err("Reply packet has wrong MCPD ID", ret.hdr.mcpd_id, self.mcpd_id);
@@ -295,10 +294,10 @@ pub fn make_command_socket(local_data_addr: SocketAddr, config: &MesyConfig) -> 
     let local_ip = local_data_addr.ip();
     let port = local_data_addr.port() + 1;
     let socket = UdpSocket::bind((local_ip, port))
-        .with_context(|| format!("Binding UDP command socket to port {}", port))?;
+        .with_context(|| format!("Binding UDP command socket to port {port}"))?;
     let cmd_addr = resolve(&config.remote)?;
     socket.connect(cmd_addr)
-        .with_context(|| format!("Connnecting UDP command socket to {}", cmd_addr))?;
+        .with_context(|| format!("Connnecting UDP command socket to {cmd_addr}"))?;
     socket.set_read_timeout(Some(Duration::from_secs(1)))
         .context("Setting receive timeout on UDP command socket")?;
     Ok(CommandSocket {

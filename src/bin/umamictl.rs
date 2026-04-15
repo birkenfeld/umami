@@ -94,11 +94,11 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
     match reply {
         CommandReply::Ok => println!("OK"),
         CommandReply::Error { module, message } => {
-            let module_str = module.map_or("".to_string(), |m| format!("Module {}: ", m));
-            bail!("{}{}", module_str, message);
+            let module_str = module.map_or(String::new(), |m| format!("Module {m}: "));
+            bail!("{module_str}{message}");
         },
         CommandReply::Data { value } => {
-            println!("{}", value);
+            println!("{value}");
         }
     }
 
@@ -108,7 +108,7 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
 fn main() {
     let args = Options::parse();
     match inner_main(args) {
-        Ok(_) => std::process::exit(0),
+        Ok(()) => std::process::exit(0),
         Err(e) => {
             eprintln!("Error: {e:#}");
             std::process::exit(1);

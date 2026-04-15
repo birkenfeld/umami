@@ -138,7 +138,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
         let buf_serial = S::E::read_u16(&buffer[6..]);
         let id_status = S::E::read_u16(&buffer[10..]);
         let status = id_status & 0xFF;
-        let mcpd_id = id_status as u64 >> 8;
+        let mcpd_id = u64::from(id_status) >> 8;
         let pkt_ts = read_48bit::<S::E>(&buffer[12..]);
         if status & 1 != 1 {
             lprintln!(WARN, [self.name] "Got event buffer but daq stopped");
@@ -212,9 +212,9 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
 /// Endianness of individual words can change, but the least significant
 /// word is always first.
 fn read_48bit<E: ByteOrder>(buf: &[u8]) -> u64 {
-    let s1 = E::read_u16(&buf[0..2]) as u64;
-    let s2 = E::read_u16(&buf[2..4]) as u64;
-    let s3 = E::read_u16(&buf[4..6]) as u64;
+    let s1 = u64::from(E::read_u16(&buf[0..2]));
+    let s2 = u64::from(E::read_u16(&buf[2..4]));
+    let s3 = u64::from(E::read_u16(&buf[4..6]));
     s3 << 32 | s2 << 16 | s1
 }
 

@@ -38,7 +38,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
     if n_inputs == 0 {
         Err(anyhow!("No inputs configured"))?;
     } else if n_inputs > MAX_INPUTS {
-        Err(anyhow!("Too many inputs: {}, max is {}", n_inputs, MAX_INPUTS))?;
+        Err(anyhow!("Too many inputs: {n_inputs}, max is {MAX_INPUTS}"))?;
     }
 
     let (postproc_send, postproc_recv) = channel::bounded(EV_CHANNEL_SIZE);

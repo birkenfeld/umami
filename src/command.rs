@@ -71,7 +71,7 @@ impl CommandHandler {
         let addr = uds::UnixSocketAddr::from_abstract(socket_name.as_bytes())
             .context("Creating abstract socket address")?;
         let sock = net::UnixDatagram::bind_unix_addr(&addr)
-            .with_context(|| format!("Binding command listener to {}", addr))?;
+            .with_context(|| format!("Binding command listener to {addr}"))?;
         Ok(Self { sock, input_send, post_send })
     }
 

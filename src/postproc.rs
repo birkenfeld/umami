@@ -76,7 +76,7 @@ impl PostProcessor {
                     for ev in &evs {
                         if let EventData::Neutron { x, y, t } = ev.data {
                             self.shm.add_histo(x, y, t);
-                        };
+                        }
                     }
                     item = PipeItem::Events(evs);
                 }
@@ -137,7 +137,7 @@ impl PostProcessor {
                 PipeItem::SetMode(name, send) => {
                     if !self.recipe_names.contains_key(&name) {
                         send.send(CommandReply::new_error(
-                            format!("Recipe {} not found", name)))
+                            format!("Recipe {name} not found")))
                             .expect("param reply receiver died");
                         continue;
                     }
@@ -162,7 +162,7 @@ impl PostProcessor {
                 }
                 PipeItem::SaveHisto(filename, max_nt, send) => {
                     send.send(match self.shm.save_to_file(&filename, max_nt) {
-                        Ok(_) => CommandReply::Ok,
+                        Ok(()) => CommandReply::Ok,
                         Err(e) => {
                             lprintln!(ERROR, "Error saving histogram to file \
                                               {filename}: {e:#}");

@@ -78,7 +78,7 @@ impl Output for HDF5EventsOutput {
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
         let path = match self.filename.as_deref() {
             Some(name) => self.dir.join(name),
-            None => self.dir.join(format!("{}.h5", run)),
+            None => self.dir.join(format!("{run}.h5")),
         };
         let file = hdf5::File::create(&path)
             .with_context(|| format!("Creating HDF5 output file at {}.", path.display()))?;

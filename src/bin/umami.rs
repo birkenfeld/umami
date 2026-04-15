@@ -31,7 +31,7 @@ fn inner_main(args: Options) -> umami::UResult<()> {
     let mut config = umami::load_config(&args.config)?;
 
     if let Some(ipc_name) = args.ipc_name {
-        config.ipc_name = ipc_name.to_string();
+        config.ipc_name = ipc_name.clone();
     }
     if let Some(raw_dir) = args.raw {
         config.raw_dir = Some(raw_dir);
@@ -44,7 +44,7 @@ fn inner_main(args: Options) -> umami::UResult<()> {
 fn main() {
     let args = Options::parse();
     match inner_main(args) {
-        Ok(_) => std::process::exit(0),
+        Ok(()) => std::process::exit(0),
         Err(e) => {
             lprintln!(FATAL, "Exiting due to init error: {e:#}");
             std::process::exit(1);
