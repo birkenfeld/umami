@@ -65,3 +65,111 @@ pub fn from_config(map: &BTreeMap<String, RecipeConfig>, name: &str)
         "kws_gedet" => kws::KWSGERecipe,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::test_utils;
+    use crate::event::EventData;
+
+    #[test]
+    fn test_no_recipe_passthrough() {
+        let mut recipe = NoRecipe::from_config(toml::Table::new(), &BTreeMap::new()).unwrap();
+        let events = vec![
+            test_utils::neutron(100, 1),
+            test_utils::edge(200, 2, true),
+        ];
+        let out = recipe.process(events);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].data, EventData::Neutron);
+        assert_eq!(out[1].data, EventData::Edge { up: true });
+    }
+
+    fn recipe_map(name: &str, r#type: &str) -> BTreeMap<String, RecipeConfig> {
+        let mut map = BTreeMap::new();
+        map.insert(name.to_string(), RecipeConfig {
+            r#type: r#type.to_string(),
+            config: toml::Table::new(),
+        });
+        map
+    }
+
+    #[test]
+    fn test_from_config_none() {
+        let map = recipe_map("test", "none");
+        let mut r = from_config(&map, "test").unwrap();
+        let out = r.process(vec![test_utils::neutron(100, 1)]);
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn test_from_config_not_found() {
+        let map = BTreeMap::new();
+        match from_config(&map, "missing") {
+            Ok(_) => panic!("expected error"),
+            Err(e) => assert!(e.to_string().contains("not found")),
+        }
+    }
+
+    #[test]
+    fn test_from_config_unknown_type() {
+        let map = recipe_map("test", "bogus");
+        match from_config(&map, "test") {
+            Ok(_) => panic!("expected error"),
+            Err(e) => assert!(e.to_string().contains("Unknown recipe type")),
+        }
+    }
+
+    #[test]
+    fn test_from_config_histo_std() {
+        let map = recipe_map("test", "histo_std");
+        let mut r = from_config(&map, "test").unwrap();
+        let out = r.process(vec![test_utils::neutron(100, 1)]);
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn test_from_config_histo_tof() {
+        let map = recipe_map("test", "histo_tof");
+        let mut r = from_config(&map, "test").unwrap();
+        let out = r.process(vec![test_utils::tzero(0), test_utils::neutron(100, 1)]);
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn test_from_config_mesy_mpsd() {
+        let map = recipe_map("test", "mesy_mpsd");
+        let mut r = from_config(&map, "test").unwrap();
+        let out = r.process(vec![test_utils::neutron(100, 1)]);
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn test_from_config_mesy_mdll() {
+        let map = recipe_map("test", "mesy_mdll");
+        let mut r = from_config(&map, "test").unwrap();
+        let out = r.process(vec![test_utils::neutron(100, 1)]);
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn test_from_config_kws_gedet() {
+        let map = recipe_map("test", "kws_gedet");
+        let mut r = from_config(&map, "test").unwrap();
+        let out = r.process(vec![test_utils::neutron(100, 1)]);
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn test_from_config_canon() {
+        let mut table = toml::Table::new();
+        table.insert("reso".into(), toml::Value::Integer(256));
+        let map = BTreeMap::from([("test".into(), RecipeConfig {
+            r#type: "canon".into(),
+            config: table,
+        })]);
+        let mut r = from_config(&map, "test").unwrap();
+        let out = r.process(vec![test_utils::neutron(100, 1)]);
+        assert_eq!(out.len(), 1);
+    }
+}

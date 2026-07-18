@@ -99,3 +99,91 @@ impl Sorter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::test_utils;
+    use crate::channel;
+
+    fn make_sorter() -> (channel::Sender<PipeItem>, channel::Sender<PipeItem>,
+                         channel::Receiver<PipeItem>) {
+        let (s1, r1) = channel::unbounded();
+        let (s2, r2) = channel::unbounded();
+        let (out_s, out_r) = channel::unbounded();
+        let sorter = Sorter::new(r1, r2, out_s);
+        std::thread::spawn(move || sorter.main());
+        (s1, s2, out_r)
+    }
+
+    fn recv_all(recv: &channel::Receiver<PipeItem>) -> Vec<Event> {
+        let mut all = vec![];
+        while let Ok(item) = recv.try_recv() {
+            if let PipeItem::Events(evs) = item {
+                all.extend(evs);
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn test_sorter_merge_sorted_streams() {
+        let (s1, s2, out) = make_sorter();
+        s1.send(PipeItem::Events(vec![
+            test_utils::neutron(100, 0),
+            test_utils::neutron(300, 0),
+            test_utils::neutron(500, 0),
+        ])).unwrap();
+        s2.send(PipeItem::Events(vec![
+            test_utils::neutron(200, 0),
+            test_utils::neutron(400, 0),
+        ])).unwrap();
+        // signal end on both
+        s1.send(PipeItem::EndOfRun).unwrap();
+        s2.send(PipeItem::EndOfRun).unwrap();
+
+        // give sorter time to process
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let events = recv_all(&out);
+        let times: Vec<i64> = events.iter().map(|e: &Event| e.time.0).collect();
+        assert_eq!(times, vec![100, 200, 300, 400, 500]);
+    }
+
+    #[test]
+    fn test_sorter_passthrough_non_events() {
+        let (s1, s2, out) = make_sorter();
+        s1.send(PipeItem::StartOfRun("run1".into())).unwrap();
+        s2.send(PipeItem::Events(vec![test_utils::neutron(100, 0)])).unwrap();
+        s1.send(PipeItem::Events(vec![test_utils::neutron(200, 0)])).unwrap();
+        s1.send(PipeItem::EndOfRun).unwrap();
+        s2.send(PipeItem::EndOfRun).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let mut items = vec![];
+        while let Ok(item) = out.try_recv() {
+            items.push(item);
+        }
+        // StartOfRun should pass through
+        assert!(items.iter().any(|i| matches!(i, PipeItem::StartOfRun(_))));
+        // events should be merged and sorted
+        let mut events = vec![];
+        for item in &items {
+            if let PipeItem::Events(evs) = item {
+                events.extend(evs);
+            }
+        }
+        let times: Vec<i64> = events.iter().map(|e: &Event| e.time.0).collect();
+        assert_eq!(times, vec![100, 200]);
+    }
+
+    #[test]
+    fn test_sorter_end_of_run_forwards() {
+        let (s1, s2, out) = make_sorter();
+        s1.send(PipeItem::EndOfRun).unwrap();
+        s2.send(PipeItem::EndOfRun).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let items: Vec<_> = out.try_iter().collect();
+        assert!(items.iter().any(|i| matches!(i, PipeItem::EndOfRun)));
+    }
+}

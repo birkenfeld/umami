@@ -168,3 +168,192 @@ impl Recipe for Std {
         events
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::test_utils;
+    use crate::event::EventTime;
+
+    fn empty_recipes() -> BTreeMap<String, RecipeConfig> {
+        BTreeMap::new()
+    }
+
+    #[test]
+    fn test_std_passthrough_default() {
+        let mut recipe = Std::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let events = vec![
+            test_utils::neutron(100, 1),
+            test_utils::neutron(200, 2),
+        ];
+        let out = recipe.process(events);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].channel.0, 1);
+        assert_eq!(out[1].channel.0, 2);
+    }
+
+    #[test]
+    fn test_std_binning() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("bin_x".into(), toml::Value::Integer(2));
+        cfg.insert("bin_y".into(), toml::Value::Integer(3));
+        let mut recipe = Std::from_config(cfg, &empty_recipes()).unwrap();
+
+        let mut ev = test_utils::neutron(100, 1);
+        ev.x = 7;
+        ev.y = 8;
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].x, 3);  // 7 / 2
+        assert_eq!(out[0].y, 2);  // 8 / 3
+    }
+
+    #[test]
+    fn test_std_gate_filtering_off() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("use_gate".into(), toml::Value::Boolean(false));
+        let mut recipe = Std::from_config(cfg, &empty_recipes()).unwrap();
+
+        let events = vec![
+            test_utils::gate(50, true),
+            test_utils::neutron(100, 1),
+        ];
+        let out = recipe.process(events);
+        // gate signal consumed, neutron passes through unchanged
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].data, EventData::Gate { up: true });
+        assert_eq!(out[1].data, EventData::Neutron);
+    }
+
+    #[test]
+    fn test_std_gate_filtering_on_before_gate() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("use_gate".into(), toml::Value::Boolean(true));
+        let mut recipe = Std::from_config(cfg, &empty_recipes()).unwrap();
+
+        // neutron before any gate up → voided
+        let events = vec![test_utils::neutron(100, 1)];
+        let out = recipe.process(events);
+        assert_eq!(out[0].data, EventData::Void);
+    }
+
+    #[test]
+    fn test_std_gate_filtering_on_after_gate_up() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("use_gate".into(), toml::Value::Boolean(true));
+        let mut recipe = Std::from_config(cfg, &empty_recipes()).unwrap();
+
+        let events = vec![
+            test_utils::gate(50, true),
+            test_utils::neutron(100, 1),
+            test_utils::gate(150, false),
+            test_utils::neutron(200, 2),
+        ];
+        let out = recipe.process(events);
+        assert_eq!(out[0].data, EventData::Gate { up: true });
+        assert_eq!(out[1].data, EventData::Neutron);  // passes
+        assert_eq!(out[2].data, EventData::Gate { up: false });
+        assert_eq!(out[3].data, EventData::Void);  // voided
+    }
+
+    #[test]
+    fn test_tof_basic() {
+        let mut recipe = Tof::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let events = vec![
+            test_utils::tzero(0),
+            test_utils::neutron(500, 1),
+        ];
+        let out = recipe.process(events);
+        assert_eq!(out[0].data, EventData::Tzero);
+        assert_eq!(out[1].data, EventData::Neutron);
+        // rel_time = 500 - 0 = 500
+        assert_eq!(out[1].rel_time, EventTime(500));
+        assert!(out[1].flags.contains(EventFlags::HasRelTime));
+    }
+
+    #[test]
+    fn test_tof_gate_filtering() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("use_gate".into(), toml::Value::Boolean(true));
+        let mut recipe = Tof::from_config(cfg, &empty_recipes()).unwrap();
+
+        let events = vec![
+            test_utils::tzero(0),
+            test_utils::gate(100, true),
+            test_utils::neutron(200, 1),
+            test_utils::gate(300, false),
+            test_utils::neutron(400, 2),
+        ];
+        let out = recipe.process(events);
+        assert_eq!(out[1].data, EventData::Gate { up: true });
+        assert_eq!(out[2].data, EventData::Neutron);  // passes
+        assert_eq!(out[3].data, EventData::Gate { up: false });
+        assert_eq!(out[4].data, EventData::Void);  // voided
+    }
+
+    #[test]
+    fn test_tof_aux_mode() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("aux_mode".into(), toml::Value::Integer(2));
+        let mut recipe = Tof::from_config(cfg, &empty_recipes()).unwrap();
+
+        // wrong aux → ignored
+        let events = vec![
+            test_utils::aux(100, 1),
+            test_utils::aux(200, 2),
+            test_utils::neutron(300, 1),
+        ];
+        let out = recipe.process(events);
+        // t0 set by aux(200, 2), rel_time = 300 - 200 = 100
+        assert_eq!(out[2].rel_time, EventTime(100));
+    }
+
+    #[test]
+    fn test_tof_binning() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("bin_x".into(), toml::Value::Integer(2));
+        cfg.insert("bin_y".into(), toml::Value::Integer(4));
+        let mut recipe = Tof::from_config(cfg, &empty_recipes()).unwrap();
+
+        let mut ev = test_utils::neutron(100, 1);
+        ev.x = 10;
+        ev.y = 15;
+        let out = recipe.process(vec![test_utils::tzero(0), ev]);
+        assert_eq!(out[1].x, 5);   // 10 / 2
+        assert_eq!(out[1].y, 3);   // 15 / 4
+    }
+
+    #[test]
+    fn test_tof_time_bins() {
+        let mut cfg = toml::Table::new();
+        let bins = toml::Value::Array(vec![
+            toml::Value::Integer(1000),
+            toml::Value::Integer(2000),
+            toml::Value::Integer(i64::MAX),
+        ]);
+        cfg.insert("time_bins".into(), bins);
+        let mut recipe = Tof::from_config(cfg, &empty_recipes()).unwrap();
+
+        let events = vec![
+            test_utils::tzero(0),
+            test_utils::neutron(500, 1),   // bin 0 (500 < 1000)
+            test_utils::neutron(1500, 2),  // bin 1 (1000 <= 1500 < 2000)
+            test_utils::neutron(2500, 3),  // bin 2 (2000 <= 2500)
+        ];
+        let out = recipe.process(events);
+        assert_eq!(out[1].t, 0);
+        assert_eq!(out[2].t, 1);
+        assert_eq!(out[3].t, 2);
+    }
+
+    #[test]
+    fn test_tof_existing_rel_time_preserved() {
+        let mut recipe = Tof::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+
+        let mut ev = test_utils::neutron(100, 1);
+        ev.rel_time = EventTime(999);
+        ev.flags.set(EventFlags::HasRelTime);
+        let out = recipe.process(vec![test_utils::tzero(0), ev]);
+        // rel_time already set, should be preserved
+        assert_eq!(out[1].rel_time, EventTime(999));
+    }
+}

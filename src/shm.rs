@@ -133,3 +133,100 @@ impl ShmInterface {
         Ok(shmbox)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static SHM_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn unique_shm_name() -> String {
+        let id = SHM_COUNTER.fetch_add(1, Ordering::SeqCst);
+        format!("umami_test_{id}_{}", std::process::id())
+    }
+
+    fn test_config() -> HistoConfig {
+        HistoConfig { nx: 4, ny: 4, max_nt: 4 }
+    }
+
+    #[test]
+    fn test_shm_create_and_basic_ops() {
+        let name = unique_shm_name();
+        let mut shm = ShmInterface::create(&name, &test_config()).unwrap();
+
+        // set_run_id
+        shm.set_run_id("run_001");
+        let run_id = std::str::from_utf8(&shm.run_id).unwrap();
+        assert!(run_id.starts_with("run_001"));
+
+        // set_initialized
+        assert_eq!(shm.global_state & 1, 0);
+        shm.set_initialized();
+        assert_eq!(shm.global_state & 1, 1);
+
+        // add_histo in bounds
+        shm.add_histo(0, 0, 0);
+        shm.add_histo(0, 0, 0);
+        shm.add_histo(1, 2, 3);
+
+        // verify histogram values
+        let histo = unsafe {
+            let ptr = shm.ptr.as_ptr().add(1).cast::<u32>();
+            std::slice::from_raw_parts(ptr, 4 * 4 * 4)
+        };
+        // bin (0,0,0) → offset 0*16 + 0*4 + 0 = 0
+        assert_eq!(histo[0], 2);
+        // bin (1,2,3) → offset 3*16 + 2*4 + 1 = 57
+        assert_eq!(histo[57], 1);
+
+        // cleanup
+        nix::sys::mman::shm_unlink(name.as_bytes()).ok();
+    }
+
+    #[test]
+    fn test_shm_add_out_of_bounds_ignored() {
+        let name = unique_shm_name();
+        let mut shm = ShmInterface::create(&name, &test_config()).unwrap();
+        shm.add_histo(10, 10, 10); // all out of bounds
+        // should not panic
+        nix::sys::mman::shm_unlink(name.as_bytes()).ok();
+    }
+
+    #[test]
+    fn test_shm_clear_histo() {
+        let name = unique_shm_name();
+        let mut shm = ShmInterface::create(&name, &test_config()).unwrap();
+        shm.add_histo(0, 0, 0);
+        shm.add_histo(1, 1, 1);
+        shm.clear_histo();
+        let histo = unsafe {
+            let ptr = shm.ptr.as_ptr().add(1).cast::<u32>();
+            std::slice::from_raw_parts(ptr, 4 * 4 * 4)
+        };
+        assert!(histo.iter().all(|&v| v == 0));
+        nix::sys::mman::shm_unlink(name.as_bytes()).ok();
+    }
+
+    #[test]
+    fn test_shm_save_to_file() {
+        let name = unique_shm_name();
+        let mut shm = ShmInterface::create(&name, &test_config()).unwrap();
+        shm.add_histo(0, 0, 0);
+        shm.add_histo(0, 0, 0);
+        let path = format!("/tmp/umami_test_histo_{}", std::process::id());
+        shm.save_to_file(&path, 4).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("2")); // two counts at (0,0,0)
+        std::fs::remove_file(&path).ok();
+        nix::sys::mman::shm_unlink(name.as_bytes()).ok();
+    }
+
+    #[test]
+    fn test_shm_zero_size_fails() {
+        let name = unique_shm_name();
+        let config = HistoConfig { nx: 0, ny: 1, max_nt: 1 };
+        let result = ShmInterface::create(&name, &config);
+        assert!(result.is_err());
+    }
+}

@@ -40,3 +40,44 @@ impl Recipe for Psd {
         events
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::test_utils;
+
+    fn empty_recipes() -> BTreeMap<String, RecipeConfig> {
+        BTreeMap::new()
+    }
+
+    #[test]
+    fn test_psd_neutron_channel_to_x() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("reso".into(), toml::Value::Integer(256));
+        let mut recipe = Psd::from_config(cfg, &empty_recipes()).unwrap();
+        let ev = test_utils::neutron(100, 42);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].x, 42);
+        assert_eq!(out[0].y, 0);
+    }
+
+    #[test]
+    fn test_psd_edge_up_to_tzero() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("reso".into(), toml::Value::Integer(256));
+        let mut recipe = Psd::from_config(cfg, &empty_recipes()).unwrap();
+        let ev = test_utils::edge(100, 5, true);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].data, EventData::Tzero);
+    }
+
+    #[test]
+    fn test_psd_edge_down_unchanged() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("reso".into(), toml::Value::Integer(256));
+        let mut recipe = Psd::from_config(cfg, &empty_recipes()).unwrap();
+        let ev = test_utils::edge(100, 5, false);
+        let out = recipe.process(vec![ev]);
+        assert!(matches!(out[0].data, EventData::Edge { up: false }));
+    }
+}

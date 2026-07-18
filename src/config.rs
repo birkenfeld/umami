@@ -138,3 +138,137 @@ pub fn load_config(path: &Path) -> UResult<Config> {
     config.filename = path.canonicalize().context("Failed to get canonical config path")?;
     Ok(config)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_source_config_ip() {
+        let cfg: SourceConfig = toml::from_str(r#"val = "localhost:50001""#)
+            .map(|t: toml::Table| t["val"].clone().try_into().unwrap()).unwrap();
+        match cfg {
+            SourceConfig::IP(s) => assert_eq!(s, "localhost:50001"),
+            _ => panic!("expected IP"),
+        }
+    }
+
+    #[test]
+    fn test_source_config_file() {
+        let cfg: SourceConfig = toml::from_str(r#"val = "/path/to/file""#)
+            .map(|t: toml::Table| t["val"].clone().try_into().unwrap()).unwrap();
+        match cfg {
+            SourceConfig::File(s) => assert_eq!(s, "/path/to/file"),
+            _ => panic!("expected File"),
+        }
+    }
+
+    #[test]
+    fn test_source_config_ip_without_colon_falls_to_file() {
+        let table: toml::Table = toml::from_str(r#"val = "localhost""#).unwrap();
+        let cfg: SourceConfig = table["val"].clone().try_into().unwrap();
+        // untagged: IP fails (no colon), falls through to File
+        assert!(matches!(cfg, SourceConfig::File(s) if s == "localhost"));
+    }
+
+    #[test]
+    fn test_ge_config() {
+        let cfg: GEConfig = toml::from_str(r#"
+            source = "localhost:50001"
+            timestamper = true
+        "#).unwrap();
+        assert!(matches!(cfg.source, SourceConfig::IP(_)));
+        assert!(cfg.timestamper);
+    }
+
+    #[test]
+    fn test_ge_config_defaults() {
+        let cfg: GEConfig = toml::from_str(r#"
+            source = "/path/to/file"
+        "#).unwrap();
+        assert!(!cfg.timestamper);
+    }
+
+    #[test]
+    fn test_recipe_config() {
+        let cfg: RecipeConfig = toml::from_str(r#"
+            type = "histo_std"
+            bin_x = 2
+        "#).unwrap();
+        assert_eq!(cfg.r#type, "histo_std");
+        assert_eq!(cfg.config.get("bin_x").and_then(|v| v.as_integer()), Some(2));
+    }
+
+    #[test]
+    fn test_histo_config() {
+        let cfg: HistoConfig = toml::from_str(r#"
+            nx = 100
+            ny = 200
+            max_nt = 50
+        "#).unwrap();
+        assert_eq!(cfg.nx, 100);
+        assert_eq!(cfg.ny, 200);
+        assert_eq!(cfg.max_nt, 50);
+    }
+
+    #[test]
+    fn test_process_modes_config() {
+        let cfg: ProcessModesConfig = toml::from_str(r#"
+            default = "std"
+            std = { type = "histo_std" }
+        "#).unwrap();
+        assert_eq!(cfg.default, "std");
+        assert!(cfg.recipes.contains_key("std"));
+    }
+
+    #[test]
+    fn test_full_config_minimal() {
+        let cfg: Config = toml::from_str(r#"
+            [inputs.main]
+            id = 0
+            recipe = "none"
+            type = "ge"
+            source = "localhost:50001"
+
+            [input_recipes]
+            none = { type = "none" }
+
+            [process_modes]
+            default = "std"
+            std = { type = "histo_std" }
+
+            [histogram]
+            nx = 100
+            ny = 100
+            max_nt = 10
+        "#).unwrap();
+        assert_eq!(cfg.inputs.len(), 1);
+        assert!(cfg.inputs.contains_key("main"));
+        assert_eq!(cfg.ipc_name, "umami");
+        assert!(!cfg.debug);
+    }
+
+    #[test]
+    fn test_config_optional_outputs() {
+        let cfg: Config = toml::from_str(r#"
+            [inputs.main]
+            id = 0
+            recipe = "none"
+            type = "ge"
+            source = "localhost:50001"
+
+            [input_recipes]
+            none = { type = "none" }
+
+            [process_modes]
+            default = "std"
+            std = { type = "histo_std" }
+
+            [histogram]
+            nx = 100
+            ny = 100
+            max_nt = 10
+        "#).unwrap();
+        assert!(cfg.outputs.is_none());
+    }
+}

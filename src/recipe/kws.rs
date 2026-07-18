@@ -96,3 +96,100 @@ impl Recipe for KWSGERecipe {
         events
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::test_utils;
+
+    fn empty_recipes() -> BTreeMap<String, RecipeConfig> {
+        BTreeMap::new()
+    }
+
+    #[test]
+    fn test_kws_neutron_full_tube_region() {
+        // n8p in 6..=11 → full tube resolution (256)
+        // pack 6, pixel 0 → id=0, x = 0/256 + 8*6 = 48, y = 0%256 = 0
+        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let ev = test_utils::neutron(100, 6 * PIXEL_PER_PACK);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].x, 48);
+        assert_eq!(out[0].y, 0);
+    }
+
+    #[test]
+    fn test_kws_neutron_full_tube_nonzero() {
+        // pack 6, pixel 256 → id=256, x = 256/256 + 48 = 49, y = 256%256 = 0
+        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let ev = test_utils::neutron(100, 6 * PIXEL_PER_PACK + 256);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].x, 49);
+        assert_eq!(out[0].y, 0);
+    }
+
+    #[test]
+    fn test_kws_neutron_small_tube_region() {
+        // n8p=2 (not in 3..=14) → small tube resolution (94), offset 81
+        // pack 2, pixel 0 → id=0, x = 0/94 + 8*2 = 16, y = 0%94 + 81 = 81
+        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let ev = test_utils::neutron(100, 2 * PIXEL_PER_PACK);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].x, 16);
+        assert_eq!(out[0].y, 81);
+    }
+
+    #[test]
+    fn test_kws_neutron_middle_tube_region() {
+        // n8p=4 (in 3..=14 but not in 6..=11) → middle tube resolution (206), offset 25
+        // pack 4, pixel 0 → id=0, x = 0/206 + 8*4 = 32, y = 0%206 + 25 = 25
+        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let ev = test_utils::neutron(100, 4 * PIXEL_PER_PACK);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].x, 32);
+        assert_eq!(out[0].y, 25);
+    }
+
+    #[test]
+    fn test_kws_edge_to_gate() {
+        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let ev = test_utils::edge(100, 0, true);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].data, EventData::Gate { up: true });
+    }
+
+    #[test]
+    fn test_kws_edge_to_tzero_ch1() {
+        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let ev = test_utils::edge(100, 1, true);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].data, EventData::Tzero);
+    }
+
+    #[test]
+    fn test_kws_edge_to_aux_ch2() {
+        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let ev = test_utils::edge(100, 2, true);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].data, EventData::AuxSignal { num: EXT_START });
+    }
+
+    #[test]
+    fn test_kws_edge_no_match_down() {
+        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let ev = test_utils::edge(100, 1, false);
+        let out = recipe.process(vec![ev]);
+        // down edge on ch1 doesn't match `up ^ false` → stays Edge
+        assert!(matches!(out[0].data, EventData::Edge { up: false }));
+    }
+
+    #[test]
+    fn test_kws_invert_ts() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("invert_ts".into(), toml::Value::Boolean(true));
+        let mut recipe = KWSGERecipe::from_config(cfg, &empty_recipes()).unwrap();
+        // down edge on ch1: up=false, invert=true → false^true=true → Tzero
+        let ev = test_utils::edge(100, 1, false);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].data, EventData::Tzero);
+    }
+}

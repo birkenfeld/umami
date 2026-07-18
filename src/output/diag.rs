@@ -128,3 +128,103 @@ impl Output for DiagOutput {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::test_utils;
+    use crate::command::ModuleId;
+    use crate::pipeline::PipeItem;
+    use crate::channel;
+
+    fn make_common(name: &str) -> (OutputCommon, channel::Sender<PipeItem>) {
+        let (send, recv) = crate::channel::unbounded();
+        let common = OutputCommon::new(ModuleId::new(name.into()), recv, None);
+        (common, send)
+    }
+
+    #[test]
+    fn test_diag_counting() {
+        let (common, _sender) = make_common("test");
+        let config = toml::Table::new();
+        let mut output = DiagOutput::from_config(&common, config).unwrap();
+        output.handle_start_of_run("run1").unwrap();
+
+        let events = vec![
+            test_utils::neutron(100, 0),
+            test_utils::neutron(200, 0),
+            test_utils::neutron(300, 0),
+        ];
+        output.handle_events(&events).unwrap();
+        assert_eq!(output.ev_count, 3);
+
+        output.handle_end_of_run().unwrap();
+    }
+
+    #[test]
+    fn test_diag_out_of_order_detection() {
+        let (common, _sender) = make_common("test");
+        let mut config = toml::Table::new();
+        config.insert("check_order".into(), toml::Value::Boolean(true));
+        let mut output = DiagOutput::from_config(&common, config).unwrap();
+        output.handle_start_of_run("run1").unwrap();
+
+        let events = vec![
+            test_utils::neutron(300, 0),
+            test_utils::neutron(100, 0), // out of order
+        ];
+        output.handle_events(&events).unwrap();
+        assert_eq!(output.out_of_order, 1);
+    }
+
+    #[test]
+    fn test_diag_mask_filtering() {
+        let (common, _sender) = make_common("test");
+        let mut config = toml::Table::new();
+        config.insert("event_mask".into(), toml::Value::String("NEUTRON".into()));
+        let mut output = DiagOutput::from_config(&common, config).unwrap();
+        output.handle_start_of_run("run1").unwrap();
+
+        // mix of event types - only neutrons should match mask
+        let events = vec![
+            test_utils::neutron(100, 0),
+            test_utils::edge(200, 0, true),
+            test_utils::heartbeat(300),
+        ];
+        output.handle_events(&events).unwrap();
+        assert_eq!(output.ev_count, 3); // all counted
+    }
+
+    #[test]
+    fn test_diag_print_every() {
+        let (common, _sender) = make_common("test");
+        let mut config = toml::Table::new();
+        config.insert("print_every".into(), toml::Value::Integer(5));
+        let mut output = DiagOutput::from_config(&common, config).unwrap();
+        output.handle_start_of_run("run1").unwrap();
+
+        let events: Vec<_> = (0..10).map(|i| test_utils::neutron(i * 100, 0)).collect();
+        output.handle_events(&events).unwrap();
+        assert_eq!(output.ev_count, 10);
+        // debug_at should have been incremented once
+        assert_eq!(output.debug_at, 10);
+    }
+
+    #[test]
+    fn test_diag_reset_on_start() {
+        let (common, _sender) = make_common("test");
+        let mut config = toml::Table::new();
+        config.insert("check_order".into(), toml::Value::Boolean(true));
+        let mut output = DiagOutput::from_config(&common, config).unwrap();
+        output.handle_start_of_run("run1").unwrap();
+
+        let events = vec![test_utils::neutron(300, 0), test_utils::neutron(100, 0)];
+        output.handle_events(&events).unwrap();
+        assert_eq!(output.out_of_order, 1);
+
+        // restart should reset
+        output.handle_start_of_run("run2").unwrap();
+        assert_eq!(output.out_of_order, 0);
+        assert_eq!(output.ev_count, 0);
+    }
+}
