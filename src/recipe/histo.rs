@@ -72,8 +72,8 @@ impl Recipe for Tof {
                         self.cur_bin = 0;
                     }
                 }
-                EventData::AuxSignal { number, up: true } => {
-                    if self.aux_mode == Some(number) {
+                EventData::AuxSignal { num } => {
+                    if self.aux_mode == Some(num as _) {
                         self.last_t0 = event.time;
                         self.cur_bin = 0;
                     }
@@ -90,7 +90,7 @@ impl Recipe for Tof {
                         event.flags.set(EventFlags::HasRelTime);
                     }
 
-                    if let EventData::Neutron { x, y, t } = &mut event.data {
+                    if let EventData::Neutron = event.data {
                         if self.time_bins.len() > 1 {
                             // find the correct bin for this relative time
                             // this can never overflow, since the final bin is guaranteed
@@ -98,10 +98,10 @@ impl Recipe for Tof {
                             while event.rel_time >= self.time_bins[self.cur_bin] {
                                 self.cur_bin += 1;
                             }
-                            *t = self.cur_bin as u32;
+                            event.t = self.cur_bin as u32;
                         }
-                        *x /= self.bin_x;
-                        *y /= self.bin_y;
+                        event.x /= self.bin_x;
+                        event.y /= self.bin_y;
                     }
                 }
             }
@@ -158,9 +158,9 @@ impl Recipe for Std {
                         continue;
                     }
 
-                    if let EventData::Neutron { x, y, .. } = &mut event.data {
-                        *x /= self.bin_x;
-                        *y /= self.bin_y;
+                    if let EventData::Neutron = event.data {
+                        event.x /= self.bin_x;
+                        event.y /= self.bin_y;
                     }
                 }
             }

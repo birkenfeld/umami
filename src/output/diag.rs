@@ -15,22 +15,14 @@ use super::{Output, OutputCommon};
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventMask {
-    RAW_NEUTRON = 0x1,
-    RAW_EDGE = 0x2,
-    RAW_ANALOG = 0x4,
-    RAW_DIGITAL = 0x8,
-    RAW_DATA = 0x10,
+    NEUTRON = 0x1,
+    EDGE = 0x2,
     HEARTBEAT = 0x20,
-
-    NEUTRON = 0x40,
     MONITOR = 0x80,
     TZERO = 0x100,
     GATE = 0x200,
     AUX = 0x400,
     VOID = 0x800,
-
-    ALL_RAW = 0x3F,
-    ALL_COOKED = 0x7C0,
     ALL = 0xFFF,
 }
 
@@ -120,14 +112,9 @@ impl Output for DiagOutput {
             }
             self.last_ts = ev_ts;
             let display = self.event_mask.contains(match ev.data {
-                EventData::RawNeutron => EventMask::RAW_NEUTRON,
-                EventData::RawEdge { .. } => EventMask::RAW_EDGE,
-                EventData::RawAnalog1 { .. } => EventMask::RAW_ANALOG,
-                EventData::RawAnalog2 { .. } => EventMask::RAW_ANALOG,
-                EventData::RawDigital { .. } => EventMask::RAW_DIGITAL,
-                EventData::RawData { .. } => EventMask::RAW_DATA,
+                EventData::Neutron => EventMask::NEUTRON,
+                EventData::Edge { .. } => EventMask::EDGE,
                 EventData::Heartbeat => EventMask::HEARTBEAT,
-                EventData::Neutron { .. } => EventMask::NEUTRON,
                 EventData::Monitor { .. } => EventMask::MONITOR,
                 EventData::Tzero => EventMask::TZERO,
                 EventData::Gate { .. } => EventMask::GATE,

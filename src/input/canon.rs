@@ -115,6 +115,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
                         ChannelId(self.channel_ofs),
                         EventFlags::HasRelTime,
                         EventData::Tzero,
+                        0,
                     )
                 },
                 EventType::DevTime32bit => {
@@ -129,6 +130,7 @@ impl<S: CanonSource> Input for CanonInput<S> {
                         ChannelId(self.channel_ofs),
                         EventFlags::HasRelTime,
                         EventData::Tzero,
+                        0,
                     )
                 },
                 EventType::Neutron => {
@@ -138,9 +140,8 @@ impl<S: CanonSource> Input for CanonInput<S> {
                         t,
                         ChannelId(self.channel_ofs + u32::from(cev.p())),
                         EventFlags::HasRelTime,
-                        EventData::RawDigital { value1: u32::from(cev.pl()),
-                                                value2: u32::from(cev.pr()),
-                                                value3: 0 },
+                        EventData::Neutron,
+                        u32::from(cev.pl()) + u32::from(cev.pr()),
                     )
                 },
                 EventType::Neutron14bit => {
@@ -150,9 +151,8 @@ impl<S: CanonSource> Input for CanonInput<S> {
                         t,
                         ChannelId(self.channel_ofs + u32::from(cev.p14())),
                         EventFlags::HasRelTime,
-                        EventData::RawDigital { value1: u32::from(cev.pl14()),
-                                                value2: u32::from(cev.pr14()),
-                                                value3: 0 },
+                        EventData::Neutron,
+                        u32::from(cev.pl14()) + u32::from(cev.pr14()),
                     )
                 },
                 EventType::External =>

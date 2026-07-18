@@ -106,8 +106,8 @@ impl Output for HDF5EventsOutput {
         for event in events {
             match event.data {
                 // TODO: zero timestamps handling (chopper?)
-                EventData::Neutron { x, y, .. } => {
-                    self.id_buffer.push(HDF5EventsOutput::map_to_index(x, y));
+                EventData::Neutron => {
+                    self.id_buffer.push(HDF5EventsOutput::map_to_index(event.x, event.y));
                     self.offset_buffer.push(event.rel_time.into());
                 },
                 _ => (),

@@ -22,14 +22,15 @@ impl Recipe for Mpsd {
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
         for event in &mut events {
             match event.data {
-                EventData::RawDigital { value1: y, .. } => {
+                EventData::Neutron => {
                     let x_orig = event.channel.0;
                     // since the MPSD has only 8 channels per board,
                     // remove fourth bit of channel
                     let x = (x_orig >> 1) & 0xFFF8 | (x_orig & 0x7);
-                    event.data = EventData::Neutron { x, y, t: 0 };
+                    event.x = x;
+                    // event.y = y; TODO
                 }
-                EventData::RawEdge { .. } => {
+                EventData::Edge { up: true } => {
                     event.data = EventData::Tzero;
                 }
                 _ => ()
@@ -50,10 +51,11 @@ impl Recipe for Mdll {
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
         for event in &mut events {
             match event.data {
-                EventData::RawDigital { value1: y, value2: x, .. } => {
-                    event.data = EventData::Neutron { x, y, t: 0 };
+                EventData::Neutron => {
+                    event.x = 0; // TODO
+                    event.y = 0;
                 }
-                EventData::RawEdge { .. } => {
+                EventData::Edge { up: true } => {
                     event.data = EventData::Tzero;
                 }
                 _ => ()

@@ -122,6 +122,7 @@ impl<S: Source> Input for GeInput<S> {
                     ChannelId(0),
                     EventFlags::None,
                     EventData::Heartbeat,
+                    0,
                 )]);
             }
             return Err(anyhow!("Received empty packet of type {pktype:#x}").into());
@@ -151,17 +152,15 @@ impl<S: Source> Input for GeInput<S> {
 
         for _ in 0..nevents {
             let detid = LE::read_u32(&buffer[offset+8..]);
-            let data = if self.is_ts {
-                EventData::RawEdge { up: detid & 0x8000_0000 != 0 }
+            let (data, ampl) = if self.is_ts {
+                (EventData::Edge { up: detid & 0x8000_0000 != 0 }, 0)
             } else if pktype == PACKET_DIAG || pktype == PACKET_DIAG_FAKE {
-                let max_heights = LE::read_u32(&buffer[offset+12..]);
+                // let max_heights = LE::read_u32(&buffer[offset+12..]);
                 let a_integrated = LE::read_u32(&buffer[offset+16..]);
                 let b_integrated = LE::read_u32(&buffer[offset+20..]);
-                EventData::RawDigital { value1: max_heights,
-                                        value2: a_integrated,
-                                        value3: b_integrated }
+                (EventData::Neutron, a_integrated + b_integrated)
             } else {
-                EventData::RawNeutron
+                (EventData::Neutron, 0)
             };
             let event = Event::new(
                 read_time(&buffer[offset..]),
@@ -169,6 +168,7 @@ impl<S: Source> Input for GeInput<S> {
                 ChannelId(detid),
                 flags,
                 data,
+                ampl
             );
 
             // Use the packet header timestamp as a criterion - we know any events before

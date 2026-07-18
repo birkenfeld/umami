@@ -17,7 +17,7 @@ const MIDDLE_TUBE_OFFS: u32 = (TUBE_RESOLUTION - MIDDLE_TUBE_RES) / 2;
 const SMALL_TUBE_OFFS:  u32 = (TUBE_RESOLUTION - SMALL_TUBE_RES) / 2;
 const PIXEL_PER_PACK:   u32 = 8192;
 
-const EXT_START: u32 = 1;
+const EXT_START: u8 = 1;
 
 #[derive(Debug, Deserialize, Clone, HasParams)]
 #[serde(deny_unknown_fields)]
@@ -40,7 +40,7 @@ impl Recipe for KWSGERecipe {
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
         for event in &mut events {
             match event.data {
-                EventData::RawNeutron => {
+                EventData::Neutron => {
                     let mut x;
                     let mut y;
                     let mut id = event.channel.0;
@@ -74,9 +74,10 @@ impl Recipe for KWSGERecipe {
                         y = 64 + y/2;
                     }
 
-                    event.data = EventData::Neutron { x, y, t: 0 };
+                    event.x = x;
+                    event.y = y;
                 }
-                EventData::RawEdge { up } => {
+                EventData::Edge { up } => {
                     match event.channel.0 {
                         0 =>
                             event.data = EventData::Gate { up: up ^ self.invert_ts },
@@ -85,7 +86,7 @@ impl Recipe for KWSGERecipe {
                         3 if up ^ self.invert_ts =>
                             event.data = EventData::Tzero,
                         2 if up ^ self.invert_ts =>
-                            event.data = EventData::AuxSignal { number: EXT_START, up: true },
+                            event.data = EventData::AuxSignal { num: EXT_START },
                         _ => ()
                     }
                 }

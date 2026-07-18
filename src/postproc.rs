@@ -74,8 +74,8 @@ impl PostProcessor {
                     let evs = self.recipes[recipe].process(evs);
                     ltrace!("Processed events: {:?}", evs);
                     for ev in &evs {
-                        if let EventData::Neutron { x, y, t } = ev.data {
-                            self.shm.add_histo(x, y, t);
+                        if let EventData::Neutron = ev.data {
+                            self.shm.add_histo(ev.x, ev.y, ev.t);
                         }
                     }
                     item = PipeItem::Events(evs);

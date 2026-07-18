@@ -74,32 +74,22 @@ pub struct ChannelId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[derive(Archive, Serialize, Deserialize)]
 pub enum EventData {
-    // Variants used when reading from raw event sources.
-
-    /// Neutron with no additional time or position information.
-    RawNeutron = 0x0,
-    /// Signal edge without additional information.
-    RawEdge { up: bool } = 0x10,
-    RawAnalog1 { value1: u32, value2: f64 } = 0x20,
-    RawAnalog2 { value1: u32, value2: f32, value3: f32 } = 0x21,
-    RawDigital { value1: u32, value2: u32, value3: u32 } = 0x22,
-    RawData { value: [u8; 14], len: u8 } = 0x30,
-    Heartbeat = 0x40,
-
-    // Variants used after processing, with more detailed information.
-
-    /// Neutron with associated position and time bin information.
-    Neutron { x: u32, y: u32, t: u32 } = 0x80,
+    /// Neutron event.
+    Neutron = 0x01,
     /// Monitor count.
-    Monitor { index: u32 } = 0x90,
-    /// T-zero signal (usually chopper).
-    Tzero = 0x91,
+    Monitor = 0x02,
+    /// Signal edge without further meaning.
+    Edge { up: bool } = 0x10,
     /// Gate signal.
-    Gate { up: bool } = 0x92,
-    /// Auxiliary signal.
-    AuxSignal { number: u32, up: bool } = 0x93,
+    Gate { up: bool } = 0x11,
+    /// T-zero signal (usually chopper).
+    Tzero = 0x12,
+    /// Additional signal.
+    AuxSignal { num: u8 } = 0x13,
+    /// Heartbeat from hardware.
+    Heartbeat = 0x80,
     /// Sorted-out event.
-    Void = 0x94,
+    Void = 0xFF,
 }
 
 impl Eq for EventData {}
@@ -141,16 +131,21 @@ pub struct Event {
     // Do not change the structure, the serialization format depends on it.
     pub time: EventTime,
     pub rel_time: EventTime,  // zeroed until determined
-    pub flags: EventFlags,
-    // TODO: use 16 bits of data here
     pub channel: ChannelId,
+    pub ampl: u32,
+    // histogram coordinates
+    pub x: u32,
+    pub y: u32,
+    pub t: u32,
+    pub i: u32,
+    pub flags: EventFlags,
     pub data: EventData,
 }
 
 impl Event {
     pub fn new(time: EventTime, rel_time: EventTime, channel: ChannelId,
-               flags: EventFlags, data: EventData) -> Self {
-        Self { time, rel_time, flags, channel, data }
+               flags: EventFlags, data: EventData, ampl: u32) -> Self {
+        Self { time, rel_time, flags, channel, data, x: 0, y: 0, t: 0, i: 0, ampl }
     }
 
     pub fn dump(&self) -> DumpEvent<'_> {
@@ -189,33 +184,28 @@ impl Display for DumpEvent<'_> {
                ev.rel_time.0 as f64 / 1_000_000_000.0,
                ev.flags, ev.channel.0)?;
         match ev.data {
-            EventData::RawNeutron =>
-                write!(f, "RawNeutron"),
-            EventData::RawEdge { up } =>
-                write!(f, "RawEdge     {}", if up { "up" } else { "down" }),
-            EventData::RawAnalog1 { value1, value2 } =>
-                write!(f, "RawAnalog1  value1={value1}, value2={value2}"),
-            EventData::RawAnalog2 { value1, value2, value3 } =>
-                write!(f, "RawAnalog2  value1={value1}, value2={value2}, value3={value3}"),
-            EventData::RawDigital { value1, value2, value3 } =>
-                write!(f, "RawDigital  value1={value1}, value2={value2}, value3={value3}"),
-            EventData::RawData { value, len } =>
-                write!(f, "RawData     len={}, data={:02x?}",
-                       len, &value[..len as usize]),
+            EventData::Neutron =>
+                write!(f, "Neutron"),
+            EventData::Edge { up } =>
+                write!(f, "Edge      {}", if up { "up" } else { "down" }),
             EventData::Heartbeat =>
                 write!(f, "Heartbeat"),
-            EventData::Neutron { x, y, t } =>
-                write!(f, "Neutron     at {x:3}, {y:3}, {t:3}"),
-            EventData::Monitor { index } =>
-                write!(f, "Monitor     index={index}"),
+            EventData::Monitor =>
+                write!(f, "Monitor"),
             EventData::Tzero =>
                 write!(f, "T-zero"),
             EventData::Gate { up } =>
-                write!(f, "Gate        {}", if up { "up" } else { "down" }),
-            EventData::AuxSignal { number, up } =>
-                write!(f, "Aux signal  {} {}", number, if up { "up" } else { "down" }),
+                write!(f, "Gate      {}", if up { "up" } else { "down" }),
+            EventData::AuxSignal { num } =>
+                write!(f, "AuxSignal {num}"),
             EventData::Void =>
                 write!(f, "Void"),
         }
     }
+}
+
+#[test]
+fn test_event_size() {
+    use std::mem::size_of;
+    assert_eq!(size_of::<Event>(), 48);
 }

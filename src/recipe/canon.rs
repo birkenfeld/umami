@@ -23,14 +23,15 @@ impl Recipe for Psd {
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
         for event in &mut events {
             match event.data {
-                EventData::RawDigital { value1: pl, value2: pr, .. } => {
+                EventData::Neutron => {
                     // 8 tubes per module
                     let x = event.channel.0;
                     // TODO: calibration
-                    let y = ((f64::from(pr) / f64::from(pr + pl)) * self.reso as f64) as u32;
-                    event.data = EventData::Neutron { x, y, t: 0 };
+                    // let y = ((f64::from(pr) / f64::from(pr + pl)) * self.reso as f64) as u32;
+                    event.x = x;
+                    event.y = 0;
                 }
-                EventData::RawEdge { .. } => {
+                EventData::Edge { up: true } => {
                     event.data = EventData::Tzero;
                 }
                 _ => ()
