@@ -197,7 +197,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
                     ChannelId(xpos as u32),
                     EventFlags::None,
                     EventData::Neutron,
-                ).with_ampl(ampl as u32).with_y(ypos as u32)
+                ).with_ampl(ampl as u32).with_raw(ypos as u32, 0)
             };
             events.push(event);
         }

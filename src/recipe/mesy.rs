@@ -27,8 +27,8 @@ impl Recipe for Mpsd {
                     // since the MPSD has only 8 channels per board,
                     // remove fourth bit of channel
                     let x = (x_orig >> 1) & 0xFFF8 | (x_orig & 0x7);
-                    event.x = x;
-                    // event.y = y; TODO
+                    event.histo.x = x as u16;
+                    event.histo.y = event.raw.0 as u16; // TODO: calibration
                 }
                 EventData::Edge { up: true } => {
                     event.data = EventData::Tzero;
@@ -52,8 +52,8 @@ impl Recipe for Mdll {
         for event in &mut events {
             match event.data {
                 EventData::Neutron => {
-                    event.x = 0; // TODO
-                    event.y = 0;
+                    event.histo.x = 0; // TODO
+                    event.histo.y = 0;
                 }
                 EventData::Edge { up: true } => {
                     event.data = EventData::Tzero;
@@ -83,7 +83,7 @@ mod tests {
         let mut ev = test_utils::neutron(100, 0x185);
         ev.channel = ChannelId(0x185);
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].x, 197);
+        assert_eq!(out[0].histo.x, 197);
     }
 
     #[test]
@@ -96,7 +96,7 @@ mod tests {
         let mut ev = test_utils::neutron(100, 128);
         ev.channel = ChannelId(128);
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].x, 64);
+        assert_eq!(out[0].histo.x, 64);
     }
 
     #[test]
@@ -119,11 +119,11 @@ mod tests {
     fn test_mdll_neutron_sets_zero() {
         let mut recipe = Mdll::from_config(toml::Table::new(), &empty_recipes()).unwrap();
         let mut ev = test_utils::neutron(100, 1);
-        ev.x = 42;
-        ev.y = 99;
+        ev.histo.x = 42;
+        ev.histo.y = 99;
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].x, 0);
-        assert_eq!(out[0].y, 0);
+        assert_eq!(out[0].histo.x, 0);
+        assert_eq!(out[0].histo.y, 0);
     }
 
     #[test]

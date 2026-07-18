@@ -74,8 +74,8 @@ impl Recipe for KWSGERecipe {
                         y = 64 + y/2;
                     }
 
-                    event.x = x;
-                    event.y = y;
+                    event.histo.x = x as u16;
+                    event.histo.y = y as u16;
                 }
                 EventData::Edge { up } => {
                     match event.channel.0 {
@@ -113,8 +113,8 @@ mod tests {
         let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
         let ev = test_utils::neutron(100, 6 * PIXEL_PER_PACK);
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].x, 48);
-        assert_eq!(out[0].y, 0);
+        assert_eq!(out[0].histo.x, 48);
+        assert_eq!(out[0].histo.y, 0);
     }
 
     #[test]
@@ -123,8 +123,8 @@ mod tests {
         let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
         let ev = test_utils::neutron(100, 6 * PIXEL_PER_PACK + 256);
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].x, 49);
-        assert_eq!(out[0].y, 0);
+        assert_eq!(out[0].histo.x, 49);
+        assert_eq!(out[0].histo.y, 0);
     }
 
     #[test]
@@ -134,8 +134,8 @@ mod tests {
         let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
         let ev = test_utils::neutron(100, 2 * PIXEL_PER_PACK);
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].x, 16);
-        assert_eq!(out[0].y, 81);
+        assert_eq!(out[0].histo.x, 16);
+        assert_eq!(out[0].histo.y, 81);
     }
 
     #[test]
@@ -145,8 +145,8 @@ mod tests {
         let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
         let ev = test_utils::neutron(100, 4 * PIXEL_PER_PACK);
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].x, 32);
-        assert_eq!(out[0].y, 25);
+        assert_eq!(out[0].histo.x, 32);
+        assert_eq!(out[0].histo.y, 25);
     }
 
     #[test]

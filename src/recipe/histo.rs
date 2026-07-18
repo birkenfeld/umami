@@ -15,9 +15,9 @@ pub struct Tof {
     // Configuration
     /// Binning in spatial directions.
     #[param(help="Binning in x direction")]
-    bin_x: u32,
+    bin_x: u16,
     #[param(help="Binning in y direction")]
-    bin_y: u32,
+    bin_y: u16,
     /// Whether to use the gate signal to filter events. If false, gate signals
     /// are ignored.
     #[param(help="Whether to use gate signal")]
@@ -26,7 +26,7 @@ pub struct Tof {
     /// T0 is given by Tzero events.
     #[param(help="Aux signal number to use as T0, or false to use explicit T0 events",
             datatype="null or integer")]
-    aux_mode: Option<u32>,
+    aux_mode: Option<u8>,
     /// Contains end of time bins since T0.
     #[param(help="Time binning end times (first bin always starts at offset 0)",
             datatype="array of integers (nanoseconds)")]
@@ -40,10 +40,10 @@ pub struct Tof {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TofConfig {
-    pub bin_x: Option<u32>,
-    pub bin_y: Option<u32>,
+    pub bin_x: Option<u16>,
+    pub bin_y: Option<u16>,
     pub use_gate: Option<bool>,
-    pub aux_mode: Option<u32>,
+    pub aux_mode: Option<u8>,
     pub time_bins: Option<Vec<EventTime>>,
 }
 
@@ -98,10 +98,10 @@ impl Recipe for Tof {
                             while event.rel_time >= self.time_bins[self.cur_bin] {
                                 self.cur_bin += 1;
                             }
-                            event.t = self.cur_bin as u32;
+                            event.histo.t = self.cur_bin as u16;
                         }
-                        event.x /= self.bin_x;
-                        event.y /= self.bin_y;
+                        event.histo.x /= self.bin_x;
+                        event.histo.y /= self.bin_y;
                     }
                 }
             }
@@ -116,9 +116,9 @@ pub struct Std {
     // Configuration
     /// Binning in spatial directions.
     #[param(help="Binning in x direction")]
-    bin_x: u32,
+    bin_x: u16,
     #[param(help="Binning in y direction")]
-    bin_y: u32,
+    bin_y: u16,
     /// Whether to use the gate signal to filter events. If false, gate signals
     /// are ignored.
     #[param(help="Whether to use gate signal")]
@@ -131,8 +131,8 @@ pub struct Std {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct StdConfig {
-    pub bin_x: Option<u32>,
-    pub bin_y: Option<u32>,
+    pub bin_x: Option<u16>,
+    pub bin_y: Option<u16>,
     pub use_gate: Option<bool>,
 }
 
@@ -159,8 +159,8 @@ impl Recipe for Std {
                     }
 
                     if let EventData::Neutron = event.data {
-                        event.x /= self.bin_x;
-                        event.y /= self.bin_y;
+                        event.histo.x /= self.bin_x;
+                        event.histo.y /= self.bin_y;
                     }
                 }
             }
@@ -200,11 +200,11 @@ mod tests {
         let mut recipe = Std::from_config(cfg, &empty_recipes()).unwrap();
 
         let mut ev = test_utils::neutron(100, 1);
-        ev.x = 7;
-        ev.y = 8;
+        ev.histo.x = 7;
+        ev.histo.y = 8;
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].x, 3);  // 7 / 2
-        assert_eq!(out[0].y, 2);  // 8 / 3
+        assert_eq!(out[0].histo.x, 3);  // 7 / 2
+        assert_eq!(out[0].histo.y, 2);  // 8 / 3
     }
 
     #[test]
@@ -315,11 +315,11 @@ mod tests {
         let mut recipe = Tof::from_config(cfg, &empty_recipes()).unwrap();
 
         let mut ev = test_utils::neutron(100, 1);
-        ev.x = 10;
-        ev.y = 15;
+        ev.histo.x = 10;
+        ev.histo.y = 15;
         let out = recipe.process(vec![test_utils::tzero(0), ev]);
-        assert_eq!(out[1].x, 5);   // 10 / 2
-        assert_eq!(out[1].y, 3);   // 15 / 4
+        assert_eq!(out[1].histo.x, 5);   // 10 / 2
+        assert_eq!(out[1].histo.y, 3);   // 15 / 4
     }
 
     #[test]
@@ -340,9 +340,9 @@ mod tests {
             test_utils::neutron(2500, 3),  // bin 2 (2000 <= 2500)
         ];
         let out = recipe.process(events);
-        assert_eq!(out[1].t, 0);
-        assert_eq!(out[2].t, 1);
-        assert_eq!(out[3].t, 2);
+        assert_eq!(out[1].histo.t, 0);
+        assert_eq!(out[2].histo.t, 1);
+        assert_eq!(out[3].histo.t, 2);
     }
 
     #[test]

@@ -35,10 +35,6 @@ pub struct HDF5EventsOutput {
 impl HDF5EventsOutput {
     const BUFFER_SIZE: usize = 8192;
 
-    fn map_to_index(x: u32, y: u32) -> u32 {
-        1024 * y + x
-    }
-
     fn write_chunk(&mut self) -> UResult<()> {
         if let Some(file) = &self.file {
             let event_id = file.dataset("event_id")
@@ -104,13 +100,10 @@ impl Output for HDF5EventsOutput {
 
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
         for event in events {
-            match event.data {
-                // TODO: zero timestamps handling (chopper?)
-                EventData::Neutron => {
-                    self.id_buffer.push(HDF5EventsOutput::map_to_index(event.x, event.y));
-                    self.offset_buffer.push(event.rel_time.into());
-                },
-                _ => (),
+            // TODO: zero timestamps handling (chopper?)
+            if event.data == EventData::Neutron {
+                self.id_buffer.push(event.channel.0);
+                self.offset_buffer.push(event.rel_time.into());
             }
         }
         if self.id_buffer.len() >= Self::BUFFER_SIZE {

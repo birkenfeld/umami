@@ -96,6 +96,7 @@ pub struct HistoConfig {
     pub nx: usize,
     pub ny: usize,
     pub max_nt: usize,
+    pub max_ni: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -205,10 +206,12 @@ mod tests {
             nx = 100
             ny = 200
             max_nt = 50
+            max_ni = 8
         "#).unwrap();
         assert_eq!(cfg.nx, 100);
         assert_eq!(cfg.ny, 200);
         assert_eq!(cfg.max_nt, 50);
+        assert_eq!(cfg.max_ni, 8);
     }
 
     #[test]
@@ -241,6 +244,7 @@ mod tests {
             nx = 100
             ny = 100
             max_nt = 10
+            max_ni = 0
         "#).unwrap();
         assert_eq!(cfg.inputs.len(), 1);
         assert!(cfg.inputs.contains_key("main"));
@@ -268,6 +272,7 @@ mod tests {
             nx = 100
             ny = 100
             max_nt = 10
+            max_ni = 0
         "#).unwrap();
         assert!(cfg.outputs.is_none());
     }

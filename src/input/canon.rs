@@ -133,23 +133,27 @@ impl<S: CanonSource> Input for CanonInput<S> {
                 },
                 EventType::Neutron => {
                     let t = EventTime::from_ticks(25, cev.t());
+                    let pl = u32::from(cev.pl());
+                    let pr = u32::from(cev.pr());
                     Event::new(
                         self.time_ofs + t,
                         t,
                         ChannelId(self.channel_ofs + u32::from(cev.p())),
                         EventFlags::HasRelTime,
-                        EventData::Neutron,
-                    ).with_ampl(u32::from(cev.pl()) + u32::from(cev.pr()))
+                        EventData::Neutron
+                    ).with_ampl(pl + pr).with_raw(pl, pr)
                 },
                 EventType::Neutron14bit => {
                     let t = EventTime::from_ticks(25, cev.t());
+                    let pl = u32::from(cev.pl14());
+                    let pr = u32::from(cev.pr14());
                     Event::new(
                         self.time_ofs + t,
                         t,
                         ChannelId(self.channel_ofs + u32::from(cev.p14())),
                         EventFlags::HasRelTime,
-                        EventData::Neutron,
-                    ).with_ampl(u32::from(cev.pl14()) + u32::from(cev.pr14()))
+                        EventData::Neutron
+                    ).with_ampl(pl + pr).with_raw(pl, pr)
                 },
                 EventType::External =>
                     continue,

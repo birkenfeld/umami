@@ -27,9 +27,10 @@ impl Recipe for Psd {
                     // 8 tubes per module
                     let x = event.channel.0;
                     // TODO: calibration
-                    // let y = ((f64::from(pr) / f64::from(pr + pl)) * self.reso as f64) as u32;
-                    event.x = x;
-                    event.y = 0;
+                    let (pl, pr) = event.raw;
+                    let y = (f64::from(pr) / f64::from(pr + pl)) * self.reso as f64;
+                    event.histo.x = x as u16;
+                    event.histo.y = y as u16;
                 }
                 EventData::Edge { up: true } => {
                     event.data = EventData::Tzero;
@@ -57,8 +58,8 @@ mod tests {
         let mut recipe = Psd::from_config(cfg, &empty_recipes()).unwrap();
         let ev = test_utils::neutron(100, 42);
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].x, 42);
-        assert_eq!(out[0].y, 0);
+        assert_eq!(out[0].histo.x, 42);
+        assert_eq!(out[0].histo.y, 0);
     }
 
     #[test]

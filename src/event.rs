@@ -70,6 +70,11 @@ impl std::ops::Sub for EventTime {
 #[derive(Archive, Serialize, Deserialize)]
 pub struct ChannelId(pub u32);
 
+/// Amplitude of the event, e.g. pulse height or time-over-threshold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Archive, Serialize, Deserialize)]
+pub struct Amplitude(pub u32);
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[derive(Archive, Serialize, Deserialize)]
@@ -127,17 +132,31 @@ impl Display for EventFlags {
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
+pub struct EventHisto {
+    pub x: u16,
+    pub y: u16,
+    pub t: u16,
+    pub i: u16,
+}
+
+impl EventHisto {
+    pub fn zero() -> Self {
+        Self { x: 0, y: 0, t: 0, i: 0 }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Archive, Serialize, Deserialize)]
 pub struct Event {
     // Do not change the structure, the serialization format depends on it.
     pub time: EventTime,
     pub rel_time: EventTime,  // zeroed until determined
+    pub raw: (u32, u32),      // raw data from hardware, e.g. for debugging
     pub channel: ChannelId,
-    pub ampl: u32,
+    pub ampl: Amplitude,
     // histogram coordinates
-    pub x: u32,
-    pub y: u32,
-    pub t: u32,
-    pub i: u32,
+    pub histo: EventHisto,
     pub flags: EventFlags,
     pub data: EventData,
 }
@@ -145,27 +164,22 @@ pub struct Event {
 impl Event {
     pub fn new(time: EventTime, rel_time: EventTime, channel: ChannelId,
                flags: EventFlags, data: EventData) -> Self {
-        Self { time, rel_time, flags, channel, data,
-               x: 0, y: 0, t: 0, i: 0, ampl: 0 }
+        Self { time, rel_time, flags, channel, data, histo: EventHisto::zero(),
+               ampl: Amplitude(0), raw: (0, 0) }
+    }
+
+    pub fn with_ampl(mut self, ampl: u32) -> Self {
+        self.ampl = Amplitude(ampl);
+        self
+    }
+
+    pub fn with_raw(mut self, a: u32, b: u32) -> Self {
+        self.raw = (a, b);
+        self
     }
 
     pub fn dump(&self) -> DumpEvent<'_> {
         DumpEvent(self)
-    }
-
-    pub fn with_ampl(mut self, ampl: u32) -> Self {
-        self.ampl = ampl;
-        self
-    }
-
-    pub fn with_x(mut self, x: u32) -> Self {
-        self.x = x;
-        self
-    }
-
-    pub fn with_y(mut self, y: u32) -> Self {
-        self.y = y;
-        self
     }
 }
 
@@ -259,10 +273,10 @@ pub(crate) mod test_utils {
                     EventFlags::empty(), EventData::Void)
     }
 
-    pub fn neutron_xy(time_ns: i64, channel: u32, x: u32, y: u32) -> Event {
+    pub fn neutron_xy(time_ns: i64, channel: u32, x: u16, y: u16) -> Event {
         let mut ev = neutron(time_ns, channel);
-        ev.x = x;
-        ev.y = y;
+        ev.histo.x = x;
+        ev.histo.y = y;
         ev
     }
 }
@@ -383,11 +397,11 @@ mod tests {
         assert_eq!(ev.channel, ChannelId(42));
         assert_eq!(ev.flags, EventFlags::HasRelTime);
         assert_eq!(ev.data, EventData::Neutron);
-        assert_eq!(ev.ampl, 1234);
-        assert_eq!(ev.x, 0);
-        assert_eq!(ev.y, 0);
-        assert_eq!(ev.t, 0);
-        assert_eq!(ev.i, 0);
+        assert_eq!(ev.ampl, Amplitude(1234));
+        assert_eq!(ev.histo.x, 0);
+        assert_eq!(ev.histo.y, 0);
+        assert_eq!(ev.histo.t, 0);
+        assert_eq!(ev.histo.i, 0);
     }
 
     #[test]
@@ -417,7 +431,7 @@ mod tests {
         assert_eq!(ev.data, EventData::Void);
 
         let ev = test_utils::neutron_xy(800, 1, 10, 20);
-        assert_eq!(ev.x, 10);
-        assert_eq!(ev.y, 20);
+        assert_eq!(ev.histo.x, 10);
+        assert_eq!(ev.histo.y, 20);
     }
 }

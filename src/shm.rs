@@ -9,9 +9,10 @@ use std::ptr::{self, NonNull};
 use anyhow::{anyhow, Context};
 use nix::{fcntl::OFlag, unistd::ftruncate};
 use nix::sys::{mman::{shm_open, mmap, MapFlags, ProtFlags},
-               stat::{fstat, Mode}};
+               stat::Mode};
 use crate::config::HistoConfig;
 use crate::error::UResult;
+use crate::event::EventHisto;
 
 pub const MAX_INPUTS: usize = 128;
 pub const MAX_HISTO_SIZE: usize = 1024 * 1024 * 1024;  // 1 GB shmem
@@ -37,27 +38,35 @@ impl DerefMut for ShmBox {
 }
 
 impl ShmBox {
+    fn histo_size(&self, nt: u16) -> usize {
+        self.nx as usize * self.ny as usize * nt as usize
+    }
+
     pub fn clear_histo(&mut self) {
-        let size = (self.nx * self.ny * self.nt) as usize;
+        let size = self.histo_size(self.nt);
         unsafe {
             let histo_ptr = self.ptr.as_ptr().add(1).cast::<u32>();
             std::slice::from_raw_parts_mut(histo_ptr, size).fill(0);
         };
     }
 
-    pub fn add_histo(&mut self, x: u32, y: u32, t: u32) {
-        if x < self.nx && y < self.ny && t < self.nt {
-            let off = t * (self.nx * self.ny) + y * self.nx + x;
+    pub fn add_histo(&mut self, h: EventHisto) {
+        // TODO: i
+        if h.x < self.nx && h.y < self.ny && h.t < self.nt {
+            let off = h.t as usize * self.nx as usize * self.ny as usize
+                    + h.y as usize * self.nx as usize
+                    + h.x as usize;
             unsafe {
                 let histo_ptr = self.ptr.as_ptr().add(1).cast::<u32>();
-                let place_ptr = histo_ptr.add(off as usize);
+                let place_ptr = histo_ptr.add(off);
                 ptr::write(place_ptr, place_ptr.read() + 1);
             }
         }
     }
 
+    #[cfg(test)]
     pub fn histo_total(&self) -> u64 {
-        let size = (self.nx * self.ny * self.nt) as usize;
+        let size = self.histo_size(self.nt);
         let histo = unsafe {
             let ptr = self.ptr.as_ptr().add(1).cast::<u32>();
             std::slice::from_raw_parts(ptr, size)
@@ -66,8 +75,8 @@ impl ShmBox {
     }
 
     pub fn save_to_file(&self, filename: &str, max_nt: usize) -> UResult<()> {
-        let nt = self.nt.min(max_nt as u32);
-        let size = (self.nx * self.ny * nt) as usize;
+        let nt = self.nt.min(max_nt as u16);
+        let size = self.histo_size(nt);
         let histo_slice = unsafe {
             let histo_ptr = self.ptr.as_ptr().add(1) as *const u32;
             std::slice::from_raw_parts(histo_ptr, size)
@@ -98,9 +107,10 @@ impl ShmBox {
 pub struct ShmInterface {
     pub run_id: [u8; 128],
     pub global_state: u32,
-    pub nx: u32,
-    pub ny: u32,
-    pub nt: u32,
+    pub nx: u16,
+    pub ny: u16,
+    pub nt: u16,
+    pub ni: u16,
 }
 
 impl ShmInterface {
@@ -137,16 +147,18 @@ impl ShmInterface {
         let mut shmbox = ShmBox { ptr: ptr.cast() };
         shmbox.run_id.fill(0);
         shmbox.global_state = 0;
-        shmbox.nx = config.nx as u32;
-        shmbox.ny = config.ny as u32;
-        shmbox.nt = config.max_nt as u32;
+        shmbox.nx = config.nx as u16;
+        shmbox.ny = config.ny as u16;
+        shmbox.nt = config.max_nt as u16;
+        shmbox.ni = config.max_ni as u16;
         Ok(shmbox)
     }
 
+    #[cfg(test)]
     pub fn open(name: &str) -> UResult<ShmBox> {
         let fd = shm_open(name, OFlag::O_RDONLY, Mode::empty())
             .context("Opening shared memory block")?;
-        let total_size = fstat(&fd).context("Stat shared memory block")?.st_size as usize;
+        let total_size = nix::sys::stat::fstat(&fd).context("Stat shared memory block")?.st_size as usize;
         if total_size < size_of::<ShmInterface>() {
             Err(anyhow!("Shared memory block too small for header"))?;
         }
@@ -172,7 +184,7 @@ mod tests {
     }
 
     fn test_config() -> HistoConfig {
-        HistoConfig { nx: 4, ny: 4, max_nt: 4 }
+        HistoConfig { nx: 4, ny: 4, max_nt: 4, max_ni: 0 }
     }
 
     #[test]
@@ -191,9 +203,9 @@ mod tests {
         assert_eq!(shm.global_state & 1, 1);
 
         // add_histo in bounds
-        shm.add_histo(0, 0, 0);
-        shm.add_histo(0, 0, 0);
-        shm.add_histo(1, 2, 3);
+        shm.add_histo(EventHisto { x: 0, y: 0, t: 0, i: 0 });
+        shm.add_histo(EventHisto { x: 0, y: 0, t: 0, i: 0 });
+        shm.add_histo(EventHisto { x: 1, y: 2, t: 3, i: 0 });
 
         // verify histogram values
         let histo = unsafe {
@@ -213,7 +225,7 @@ mod tests {
     fn test_shm_add_out_of_bounds_ignored() {
         let name = unique_shm_name();
         let mut shm = ShmInterface::create(&name, &test_config()).unwrap();
-        shm.add_histo(10, 10, 10); // all out of bounds
+        shm.add_histo(EventHisto { x: 10, y: 10, t: 10, i: 0 }); // all out of bounds
         // should not panic
         nix::sys::mman::shm_unlink(name.as_bytes()).ok();
     }
@@ -222,8 +234,8 @@ mod tests {
     fn test_shm_clear_histo() {
         let name = unique_shm_name();
         let mut shm = ShmInterface::create(&name, &test_config()).unwrap();
-        shm.add_histo(0, 0, 0);
-        shm.add_histo(1, 1, 1);
+        shm.add_histo(EventHisto { x: 0, y: 0, t: 0, i: 0 });
+        shm.add_histo(EventHisto { x: 1, y: 1, t: 1, i: 0 });
         shm.clear_histo();
         let histo = unsafe {
             let ptr = shm.ptr.as_ptr().add(1).cast::<u32>();
@@ -237,8 +249,8 @@ mod tests {
     fn test_shm_save_to_file() {
         let name = unique_shm_name();
         let mut shm = ShmInterface::create(&name, &test_config()).unwrap();
-        shm.add_histo(0, 0, 0);
-        shm.add_histo(0, 0, 0);
+        shm.add_histo(EventHisto { x: 0, y: 0, t: 0, i: 0 });
+        shm.add_histo(EventHisto { x: 0, y: 0, t: 0, i: 0 });
         let path = format!("/tmp/umami_test_histo_{}", std::process::id());
         shm.save_to_file(&path, 4).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
@@ -250,7 +262,7 @@ mod tests {
     #[test]
     fn test_shm_zero_size_fails() {
         let name = unique_shm_name();
-        let config = HistoConfig { nx: 0, ny: 1, max_nt: 1 };
+        let config = HistoConfig { nx: 0, ny: 1, max_nt: 1, max_ni: 0 };
         let result = ShmInterface::create(&name, &config);
         assert!(result.is_err());
     }

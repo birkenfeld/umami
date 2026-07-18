@@ -115,7 +115,7 @@ impl Output for DiagOutput {
                 EventData::Neutron => EventMask::NEUTRON,
                 EventData::Edge { .. } => EventMask::EDGE,
                 EventData::Heartbeat => EventMask::HEARTBEAT,
-                EventData::Monitor { .. } => EventMask::MONITOR,
+                EventData::Monitor => EventMask::MONITOR,
                 EventData::Tzero => EventMask::TZERO,
                 EventData::Gate { .. } => EventMask::GATE,
                 EventData::AuxSignal { .. } => EventMask::AUX,
