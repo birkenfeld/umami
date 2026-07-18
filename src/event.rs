@@ -144,12 +144,28 @@ pub struct Event {
 
 impl Event {
     pub fn new(time: EventTime, rel_time: EventTime, channel: ChannelId,
-               flags: EventFlags, data: EventData, ampl: u32) -> Self {
-        Self { time, rel_time, flags, channel, data, x: 0, y: 0, t: 0, i: 0, ampl }
+               flags: EventFlags, data: EventData) -> Self {
+        Self { time, rel_time, flags, channel, data,
+               x: 0, y: 0, t: 0, i: 0, ampl: 0 }
     }
 
     pub fn dump(&self) -> DumpEvent<'_> {
         DumpEvent(self)
+    }
+
+    pub fn with_ampl(mut self, ampl: u32) -> Self {
+        self.ampl = ampl;
+        self
+    }
+
+    pub fn with_x(mut self, x: u32) -> Self {
+        self.x = x;
+        self
+    }
+
+    pub fn with_y(mut self, y: u32) -> Self {
+        self.y = y;
+        self
     }
 }
 
@@ -210,37 +226,37 @@ pub(crate) mod test_utils {
 
     pub fn neutron(time_ns: i64, channel: u32) -> Event {
         Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(channel),
-                    EventFlags::empty(), EventData::Neutron, 0)
+                    EventFlags::empty(), EventData::Neutron)
     }
 
     pub fn edge(time_ns: i64, channel: u32, up: bool) -> Event {
         Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(channel),
-                    EventFlags::empty(), EventData::Edge { up }, 0)
+                    EventFlags::empty(), EventData::Edge { up })
     }
 
     pub fn tzero(time_ns: i64) -> Event {
         Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(0),
-                    EventFlags::empty(), EventData::Tzero, 0)
+                    EventFlags::empty(), EventData::Tzero)
     }
 
     pub fn gate(time_ns: i64, up: bool) -> Event {
         Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(0),
-                    EventFlags::empty(), EventData::Gate { up }, 0)
+                    EventFlags::empty(), EventData::Gate { up })
     }
 
     pub fn aux(time_ns: i64, num: u8) -> Event {
         Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(0),
-                    EventFlags::empty(), EventData::AuxSignal { num }, 0)
+                    EventFlags::empty(), EventData::AuxSignal { num })
     }
 
     pub fn heartbeat(time_ns: i64) -> Event {
         Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(0),
-                    EventFlags::empty(), EventData::Heartbeat, 0)
+                    EventFlags::empty(), EventData::Heartbeat)
     }
 
     pub fn void(time_ns: i64) -> Event {
         Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(0),
-                    EventFlags::empty(), EventData::Void, 0)
+                    EventFlags::empty(), EventData::Void)
     }
 
     pub fn neutron_xy(time_ns: i64, channel: u32, x: u32, y: u32) -> Event {
@@ -360,8 +376,8 @@ mod tests {
     fn test_event_new() {
         let ev = Event::new(
             EventTime(100), EventTime(50), ChannelId(42),
-            EventFlags::HasRelTime, EventData::Neutron, 1234,
-        );
+            EventFlags::HasRelTime, EventData::Neutron,
+        ).with_ampl(1234);
         assert_eq!(ev.time, EventTime(100));
         assert_eq!(ev.rel_time, EventTime(50));
         assert_eq!(ev.channel, ChannelId(42));

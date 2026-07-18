@@ -65,18 +65,6 @@ impl ShmBox {
         histo.iter().map(|&v| v as u64).sum()
     }
 
-    pub fn histo_value(&self, x: u32, y: u32, t: u32) -> u32 {
-        if x < self.nx && y < self.ny && t < self.nt {
-            let off = t * (self.nx * self.ny) + y * self.nx + x;
-            unsafe {
-                let ptr = self.ptr.as_ptr().add(1).cast::<u32>().add(off as usize);
-                ptr.read()
-            }
-        } else {
-            0
-        }
-    }
-
     pub fn save_to_file(&self, filename: &str, max_nt: usize) -> UResult<()> {
         let nt = self.nt.min(max_nt as u32);
         let size = (self.nx * self.ny * nt) as usize;

@@ -122,7 +122,6 @@ impl<S: Source> Input for GeInput<S> {
                     ChannelId(0),
                     EventFlags::None,
                     EventData::Heartbeat,
-                    0,
                 )]);
             }
             return Err(anyhow!("Received empty packet of type {pktype:#x}").into());
@@ -168,8 +167,7 @@ impl<S: Source> Input for GeInput<S> {
                 ChannelId(detid),
                 flags,
                 data,
-                ampl
-            );
+            ).with_ampl(ampl);
 
             // Use the packet header timestamp as a criterion - we know any events before
             // this timestamp have been sent in this or a previous packet.  Any events

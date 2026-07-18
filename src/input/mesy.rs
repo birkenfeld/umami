@@ -161,8 +161,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
                                        EventTime::zero(),
                                        ChannelId(0),
                                        EventFlags::None,
-                                       EventData::Heartbeat,
-                                       0));
+                                       EventData::Heartbeat));
                 self.no_event_buffers = 0;
             }
         } else {
@@ -181,7 +180,6 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
                     ChannelId(data_id as u32),
                     EventFlags::None,
                     EventData::Edge { up: true },
-                    0,
                 )
             } else {
                 // neutron event
@@ -199,8 +197,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
                     ChannelId(xpos as u32),
                     EventFlags::None,
                     EventData::Neutron,
-                    ampl as u32
-                )
+                ).with_ampl(ampl as u32).with_y(ypos as u32)
             };
             events.push(event);
         }
