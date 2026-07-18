@@ -8,7 +8,8 @@ use std::ops::{Deref, DerefMut};
 use std::ptr::{self, NonNull};
 use anyhow::{anyhow, Context};
 use nix::{fcntl::OFlag, unistd::ftruncate};
-use nix::sys::{mman::{shm_open, mmap, MapFlags, ProtFlags}, stat::Mode};
+use nix::sys::{mman::{shm_open, mmap, MapFlags, ProtFlags},
+               stat::{fstat, Mode}};
 use crate::config::HistoConfig;
 use crate::error::UResult;
 
@@ -52,6 +53,27 @@ impl ShmBox {
                 let place_ptr = histo_ptr.add(off as usize);
                 ptr::write(place_ptr, place_ptr.read() + 1);
             }
+        }
+    }
+
+    pub fn histo_total(&self) -> u64 {
+        let size = (self.nx * self.ny * self.nt) as usize;
+        let histo = unsafe {
+            let ptr = self.ptr.as_ptr().add(1).cast::<u32>();
+            std::slice::from_raw_parts(ptr, size)
+        };
+        histo.iter().map(|&v| v as u64).sum()
+    }
+
+    pub fn histo_value(&self, x: u32, y: u32, t: u32) -> u32 {
+        if x < self.nx && y < self.ny && t < self.nt {
+            let off = t * (self.nx * self.ny) + y * self.nx + x;
+            unsafe {
+                let ptr = self.ptr.as_ptr().add(1).cast::<u32>().add(off as usize);
+                ptr.read()
+            }
+        } else {
+            0
         }
     }
 
@@ -131,6 +153,21 @@ impl ShmInterface {
         shmbox.ny = config.ny as u32;
         shmbox.nt = config.max_nt as u32;
         Ok(shmbox)
+    }
+
+    pub fn open(name: &str) -> UResult<ShmBox> {
+        let fd = shm_open(name, OFlag::O_RDONLY, Mode::empty())
+            .context("Opening shared memory block")?;
+        let total_size = fstat(&fd).context("Stat shared memory block")?.st_size as usize;
+        if total_size < size_of::<ShmInterface>() {
+            Err(anyhow!("Shared memory block too small for header"))?;
+        }
+        let ptr = unsafe {
+            mmap(None, NonZeroUsize::new(total_size).expect("size"),
+                 ProtFlags::PROT_READ, MapFlags::MAP_SHARED, fd, 0)
+                .context("Mapping shared memory block for reading")?
+        };
+        Ok(ShmBox { ptr: ptr.cast() })
     }
 }
 

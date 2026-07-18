@@ -198,3 +198,103 @@ fn check_module_names(config: &Config) -> UResult<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::output::Output;
+    use crate::params::HasParams;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static SHM_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    struct TestOutput {
+        done: channel::Sender<()>,
+    }
+
+    impl HasParams for TestOutput {
+        fn get_params(&self) -> UResult<ParamMap> { Ok(ParamMap::new()) }
+        fn update_params(&mut self, _: ModuleId, _: ParamMap) -> UResult<()> { Ok(()) }
+    }
+
+    impl Output for TestOutput {
+        fn from_config(_: &OutputCommon, _: toml::Table) -> UResult<Self> {
+            unreachable!()
+        }
+        fn handle_events(&mut self, _: &[Event]) -> UResult<()> { Ok(()) }
+        fn handle_start_of_run(&mut self, _: &str) -> UResult<()> { Ok(()) }
+        fn handle_end_of_run(&mut self) -> UResult<()> {
+            self.done.send(()).ok();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_pipeline_mesy_file() {
+        let shm_name = format!(
+            "umami_inttest_{}_{}", std::process::id(),
+            SHM_COUNTER.fetch_add(1, Ordering::SeqCst),
+        );
+
+        let conf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("test/mesyfile.conf");
+        let config = crate::load_config(&conf_path).unwrap();
+        let confdir = config.filename.parent().unwrap_or(Path::new("."));
+
+        let shm = ShmInterface::create(&shm_name, &config.histogram).unwrap();
+
+        let mut post_recipes = BTreeMap::new();
+        for name in config.process_modes.recipes.keys() {
+            let recipe_name = ModuleId::new(name.into());
+            post_recipes.insert(
+                recipe_name,
+                recipe::from_config(&config.process_modes.recipes, &recipe_name).unwrap(),
+            );
+        }
+        let default_name = ModuleId::new(config.process_modes.default);
+
+        let (postproc_send, postproc_recv) = channel::bounded(EV_CHANNEL_SIZE);
+        let (output_send, output_recv) = channel::bounded(OUT_CHANNEL_SIZE);
+
+        postproc::PostProcessor::new(
+            post_recipes, default_name, postproc_recv, output_send, shm,
+        ).start().unwrap();
+
+        let (done_tx, done_rx) = channel::bounded(1);
+        let out_common = OutputCommon::new(
+            ModuleId::new("test_out".into()), output_recv, None,
+        );
+        TestOutput { done: done_tx }.start(out_common).unwrap();
+
+        let (input_name_str, input_config) = config.inputs.into_iter().next().unwrap();
+        let input_recipe = recipe::from_config(
+            &config.input_recipes, &input_config.recipe,
+        ).unwrap();
+        let (cmd_tx, cmd_rx) = channel::bounded(1);
+
+        let common = InputCommon::new(
+            ModuleId::new(input_name_str),
+            postproc_send.clone(),
+            postproc_send.clone(),
+            cmd_rx,
+            input_recipe,
+        );
+        input::start(input_config.specific, confdir, common).unwrap();
+
+        let (rep_tx, rep_rx) = channel::bounded(1);
+        cmd_tx.send((Command::Start { run_id: "test".into() }, rep_tx)).unwrap();
+        assert!(matches!(rep_rx.recv().unwrap(), CommandReply::Ok));
+
+        done_rx.recv_timeout(std::time::Duration::from_secs(30))
+              .expect("Pipeline did not complete in time");
+
+        drop(cmd_tx);
+        drop(postproc_send);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let shm_read = ShmInterface::open(&shm_name).unwrap();
+        let total = shm_read.histo_total();
+        assert!(total > 0, "Expected non-zero neutron counts in histogram");
+
+        nix::sys::mman::shm_unlink(shm_name.as_bytes()).ok();
+    }
+}
