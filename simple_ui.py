@@ -56,8 +56,8 @@ if fd < 0:
     raise RuntimeError('Could not open shared memory')
 mapp = mmap.mmap(fd, off_size, prot=mmap.PROT_READ)
 header_values = np.frombuffer(mapp, '<u2', count=4, offset=132)
-nx = header_values[0]
-ny = header_values[1]
+nx = int(header_values[0])
+ny = int(header_values[1])
 del header_values
 mapp.close()
 
