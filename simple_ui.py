@@ -1,3 +1,31 @@
+"""Simple live histogram viewer for UMAMI shared-memory output.
+
+Reads a 3-D histogram (x × y × t) from a POSIX shared-memory segment
+and displays the t=0 plane as a real-time, log-scale colour image using
+PyQtGraph.  Shared-memory segment layout:
+
+    Offset  Size  Field
+    ------  ----  -----
+       0     128  run_id (ASCII, NUL-padded)
+     128       4  global_state (u32)
+     132       2  nx (u16)
+     134       2  ny (u16)
+     136       2  nt (u16)
+     138       2  ni (u16)
+     140    nx*ny*nt*ni × 4  histogram bins (u32, LE)
+
+Control buttons (Reset, Clear, Start, Stop) send JSON commands to the
+UMAMI pipeline via an abstract Unix datagram socket; a Quit button closes
+the viewer.
+
+Features:
+- Automatic refresh at 4 fps (250 ms timer).
+- Log10 colour-mapped display (viridis).
+- Live count-rate calculation shown in the window title.
+- Accepts an optional command-line argument to select the shared-memory
+  segment name (defaults to ``umami``).
+"""
+
 import os
 import sys
 import mmap
@@ -20,16 +48,16 @@ try:
 except IndexError:
     shm_name = 'umami'
 
-off_size = 128 + 4*4
+off_size = 128 + 4 + 2*4  # run_id(128) + global_state(u32) + nx,ny,nt,ni (4 × u16)
 
 lib = ffi.dlopen('rt')
 fd = lib.shm_open(shm_name.encode(), os.O_RDONLY, 0o666)
 if fd < 0:
     raise RuntimeError('Could not open shared memory')
 mapp = mmap.mmap(fd, off_size, prot=mmap.PROT_READ)
-header_values = np.frombuffer(mapp, '<u4')
-nx = header_values[33]
-ny = header_values[34]
+header_values = np.frombuffer(mapp, '<u2', count=4, offset=132)
+nx = header_values[0]
+ny = header_values[1]
 del header_values
 mapp.close()
 
