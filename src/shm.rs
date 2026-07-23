@@ -111,6 +111,7 @@ pub struct ShmInterface {
     pub ny: u16,
     pub nt: u16,
     pub ni: u16,
+    pub reserved: u32,  // pad to 16 bytes from global_state
 }
 
 impl ShmInterface {

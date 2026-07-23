@@ -48,12 +48,12 @@ try:
 except IndexError:
     shm_name = 'umami'
 
-off_size = 128 + 4 + 2*4  # run_id(128) + global_state(u32) + nx,ny,nt,ni (4 × u16)
+off_size = 128 + 4*4  # run_id(128) + global_state(u32) + nx,ny,nt,ni (4 × u16) + padding
 
 lib = ffi.dlopen('rt')
 fd = lib.shm_open(shm_name.encode(), os.O_RDONLY, 0o666)
 if fd < 0:
-    raise RuntimeError('Could not open shared memory')
+    raise RuntimeError(f'Could not open shared memory: {os.strerror(-fd)}')
 mapp = mmap.mmap(fd, off_size, prot=mmap.PROT_READ)
 header_values = np.frombuffer(mapp, '<u2', count=4, offset=132)
 nx = int(header_values[0])
