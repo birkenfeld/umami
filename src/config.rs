@@ -67,8 +67,7 @@ pub enum SpecificInputConfig {
 
 /// Config for a synthetic input backend used only in pipeline tests: it
 /// generates one Neutron event for every (x, y) cell in `0..nx` x `0..ny`,
-/// so tests can assert an exact, hand-computed histogram instead of relying
-/// on golden data files.
+/// so tests can assert an exact histogram.
 #[cfg(test)]
 #[derive(Debug, Deserialize)]
 pub struct TestInputConfig {

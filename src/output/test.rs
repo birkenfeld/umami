@@ -5,6 +5,7 @@ use crate::channel::{Receiver, Sender};
 use crate::command::ModuleId;
 use crate::error::UResult;
 use crate::event::Event;
+use crate::output::{OutputCommon, Output};
 use crate::params::HasParams;
 
 static TEST_DONE_TX: std::sync::Mutex<std::collections::BTreeMap<String, Sender<()>>> =
@@ -35,8 +36,8 @@ impl HasParams for TestOutput {
     }
 }
 
-impl super::Output for TestOutput {
-    fn from_config(_: &super::OutputCommon, _: toml::Table) -> UResult<Self> {
+impl Output for TestOutput {
+    fn from_config(_: &OutputCommon, _: toml::Table) -> UResult<Self> {
         unreachable!()
     }
     fn handle_events(&mut self, _: &[Event]) -> UResult<()> { Ok(()) }
