@@ -2,6 +2,7 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use std::path::PathBuf;
+use anyhow::Context;
 use clap::Parser;
 
 use umami::lprintln;
@@ -38,7 +39,9 @@ fn inner_main(args: Options) -> umami::UResult<()> {
     }
 
     umami::set_debug_params(config.debug | args.debug | args.trace, args.trace)?;
-    umami::run_pipeline(config, args.start)
+    umami::start_pipeline(config, args.start)?;
+    umami::wait_for_signal().context("Setting signal handler")?;
+    Ok(())
 }
 
 fn main() {

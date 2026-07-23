@@ -14,10 +14,23 @@ use crate::event::Event;
 use crate::input::{InputCommon, InputState};
 use crate::params::ParamMap;
 use crate::shm::{ShmInterface, MAX_INPUTS};
-use crate::util::wait_for_signal;
 
 const EV_CHANNEL_SIZE: usize = 128; // TODO tune more?
 const OUT_CHANNEL_SIZE: usize = 16384; // give outputs some slack
+
+pub struct PipelineHandle {
+    ipc_name: String,
+}
+
+impl PipelineHandle {
+    pub fn ipc_name(&self) -> &str {
+        &self.ipc_name
+    }
+
+    pub fn shm_name(&self) -> &str {
+        &self.ipc_name
+    }
+}
 
 pub enum PipeItem {
     Events(Vec<Event>),
@@ -33,7 +46,7 @@ pub enum PipeItem {
     SaveHisto(String, usize, channel::Sender<CommandReply>),
 }
 
-pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
+pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<PipelineHandle> {
     let n_inputs = config.inputs.len();
     if n_inputs == 0 {
         Err(anyhow!("No inputs configured"))?;
@@ -165,9 +178,7 @@ pub fn run_pipeline(config: Config, immediate_start: bool) -> UResult<()> {
 
     handler.start()?;
 
-    wait_for_signal().context("Setting signal handler")?;
-
-    Ok(())
+    Ok(PipelineHandle { ipc_name: config.ipc_name })
 }
 
 fn check_module_names(config: &Config) -> UResult<()> {
@@ -205,134 +216,43 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::client::Client;
-    use crate::output::Output;
-    use crate::params::HasParams;
 
     static SHM_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    struct TestOutput {
-        done: channel::Sender<()>,
-    }
-
-    impl HasParams for TestOutput {
-        fn get_params(&self) -> UResult<ParamMap> { Ok(ParamMap::new()) }
-        fn update_params(&mut self, _: ModuleId, _: ParamMap) -> UResult<()> { Ok(()) }
-    }
-
-    impl Output for TestOutput {
-        fn from_config(_: &OutputCommon, _: toml::Table) -> UResult<Self> {
-            unreachable!()
-        }
-        fn handle_events(&mut self, _: &[Event]) -> UResult<()> { Ok(()) }
-        fn handle_start_of_run(&mut self, _: &str) -> UResult<()> { Ok(()) }
-        fn handle_end_of_run(&mut self) -> UResult<()> {
-            self.done.send(()).ok();
-            Ok(())
-        }
-    }
-
-    struct TestPipeline {
-        done_rx: channel::Receiver<()>,
-        shm_name: String,
-        ipc_name: String,
-    }
-
-    impl TestPipeline {
-        fn new(config: Config) -> Self {
-            let shm_name = format!(
-                "umami_inttest_{}_{}", std::process::id(),
-                SHM_COUNTER.fetch_add(1, Ordering::SeqCst),
-            );
-            let ipc_name = format!(
-                "umami_test_{}_{}", std::process::id(),
-                SHM_COUNTER.fetch_add(1, Ordering::SeqCst),
-            );
-            let confdir = config.filename.parent().unwrap_or(Path::new("."));
-
-            let shm = ShmInterface::create(&shm_name, &config.histogram)
-                .expect("Could not create shared memory for test");
-
-            let mut post_recipes = BTreeMap::new();
-            for name in config.process_modes.recipes.keys() {
-                let recipe_name = ModuleId::new(name.into());
-                post_recipes.insert(
-                    recipe_name,
-                    recipe::from_config(&config.process_modes.recipes, &recipe_name)
-                        .expect("Could not initialize postprocessor recipe"),
-                );
-            }
-            let default_name = ModuleId::new(config.process_modes.default);
-
-            let (postproc_send, postproc_recv) = channel::bounded(EV_CHANNEL_SIZE);
-            let (output_send, output_recver) = channel::bounded(OUT_CHANNEL_SIZE);
-
-            postproc::PostProcessor::new(
-                post_recipes, default_name, postproc_recv, output_send, shm,
-            ).start().expect("Could not start postprocessor");
-
-            let (done_tx, done_rx) = channel::bounded(1);
-            let out_common = OutputCommon::new(
-                ModuleId::new("test_out".into()), output_recver, None,
-            );
-            TestOutput { done: done_tx }.start(out_common)
-                .expect("Could not start test output");
-
-            let mut command_sends = BTreeMap::new();
-            for (input_name, input_config) in config.inputs {
-                let input_recipe = recipe::from_config(
-                    &config.input_recipes, &input_config.recipe,
-                ).expect("Initializing input recipe");
-                let (cmd_tx, cmd_rx) = channel::bounded(1);
-                let common = InputCommon::new(
-                    ModuleId::new(input_name.clone()),
-                    postproc_send.clone(),
-                    postproc_send.clone(),
-                    cmd_rx,
-                    input_recipe,
-                );
-                input::start(input_config.specific, confdir, common)
-                    .expect("Could not start input");
-                command_sends.insert(ModuleId::new(input_name), cmd_tx);
-            }
-
-            let handler = command::CommandHandler::new(
-                &ipc_name, command_sends, postproc_send,
-            ).expect("Could not create command handler");
-            handler.start().expect("Could not start command handler");
-
-            Self { done_rx, shm_name, ipc_name }
-        }
-
-        fn send_command(&self, cmd: &Command) -> CommandReply {
-            let client = Client::new(&self.ipc_name)
-                .expect("Creating test client");
-            let reply = client.send(cmd).expect("Command got no reply");
-            if reply.is_error() {
-                panic!("Command {:?} failed: {:?}", cmd, reply);
-            } else {
-                reply
-            }
-        }
-
-        fn wait_for_completion(&self) {
-            self.done_rx.recv_timeout(std::time::Duration::from_secs(30))
-                  .expect("Pipeline did not complete in time");
-        }
-    }
 
     #[test]
     fn test_pipeline_mesy_file() {
         let conf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("test/mesyfile.conf");
-        let config = crate::load_config(&conf_path).expect("Loading test config");
+        let mut config = crate::load_config(&conf_path)
+            .expect("Loading test config");
 
-        let pipeline = TestPipeline::new(config);
-        pipeline.send_command(&Command::Start { run_id: "test".into() });
-        pipeline.wait_for_completion();
+        let test_id = SHM_COUNTER.fetch_add(1, Ordering::SeqCst);
+        config.ipc_name = format!(
+            "umami_test_{}_{}", std::process::id(), test_id,
+        );
+        let run_id = format!("test_{test_id}");
+        config.outputs.get_or_insert_with(BTreeMap::new).insert(
+            "test".into(),
+            OutputConfig { r#type: "test".into(), config: Default::default() },
+        );
 
-        let shm_read = ShmInterface::open(&pipeline.shm_name).unwrap();
+        let done_rx = crate::output::init_test_output(&run_id);
+        let handle = start_pipeline(config, false)
+            .expect("Starting test pipeline");
+
+        let client = Client::new(handle.ipc_name())
+            .expect("Creating test client");
+        let reply = client.send(&Command::Start { run_id })
+            .expect("Sending start command");
+        assert!(matches!(reply, CommandReply::Ok), "Start command failed: {reply:?}");
+
+        done_rx.recv_timeout(std::time::Duration::from_secs(30))
+            .expect("Pipeline did not complete in time");
+
+        let shm_read = ShmInterface::open(handle.shm_name())
+            .expect("Opening shared memory for verification");
         let total = shm_read.histo_total();
         assert!(total > 0, "Expected non-zero neutron counts in histogram");
 
-        nix::sys::mman::shm_unlink(pipeline.shm_name.as_bytes()).ok();
+        nix::sys::mman::shm_unlink(handle.shm_name().as_bytes()).ok();
     }
 }

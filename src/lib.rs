@@ -27,7 +27,8 @@ pub use self::command::{Command, CommandReply};
 pub use self::config::load_config;
 pub use self::error::UResult;
 pub use self::params::ParamMap;
-pub use self::pipeline::run_pipeline;
+pub use self::pipeline::{start_pipeline, PipelineHandle};
+pub use self::util::wait_for_signal;
 
 static DEBUG: AtomicBool = AtomicBool::new(false);
 static TRACE: AtomicBool = AtomicBool::new(false);
