@@ -219,9 +219,10 @@ mod tests {
 
     static SHM_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-    #[test]
-    fn test_pipeline_mesy_file() {
-        let conf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("test/mesy.conf");
+    /// Runs the pipeline defined by `conf_name` (relative to the crate root) to
+    /// completion against a single run and returns the total histogram count.
+    fn run_test_pipeline(conf_name: &str) -> u64 {
+        let conf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(conf_name);
         let mut config = crate::load_config(&conf_path)
             .expect("Loading test config");
 
@@ -251,45 +252,26 @@ mod tests {
         let shm_read = ShmInterface::open(handle.shm_name())
             .expect("Opening shared memory for verification");
         let total = shm_read.histo_total();
-        assert!(total > 0, "Expected non-zero neutron counts in histogram");
 
         nix::sys::mman::shm_unlink(handle.shm_name().as_bytes()).ok();
+        total
+    }
+
+    #[test]
+    fn test_pipeline_mesy_file() {
+        let total = run_test_pipeline("test/mesy.conf");
+        assert!(total > 0, "Expected non-zero neutron counts in histogram");
     }
 
     #[test]
     fn test_pipeline_canon_file() {
-        let conf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("test/canon.conf");
-        let mut config = crate::load_config(&conf_path)
-            .expect("Loading test config");
-
-        let test_id = SHM_COUNTER.fetch_add(1, Ordering::SeqCst);
-        config.ipc_name = format!(
-            "umami_test_{}_{}", std::process::id(), test_id,
-        );
-        let run_id = format!("test_{test_id}");
-        config.outputs.get_or_insert_with(BTreeMap::new).insert(
-            "test".into(),
-            OutputConfig { r#type: "test".into(), config: Default::default() },
-        );
-
-        let done_rx = crate::output::init_test_output(&run_id);
-        let handle = start_pipeline(config, false)
-            .expect("Starting test pipeline");
-
-        let client = Client::new(handle.ipc_name())
-            .expect("Creating test client");
-        let reply = client.send(&Command::Start { run_id })
-            .expect("Sending start command");
-        assert!(matches!(reply, CommandReply::Ok), "Start command failed: {reply:?}");
-
-        done_rx.recv_timeout(std::time::Duration::from_secs(30))
-            .expect("Pipeline did not complete in time");
-
-        let shm_read = ShmInterface::open(handle.shm_name())
-            .expect("Opening shared memory for verification");
-        let total = shm_read.histo_total();
+        let total = run_test_pipeline("test/canon.conf");
         assert!(total > 0, "Expected non-zero neutron counts in histogram");
+    }
 
-        nix::sys::mman::shm_unlink(handle.shm_name().as_bytes()).ok();
+    #[test]
+    fn test_pipeline_ge_file() {
+        let total = run_test_pipeline("test/ge.conf");
+        assert!(total > 0, "Expected non-zero neutron counts in histogram");
     }
 }
