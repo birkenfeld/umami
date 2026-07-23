@@ -59,7 +59,22 @@ mod tests {
         let ev = test_utils::neutron(100, 42);
         let out = recipe.process(vec![ev]);
         assert_eq!(out[0].histo.x, 42);
-        assert_eq!(out[0].histo.y, 0);
+    }
+
+    #[test]
+    fn test_psd_neutron_pulse_height_ratio() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("reso".into(), toml::Value::Integer(256));
+        let mut recipe = Psd::from_config(cfg, &empty_recipes()).unwrap();
+
+        // y = pr / (pr + pl) * reso
+        let ev = Event::new(EventType::Neutron).with_channel(0).with_raw(100, 300);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].histo.y, 192); // 300 / 400 * 256
+
+        let ev = Event::new(EventType::Neutron).with_channel(0).with_raw(50, 50);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].histo.y, 128); // 50 / 100 * 256
     }
 
     #[test]

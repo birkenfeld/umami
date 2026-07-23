@@ -100,6 +100,14 @@ mod tests {
     }
 
     #[test]
+    fn test_mpsd_amplitude_to_y() {
+        let mut recipe = Mpsd::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let ev = Event::new(EventType::Neutron).with_raw(1234, 0);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].histo.y, 1234);
+    }
+
+    #[test]
     fn test_mpsd_edge_up_to_tzero() {
         let mut recipe = Mpsd::from_config(toml::Table::new(), &empty_recipes()).unwrap();
         let ev = test_utils::edge(100, 5, true);

@@ -178,3 +178,205 @@ impl PostProcessor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use crate::channel;
+    use crate::config::{HistoConfig, RecipeConfig};
+    use crate::event::test_utils;
+    use crate::params::ParamMap;
+    use crate::recipe;
+
+    static SHM_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn build_recipes(specs: &[(&str, &str)]) -> BTreeMap<ModuleId, Box<dyn Recipe>> {
+        let mut configs = BTreeMap::new();
+        for (name, typ) in specs {
+            configs.insert((*name).to_string(),
+                           RecipeConfig { r#type: (*typ).to_string(), config: toml::Table::new() });
+        }
+        specs.iter().map(|(name, _)| {
+            (ModuleId::new((*name).to_string()), recipe::from_config(&configs, name).unwrap())
+        }).collect()
+    }
+
+    /// Spins up a real PostProcessor thread wired to fresh shared memory and
+    /// returns the channels to drive it plus its shm name (for direct readback
+    /// and cleanup).
+    fn make_postproc(specs: &[(&str, &str)], default: &str)
+        -> (channel::Sender<PipeItem>, channel::Receiver<PipeItem>, String)
+    {
+        let name = format!("umami_postproc_test_{}_{}",
+                           SHM_COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id());
+        let histo_config = HistoConfig { nx: 4, ny: 4, max_nt: 1, max_ni: 0 };
+        let shm = crate::shm::ShmInterface::create(&name, &histo_config).unwrap();
+        let (input_send, input_recv) = channel::bounded(16);
+        let (output_send, output_recv) = channel::bounded(16);
+        let postproc = PostProcessor::new(
+            build_recipes(specs), ModuleId::new(default.to_string()), input_recv, output_send, shm,
+        );
+        postproc.start().unwrap();
+        (input_send, output_recv, name)
+    }
+
+    /// Sends a `GetState` request and blocks for its reply, purely to use as a
+    /// synchronization barrier: since the channel preserves order and the
+    /// postprocessor handles items strictly sequentially, any item sent before
+    /// this call is guaranteed fully processed once this returns.
+    fn sync_barrier(input: &channel::Sender<PipeItem>) {
+        let (send, recv) = channel::bounded(1);
+        input.send(PipeItem::GetState(send)).unwrap();
+        recv.recv().unwrap();
+    }
+
+    #[test]
+    fn test_postproc_mode_switching_and_state() {
+        let (input, _output, shm_name) =
+            make_postproc(&[("std", "histo_std"), ("tof", "histo_tof")], "std");
+
+        let (send, recv) = channel::bounded(1);
+        input.send(PipeItem::GetModes(send)).unwrap();
+        let modes = match recv.recv().unwrap() {
+            CommandReply::Data { value } => value.as_array().unwrap().iter()
+                .map(|v| v.as_str().unwrap().to_string()).collect::<Vec<_>>(),
+            other => panic!("unexpected reply: {other:?}"),
+        };
+        assert!(modes.contains(&"std".to_string()));
+        assert!(modes.contains(&"tof".to_string()));
+
+        // switching to an unknown mode fails, and doesn't change the current one
+        let (send, recv) = channel::bounded(1);
+        input.send(PipeItem::SetMode(ModuleId::new("bogus".into()), send)).unwrap();
+        assert!(recv.recv().unwrap().is_error());
+
+        // switching to a known mode succeeds and is reflected in GetState
+        let (send, recv) = channel::bounded(1);
+        input.send(PipeItem::SetMode(ModuleId::new("tof".into()), send)).unwrap();
+        assert!(matches!(recv.recv().unwrap(), CommandReply::Ok));
+
+        // input state is tracked and reported too
+        input.send(PipeItem::InputState(ModuleId::new("in1".into()), InputState::Running)).unwrap();
+
+        let (send, recv) = channel::bounded(1);
+        input.send(PipeItem::GetState(send)).unwrap();
+        match recv.recv().unwrap() {
+            CommandReply::Data { value } => {
+                assert_eq!(value["mode"], "tof");
+                assert_eq!(value["inputs"]["in1"], "running");
+            }
+            other => panic!("unexpected reply: {other:?}"),
+        }
+
+        nix::sys::mman::shm_unlink(shm_name.as_bytes()).ok();
+    }
+
+    #[test]
+    fn test_postproc_params_get_and_set() {
+        let (input, output, shm_name) = make_postproc(&[("std", "histo_std")], "std");
+        let timeout = std::time::Duration::from_secs(5);
+
+        // GetParams/SetParams (unlike the other meta items) are forwarded on to the
+        // output chain afterwards, carrying the reply Sender along with them; in real
+        // use the last output in the chain drops it once there's nowhere further to
+        // send. Here we simulate that by draining and dropping the forwarded item
+        // ourselves -- otherwise the reply channel never closes and the blocking
+        // `into_iter()` below would hang forever.
+        let (send, recv) = channel::bounded(2);
+        input.send(PipeItem::GetParams(send)).unwrap();
+        output.recv_timeout(timeout).expect("forwarded item");
+        let params: Vec<_> = recv.into_iter().collect();
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].0, ModuleId::new("std".into()));
+        assert_eq!(params[0].1["bin_x"]["value"], 1);
+
+        // a valid update is applied and shows up in a later GetParams
+        let mut new_params = ParamMap::new();
+        new_params.insert("bin_x".into(), serde_json::json!(4));
+        let mut set_map = BTreeMap::new();
+        set_map.insert(ModuleId::new("std".into()), new_params);
+        let (send, recv) = channel::bounded(1);
+        input.send(PipeItem::SetParams(set_map, send)).unwrap();
+        output.recv_timeout(timeout).expect("forwarded item");
+        assert!(matches!(recv.recv().unwrap(), CommandReply::Ok));
+
+        let (send, recv) = channel::bounded(2);
+        input.send(PipeItem::GetParams(send)).unwrap();
+        output.recv_timeout(timeout).expect("forwarded item");
+        let params: Vec<_> = recv.into_iter().collect();
+        assert_eq!(params[0].1["bin_x"]["value"], 4);
+
+        // an update with a value of the wrong type fails
+        let mut bad_params = ParamMap::new();
+        bad_params.insert("bin_x".into(), serde_json::json!("not a number"));
+        let mut set_map = BTreeMap::new();
+        set_map.insert(ModuleId::new("std".into()), bad_params);
+        let (send, recv) = channel::bounded(1);
+        input.send(PipeItem::SetParams(set_map, send)).unwrap();
+        output.recv_timeout(timeout).expect("forwarded item");
+        assert!(recv.recv().unwrap().is_error());
+
+        nix::sys::mman::shm_unlink(shm_name.as_bytes()).ok();
+    }
+
+    #[test]
+    fn test_postproc_histogram_accumulation_clear_and_save() {
+        let (input, _output, shm_name) = make_postproc(&[("std", "histo_std")], "std");
+
+        let events = vec![
+            test_utils::neutron_xy(100, 0, 1, 2),
+            test_utils::neutron_xy(200, 0, 1, 2),
+            test_utils::edge(300, 0, true), // not a neutron, shouldn't be histogrammed
+        ];
+        input.send(PipeItem::Events(events)).unwrap();
+        sync_barrier(&input);
+
+        let shm_read = crate::shm::ShmInterface::open(&shm_name).unwrap();
+        let histo = shm_read.histo_data();
+        assert_eq!(histo.iter().sum::<u32>(), 2);
+        assert_eq!(histo[2 * 4 + 1], 2); // offset for (x=1, y=2, t=0)
+
+        input.send(PipeItem::Clear).unwrap();
+        sync_barrier(&input);
+        assert!(shm_read.histo_data().iter().all(|&v| v == 0));
+
+        input.send(PipeItem::Events(vec![test_utils::neutron_xy(100, 0, 0, 0)])).unwrap();
+        let path = format!("/tmp/umami_postproc_test_histo_{}", std::process::id());
+        let (send, recv) = channel::bounded(1);
+        input.send(PipeItem::SaveHisto(path.clone(), 1, send)).unwrap();
+        assert!(matches!(recv.recv().unwrap(), CommandReply::Ok));
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains('1'));
+        std::fs::remove_file(&path).ok();
+
+        nix::sys::mman::shm_unlink(shm_name.as_bytes()).ok();
+    }
+
+    #[test]
+    fn test_postproc_meta_items_not_forwarded() {
+        let (input, output, shm_name) = make_postproc(&[("std", "histo_std")], "std");
+
+        // meta items are consumed by the postprocessor and never reach the output
+        let (send, _recv) = channel::bounded(1);
+        input.send(PipeItem::GetModes(send)).unwrap();
+        let (send, _recv) = channel::bounded(1);
+        input.send(PipeItem::GetState(send)).unwrap();
+        input.send(PipeItem::InputState(ModuleId::new("in1".into()), InputState::Running)).unwrap();
+
+        // regular items pass through to the output once processed
+        input.send(PipeItem::StartOfRun("run1".into())).unwrap();
+        input.send(PipeItem::Events(vec![test_utils::neutron(100, 0)])).unwrap();
+        input.send(PipeItem::EndOfRun).unwrap();
+
+        let forwarded: Vec<_> = (0..3).map(|_| output.recv_timeout(std::time::Duration::from_secs(5))
+                                                     .expect("expected forwarded item")).collect();
+        assert!(matches!(forwarded[0], PipeItem::StartOfRun(_)));
+        assert!(matches!(forwarded[1], PipeItem::Events(_)));
+        assert!(matches!(forwarded[2], PipeItem::EndOfRun));
+        // nothing else should have been forwarded
+        assert!(output.try_recv().is_err());
+
+        nix::sys::mman::shm_unlink(shm_name.as_bytes()).ok();
+    }
+}

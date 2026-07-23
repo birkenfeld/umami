@@ -267,4 +267,13 @@ mod tests {
         let result = ShmInterface::create(&name, &config);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_shm_oversized_fails() {
+        let name = unique_shm_name();
+        // exceeds MAX_HISTO_SIZE without ever attempting to allocate it
+        let config = HistoConfig { nx: 1_000_000, ny: 1_000_000, max_nt: 1_000, max_ni: 0 };
+        let result = ShmInterface::create(&name, &config);
+        assert!(result.is_err());
+    }
 }

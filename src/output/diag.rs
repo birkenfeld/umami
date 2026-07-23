@@ -26,6 +26,22 @@ pub enum EventMask {
     ALL = 0xFFF,
 }
 
+impl EventMask {
+    /// The single flag identifying which mask bit corresponds to `evtype`.
+    pub fn for_event(evtype: &EventType) -> EventMask {
+        match evtype {
+            EventType::Neutron => EventMask::NEUTRON,
+            EventType::Edge { .. } => EventMask::EDGE,
+            EventType::Heartbeat => EventMask::HEARTBEAT,
+            EventType::Monitor => EventMask::MONITOR,
+            EventType::Tzero => EventMask::TZERO,
+            EventType::Gate { .. } => EventMask::GATE,
+            EventType::AuxSignal { .. } => EventMask::AUX,
+            EventType::Void => EventMask::VOID,
+        }
+    }
+}
+
 
 /// Output selected events, and count out-of-order events.
 #[derive(HasParams)]
@@ -111,16 +127,7 @@ impl Output for DiagOutput {
                 self.out_of_order += 1;
             }
             self.last_ts = ev_ts;
-            let display = self.event_mask.contains(match ev.evtype {
-                EventType::Neutron => EventMask::NEUTRON,
-                EventType::Edge { .. } => EventMask::EDGE,
-                EventType::Heartbeat => EventMask::HEARTBEAT,
-                EventType::Monitor => EventMask::MONITOR,
-                EventType::Tzero => EventMask::TZERO,
-                EventType::Gate { .. } => EventMask::GATE,
-                EventType::AuxSignal { .. } => EventMask::AUX,
-                EventType::Void => EventMask::VOID,
-            });
+            let display = self.event_mask.contains(EventMask::for_event(&ev.evtype));
             if display {
                 lprintln!(INFO, [self.name] "{}", ev.dump());
             }
@@ -192,7 +199,31 @@ mod tests {
             test_utils::heartbeat(300),
         ];
         output.handle_events(&events).unwrap();
-        assert_eq!(output.ev_count, 3); // all counted
+        assert_eq!(output.ev_count, 3); // all still counted regardless of mask
+
+        // the mask itself only selects the events it was configured for
+        assert!(output.event_mask.contains(EventMask::for_event(&EventType::Neutron)));
+        assert!(!output.event_mask.contains(EventMask::for_event(&EventType::Edge { up: true })));
+        assert!(!output.event_mask.contains(EventMask::for_event(&EventType::Heartbeat)));
+    }
+
+    #[test]
+    fn test_event_mask_for_event_covers_all_types() {
+        assert_eq!(EventMask::for_event(&EventType::Neutron), EventMask::NEUTRON);
+        assert_eq!(EventMask::for_event(&EventType::Edge { up: true }), EventMask::EDGE);
+        assert_eq!(EventMask::for_event(&EventType::Heartbeat), EventMask::HEARTBEAT);
+        assert_eq!(EventMask::for_event(&EventType::Monitor), EventMask::MONITOR);
+        assert_eq!(EventMask::for_event(&EventType::Tzero), EventMask::TZERO);
+        assert_eq!(EventMask::for_event(&EventType::Gate { up: false }), EventMask::GATE);
+        assert_eq!(EventMask::for_event(&EventType::AuxSignal { num: 1 }), EventMask::AUX);
+        assert_eq!(EventMask::for_event(&EventType::Void), EventMask::VOID);
+
+        // combined masks select exactly their constituent types
+        let combo = EventMask::NEUTRON | EventMask::GATE;
+        assert!(combo.contains(EventMask::for_event(&EventType::Neutron)));
+        assert!(combo.contains(EventMask::for_event(&EventType::Gate { up: true })));
+        assert!(!combo.contains(EventMask::for_event(&EventType::Edge { up: true })));
+        assert!(EventMask::ALL.contains(EventMask::for_event(&EventType::Void)));
     }
 
     #[test]

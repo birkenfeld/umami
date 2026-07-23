@@ -150,6 +150,48 @@ mod tests {
     }
 
     #[test]
+    fn test_kws_neutron_reso_1024() {
+        // n8p=6 (full tube, uses 1024-domain scaling instead of 256-domain)
+        // pack 6, pixel 512 → x = 512/1024 + 8*6 = 48, y = 512*256/1024 = 128
+        let mut cfg = toml::Table::new();
+        cfg.insert("reso_1024".into(), toml::Value::Boolean(true));
+        let mut recipe = KWSGERecipe::from_config(cfg, &empty_recipes()).unwrap();
+        let ev = test_utils::neutron(100, 6 * PIXEL_PER_PACK + 512);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].histo.x, 48);
+        assert_eq!(out[0].histo.y, 128);
+    }
+
+    #[test]
+    fn test_kws_neutron_rebin_8x8() {
+        // pack 6, pixel 100 → x = 100/256 + 48 = 48, y = 100%256 = 100
+        // rebinned: y = 64 + 100/2 = 114
+        let mut cfg = toml::Table::new();
+        cfg.insert("rebin_8x8".into(), toml::Value::Boolean(true));
+        let mut recipe = KWSGERecipe::from_config(cfg, &empty_recipes()).unwrap();
+        let ev = test_utils::neutron(100, 6 * PIXEL_PER_PACK + 100);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].histo.x, 48);
+        assert_eq!(out[0].histo.y, 114);
+    }
+
+    #[test]
+    fn test_kws_edge_to_tzero_ch3() {
+        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let ev = test_utils::edge(100, 3, true);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].evtype, EventType::Tzero);
+    }
+
+    #[test]
+    fn test_kws_edge_unmatched_channel_unchanged() {
+        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let ev = test_utils::edge(100, 5, true);
+        let out = recipe.process(vec![ev]);
+        assert!(matches!(out[0].evtype, EventType::Edge { up: true }));
+    }
+
+    #[test]
     fn test_kws_edge_to_gate() {
         let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
         let ev = test_utils::edge(100, 0, true);

@@ -32,6 +32,7 @@ impl PipelineHandle {
     }
 }
 
+#[derive(Debug)]
 pub enum PipeItem {
     Events(Vec<Event>),
     Clear,
