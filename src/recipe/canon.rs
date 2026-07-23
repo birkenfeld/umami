@@ -51,25 +51,20 @@ mod tests {
         BTreeMap::new()
     }
 
-    #[test]
-    fn test_psd_neutron_channel_to_x() {
+    fn psd(reso: i64) -> Psd {
         let mut cfg = toml::Table::new();
-        cfg.insert("reso".into(), toml::Value::Integer(256));
-        let mut recipe = Psd::from_config(cfg, &empty_recipes()).unwrap();
-        let ev = test_utils::neutron(100, 42);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].histo.x, 42);
+        cfg.insert("reso".into(), toml::Value::Integer(reso));
+        Psd::from_config(cfg, &empty_recipes()).unwrap()
     }
 
     #[test]
-    fn test_psd_neutron_pulse_height_ratio() {
-        let mut cfg = toml::Table::new();
-        cfg.insert("reso".into(), toml::Value::Integer(256));
-        let mut recipe = Psd::from_config(cfg, &empty_recipes()).unwrap();
+    fn test_psd_neutron_binning() {
+        let mut recipe = psd(256);
 
-        // y = pr / (pr + pl) * reso
-        let ev = Event::new(EventType::Neutron).with_channel(0).with_raw(100, 300);
+        // x comes straight from the channel; y = pr / (pr + pl) * reso
+        let ev = Event::new(EventType::Neutron).with_channel(42).with_raw(100, 300);
         let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].histo.x, 42);
         assert_eq!(out[0].histo.y, 192); // 300 / 400 * 256
 
         let ev = Event::new(EventType::Neutron).with_channel(0).with_raw(50, 50);
@@ -78,22 +73,12 @@ mod tests {
     }
 
     #[test]
-    fn test_psd_edge_up_to_tzero() {
-        let mut cfg = toml::Table::new();
-        cfg.insert("reso".into(), toml::Value::Integer(256));
-        let mut recipe = Psd::from_config(cfg, &empty_recipes()).unwrap();
-        let ev = test_utils::edge(100, 5, true);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].evtype, EventType::Tzero);
-    }
-
-    #[test]
-    fn test_psd_edge_down_unchanged() {
-        let mut cfg = toml::Table::new();
-        cfg.insert("reso".into(), toml::Value::Integer(256));
-        let mut recipe = Psd::from_config(cfg, &empty_recipes()).unwrap();
-        let ev = test_utils::edge(100, 5, false);
-        let out = recipe.process(vec![ev]);
-        assert!(matches!(out[0].evtype, EventType::Edge { up: false }));
+    fn test_psd_edge_mapping() {
+        for (up, expected) in [(true, EventType::Tzero), (false, EventType::Edge { up: false })] {
+            let mut recipe = psd(256);
+            let ev = test_utils::edge(100, 5, up);
+            let out = recipe.process(vec![ev]);
+            assert_eq!(out[0].evtype, expected, "up={up}");
+        }
     }
 }

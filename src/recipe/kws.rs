@@ -106,132 +106,90 @@ mod tests {
         BTreeMap::new()
     }
 
-    #[test]
-    fn test_kws_neutron_full_tube_region() {
-        // n8p in 6..=11 → full tube resolution (256)
-        // pack 6, pixel 0 → id=0, x = 0/256 + 8*6 = 48, y = 0%256 = 0
-        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::neutron(100, 6 * PIXEL_PER_PACK);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].histo.x, 48);
-        assert_eq!(out[0].histo.y, 0);
+    struct NeutronCase {
+        reso_1024: bool,
+        rebin_8x8: bool,
+        channel: u32,
+        x: u16,
+        y: u16,
+        desc: &'static str,
     }
 
     #[test]
-    fn test_kws_neutron_full_tube_nonzero() {
-        // pack 6, pixel 256 → id=256, x = 256/256 + 48 = 49, y = 256%256 = 0
-        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::neutron(100, 6 * PIXEL_PER_PACK + 256);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].histo.x, 49);
-        assert_eq!(out[0].histo.y, 0);
+    fn test_kws_neutron_binning() {
+        let cases = [
+            // n8p in 6..=11 -> full tube resolution (256)
+            // pack 6, pixel 0 -> id=0, x = 0/256 + 8*6 = 48, y = 0%256 = 0
+            NeutronCase { reso_1024: false, rebin_8x8: false, channel: 6 * PIXEL_PER_PACK,
+                          x: 48, y: 0, desc: "full tube region" },
+            // pack 6, pixel 256 -> id=256, x = 256/256 + 48 = 49, y = 256%256 = 0
+            NeutronCase { reso_1024: false, rebin_8x8: false, channel: 6 * PIXEL_PER_PACK + 256,
+                          x: 49, y: 0, desc: "full tube, nonzero pixel" },
+            // n8p=2 (not in 3..=14) -> small tube resolution (94), offset 81
+            // pack 2, pixel 0 -> id=0, x = 0/94 + 8*2 = 16, y = 0%94 + 81 = 81
+            NeutronCase { reso_1024: false, rebin_8x8: false, channel: 2 * PIXEL_PER_PACK,
+                          x: 16, y: 81, desc: "small tube region" },
+            // n8p=4 (in 3..=14 but not 6..=11) -> middle tube resolution (206), offset 25
+            // pack 4, pixel 0 -> id=0, x = 0/206 + 8*4 = 32, y = 0%206 + 25 = 25
+            NeutronCase { reso_1024: false, rebin_8x8: false, channel: 4 * PIXEL_PER_PACK,
+                          x: 32, y: 25, desc: "middle tube region" },
+            // n8p=6 (full tube, 1024-domain scaling instead of 256-domain)
+            // pack 6, pixel 512 -> x = 512/1024 + 8*6 = 48, y = 512*256/1024 = 128
+            NeutronCase { reso_1024: true, rebin_8x8: false, channel: 6 * PIXEL_PER_PACK + 512,
+                          x: 48, y: 128, desc: "reso_1024 scaling" },
+            // pack 6, pixel 100 -> x = 100/256 + 48 = 48, y = 100%256 = 100
+            // rebinned: y = 64 + 100/2 = 114
+            NeutronCase { reso_1024: false, rebin_8x8: true, channel: 6 * PIXEL_PER_PACK + 100,
+                          x: 48, y: 114, desc: "rebin_8x8" },
+        ];
+
+        for case in cases {
+            let mut cfg = toml::Table::new();
+            cfg.insert("reso_1024".into(), toml::Value::Boolean(case.reso_1024));
+            cfg.insert("rebin_8x8".into(), toml::Value::Boolean(case.rebin_8x8));
+            let mut recipe = KWSGERecipe::from_config(cfg, &empty_recipes()).unwrap();
+            let ev = test_utils::neutron(100, case.channel);
+            let out = recipe.process(vec![ev]);
+            assert_eq!(out[0].histo.x, case.x, "{}: x", case.desc);
+            assert_eq!(out[0].histo.y, case.y, "{}: y", case.desc);
+        }
+    }
+
+    struct EdgeCase {
+        invert_ts: bool,
+        channel: u32,
+        up: bool,
+        expected: EventType,
+        desc: &'static str,
     }
 
     #[test]
-    fn test_kws_neutron_small_tube_region() {
-        // n8p=2 (not in 3..=14) → small tube resolution (94), offset 81
-        // pack 2, pixel 0 → id=0, x = 0/94 + 8*2 = 16, y = 0%94 + 81 = 81
-        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::neutron(100, 2 * PIXEL_PER_PACK);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].histo.x, 16);
-        assert_eq!(out[0].histo.y, 81);
-    }
+    fn test_kws_edge_mapping() {
+        let cases = [
+            EdgeCase { invert_ts: false, channel: 0, up: true,
+                       expected: EventType::Gate { up: true }, desc: "ch0 -> gate" },
+            EdgeCase { invert_ts: false, channel: 1, up: true,
+                       expected: EventType::Tzero, desc: "ch1 up -> tzero" },
+            EdgeCase { invert_ts: false, channel: 3, up: true,
+                       expected: EventType::Tzero, desc: "ch3 up -> tzero" },
+            EdgeCase { invert_ts: false, channel: 2, up: true,
+                       expected: EventType::AuxSignal { num: EXT_START }, desc: "ch2 up -> aux" },
+            EdgeCase { invert_ts: false, channel: 1, up: false,
+                       expected: EventType::Edge { up: false },
+                       desc: "ch1 down, no invert -> unchanged" },
+            EdgeCase { invert_ts: true, channel: 1, up: false,
+                       expected: EventType::Tzero, desc: "ch1 down with invert_ts -> tzero" },
+            EdgeCase { invert_ts: false, channel: 5, up: true,
+                       expected: EventType::Edge { up: true }, desc: "unmatched channel -> unchanged" },
+        ];
 
-    #[test]
-    fn test_kws_neutron_middle_tube_region() {
-        // n8p=4 (in 3..=14 but not in 6..=11) → middle tube resolution (206), offset 25
-        // pack 4, pixel 0 → id=0, x = 0/206 + 8*4 = 32, y = 0%206 + 25 = 25
-        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::neutron(100, 4 * PIXEL_PER_PACK);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].histo.x, 32);
-        assert_eq!(out[0].histo.y, 25);
-    }
-
-    #[test]
-    fn test_kws_neutron_reso_1024() {
-        // n8p=6 (full tube, uses 1024-domain scaling instead of 256-domain)
-        // pack 6, pixel 512 → x = 512/1024 + 8*6 = 48, y = 512*256/1024 = 128
-        let mut cfg = toml::Table::new();
-        cfg.insert("reso_1024".into(), toml::Value::Boolean(true));
-        let mut recipe = KWSGERecipe::from_config(cfg, &empty_recipes()).unwrap();
-        let ev = test_utils::neutron(100, 6 * PIXEL_PER_PACK + 512);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].histo.x, 48);
-        assert_eq!(out[0].histo.y, 128);
-    }
-
-    #[test]
-    fn test_kws_neutron_rebin_8x8() {
-        // pack 6, pixel 100 → x = 100/256 + 48 = 48, y = 100%256 = 100
-        // rebinned: y = 64 + 100/2 = 114
-        let mut cfg = toml::Table::new();
-        cfg.insert("rebin_8x8".into(), toml::Value::Boolean(true));
-        let mut recipe = KWSGERecipe::from_config(cfg, &empty_recipes()).unwrap();
-        let ev = test_utils::neutron(100, 6 * PIXEL_PER_PACK + 100);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].histo.x, 48);
-        assert_eq!(out[0].histo.y, 114);
-    }
-
-    #[test]
-    fn test_kws_edge_to_tzero_ch3() {
-        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::edge(100, 3, true);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].evtype, EventType::Tzero);
-    }
-
-    #[test]
-    fn test_kws_edge_unmatched_channel_unchanged() {
-        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::edge(100, 5, true);
-        let out = recipe.process(vec![ev]);
-        assert!(matches!(out[0].evtype, EventType::Edge { up: true }));
-    }
-
-    #[test]
-    fn test_kws_edge_to_gate() {
-        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::edge(100, 0, true);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].evtype, EventType::Gate { up: true });
-    }
-
-    #[test]
-    fn test_kws_edge_to_tzero_ch1() {
-        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::edge(100, 1, true);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].evtype, EventType::Tzero);
-    }
-
-    #[test]
-    fn test_kws_edge_to_aux_ch2() {
-        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::edge(100, 2, true);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].evtype, EventType::AuxSignal { num: EXT_START });
-    }
-
-    #[test]
-    fn test_kws_edge_no_match_down() {
-        let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::edge(100, 1, false);
-        let out = recipe.process(vec![ev]);
-        // down edge on ch1 doesn't match `up ^ false` → stays Edge
-        assert!(matches!(out[0].evtype, EventType::Edge { up: false }));
-    }
-
-    #[test]
-    fn test_kws_invert_ts() {
-        let mut cfg = toml::Table::new();
-        cfg.insert("invert_ts".into(), toml::Value::Boolean(true));
-        let mut recipe = KWSGERecipe::from_config(cfg, &empty_recipes()).unwrap();
-        // down edge on ch1: up=false, invert=true → false^true=true → Tzero
-        let ev = test_utils::edge(100, 1, false);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].evtype, EventType::Tzero);
+        for case in cases {
+            let mut cfg = toml::Table::new();
+            cfg.insert("invert_ts".into(), toml::Value::Boolean(case.invert_ts));
+            let mut recipe = KWSGERecipe::from_config(cfg, &empty_recipes()).unwrap();
+            let ev = test_utils::edge(100, case.channel, case.up);
+            let out = recipe.process(vec![ev]);
+            assert_eq!(out[0].evtype, case.expected, "{}", case.desc);
+        }
     }
 }

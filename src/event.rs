@@ -318,7 +318,8 @@ mod tests {
     }
 
     #[test]
-    fn test_event_time_constructors() {
+    fn test_event_time_api() {
+        // constructors
         assert_eq!(EventTime::zero(), EventTime(0));
         assert_eq!(EventTime::from_sec_nsec(1, 500_000_000), EventTime(1_500_000_000));
         assert_eq!(EventTime::from_sec_nsec(0, 0), EventTime::zero());
@@ -328,48 +329,38 @@ mod tests {
         assert_eq!(EventTime::from_clock(1_000_000, 500_000i64), EventTime(500_000_000));
         assert_eq!(EventTime::from_clock(1_000_000, 0i64), EventTime::zero());
         assert_eq!(EventTime::MAX, EventTime(i64::MAX));
-    }
 
-    #[test]
-    fn test_event_time_display() {
+        // display
         assert_eq!(format!("{}", EventTime(1_500_000_000)), "1.500000000s");
         assert_eq!(format!("{}", EventTime(0)), "0.000000000s");
-    }
 
-    #[test]
-    fn test_event_time_arithmetic() {
+        // arithmetic
         let a = EventTime(1_000_000_000);
         let b = EventTime(500_000_000);
         assert_eq!(a + b, EventTime(1_500_000_000));
         assert_eq!(a - b, EventTime(500_000_000));
         assert_eq!(b - a, EventTime(-500_000_000));
-    }
 
-    #[test]
-    fn test_event_time_ordering() {
+        // ordering
         assert!(EventTime(100) < EventTime(200));
         assert!(EventTime(200) > EventTime(100));
         assert_eq!(EventTime(100), EventTime(100));
-    }
 
-    #[test]
-    fn test_event_time_to_f64() {
+        // conversion to f64 seconds
         let t: f64 = EventTime(1_500_000_000).into();
         assert!((t - 1.5).abs() < 1e-9);
     }
 
     #[test]
     fn test_event_ordering() {
+        // Ord/PartialOrd only compare `time`, ignoring channel
         let e1 = test_utils::neutron(100, 0);
         let e2 = test_utils::neutron(200, 0);
         let e3 = test_utils::neutron(100, 1);
         assert!(e1 < e2);
         assert!(e2 > e1);
         assert_eq!(e1.cmp(&e3), std::cmp::Ordering::Equal);
-    }
 
-    #[test]
-    fn test_event_sort() {
         let mut events = [
             test_utils::neutron(300, 0),
             test_utils::neutron(100, 0),
@@ -390,26 +381,22 @@ mod tests {
     }
 
     #[test]
-    fn test_event_flags_bitwise() {
+    fn test_event_flags() {
         let empty = EventFlags::empty();
         assert!(empty.is_empty());
         assert!(!empty.contains(EventFlags::HasRelTime));
+        assert_eq!(format!("{empty}"), "-");
 
         let rt = EventFlags::HasRelTime;
         assert!(rt.contains(EventFlags::HasRelTime));
         assert!(!rt.contains(EventFlags::Fake));
+        assert_eq!(format!("{rt}"), "RT");
+        assert_eq!(format!("{}", EventFlags::Fake), "F");
 
         let combined = rt | EventFlags::Fake;
         assert!(combined.contains(EventFlags::HasRelTime));
         assert!(combined.contains(EventFlags::Fake));
-    }
-
-    #[test]
-    fn test_event_flags_display() {
-        assert_eq!(format!("{}", EventFlags::empty()), "-");
-        assert_eq!(format!("{}", EventFlags::HasRelTime), "RT");
-        assert_eq!(format!("{}", EventFlags::Fake), "F");
-        assert_eq!(format!("{}", EventFlags::HasRelTime | EventFlags::Fake), "RT|F");
+        assert_eq!(format!("{combined}"), "RT|F");
     }
 
     #[test]

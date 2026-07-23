@@ -69,7 +69,6 @@ impl Recipe for Mdll {
 mod tests {
     use super::*;
     use crate::event::test_utils;
-    use crate::event::ChannelId;
 
     fn empty_recipes() -> BTreeMap<String, RecipeConfig> {
         BTreeMap::new()
@@ -77,26 +76,17 @@ mod tests {
 
     #[test]
     fn test_mpsd_channel_bit_manipulation() {
-        let mut recipe = Mpsd::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        // channel 0x185 = 389
-        // (389 >> 1) & 0xFFF8 | (389 & 0x7) = 192 | 5 = 197
-        let mut ev = test_utils::neutron(100, 0x185);
-        ev.channel = ChannelId(0x185);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].histo.x, 197);
-    }
-
-    #[test]
-    fn test_mpsd_simple_channel() {
-        let mut recipe = Mpsd::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        // channel 0b1000_0000 = 128
-        // (128 >> 1) & 0xFFF8 | (128 & 0x7)
-        // = 64 & 0xFFF8 | 0
-        // = 0x40 | 0 = 64
-        let mut ev = test_utils::neutron(100, 128);
-        ev.channel = ChannelId(128);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].histo.x, 64);
+        // (channel >> 1) & 0xFFF8 | (channel & 0x7)
+        let cases = [
+            (0x185, 197), // 389: (389 >> 1) & 0xFFF8 | (389 & 0x7) = 192 | 5 = 197
+            (128, 64),    // 0b1000_0000: (128 >> 1) & 0xFFF8 | (128 & 0x7) = 64 | 0 = 64
+        ];
+        for (channel, expected_x) in cases {
+            let mut recipe = Mpsd::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+            let ev = test_utils::neutron(100, channel);
+            let out = recipe.process(vec![ev]);
+            assert_eq!(out[0].histo.x, expected_x, "channel={channel:#x}");
+        }
     }
 
     #[test]
@@ -108,19 +98,13 @@ mod tests {
     }
 
     #[test]
-    fn test_mpsd_edge_up_to_tzero() {
-        let mut recipe = Mpsd::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::edge(100, 5, true);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].evtype, EventType::Tzero);
-    }
-
-    #[test]
-    fn test_mpsd_edge_down_unchanged() {
-        let mut recipe = Mpsd::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::edge(100, 5, false);
-        let out = recipe.process(vec![ev]);
-        assert!(matches!(out[0].evtype, EventType::Edge { up: false }));
+    fn test_mpsd_edge_mapping() {
+        for (up, expected) in [(true, EventType::Tzero), (false, EventType::Edge { up: false })] {
+            let mut recipe = Mpsd::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+            let ev = test_utils::edge(100, 5, up);
+            let out = recipe.process(vec![ev]);
+            assert_eq!(out[0].evtype, expected, "up={up}");
+        }
     }
 
     #[test]
@@ -135,18 +119,12 @@ mod tests {
     }
 
     #[test]
-    fn test_mdll_edge_up_to_tzero() {
-        let mut recipe = Mdll::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::edge(100, 3, true);
-        let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].evtype, EventType::Tzero);
-    }
-
-    #[test]
-    fn test_mdll_edge_down_unchanged() {
-        let mut recipe = Mdll::from_config(toml::Table::new(), &empty_recipes()).unwrap();
-        let ev = test_utils::edge(100, 3, false);
-        let out = recipe.process(vec![ev]);
-        assert!(matches!(out[0].evtype, EventType::Edge { up: false }));
+    fn test_mdll_edge_mapping() {
+        for (up, expected) in [(true, EventType::Tzero), (false, EventType::Edge { up: false })] {
+            let mut recipe = Mdll::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+            let ev = test_utils::edge(100, 3, up);
+            let out = recipe.process(vec![ev]);
+            assert_eq!(out[0].evtype, expected, "up={up}");
+        }
     }
 }

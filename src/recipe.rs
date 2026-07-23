@@ -121,55 +121,28 @@ mod tests {
     }
 
     #[test]
-    fn test_from_config_histo_std() {
-        let map = recipe_map("test", "histo_std");
-        let mut r = from_config(&map, "test").unwrap();
-        let out = r.process(vec![test_utils::neutron(100, 1)]);
-        assert_eq!(out.len(), 1);
-    }
-
-    #[test]
-    fn test_from_config_histo_tof() {
-        let map = recipe_map("test", "histo_tof");
-        let mut r = from_config(&map, "test").unwrap();
-        let out = r.process(vec![test_utils::tzero(0), test_utils::neutron(100, 1)]);
-        assert_eq!(out.len(), 2);
-    }
-
-    #[test]
-    fn test_from_config_mesy_mpsd() {
-        let map = recipe_map("test", "mesy_mpsd");
-        let mut r = from_config(&map, "test").unwrap();
-        let out = r.process(vec![test_utils::neutron(100, 1)]);
-        assert_eq!(out.len(), 1);
-    }
-
-    #[test]
-    fn test_from_config_mesy_mdll() {
-        let map = recipe_map("test", "mesy_mdll");
-        let mut r = from_config(&map, "test").unwrap();
-        let out = r.process(vec![test_utils::neutron(100, 1)]);
-        assert_eq!(out.len(), 1);
-    }
-
-    #[test]
-    fn test_from_config_kws_gedet() {
-        let map = recipe_map("test", "kws_gedet");
-        let mut r = from_config(&map, "test").unwrap();
-        let out = r.process(vec![test_utils::neutron(100, 1)]);
-        assert_eq!(out.len(), 1);
-    }
-
-    #[test]
-    fn test_from_config_canon() {
-        let mut table = toml::Table::new();
-        table.insert("reso".into(), toml::Value::Integer(256));
-        let map = BTreeMap::from([("test".into(), RecipeConfig {
-            r#type: "canon".into(),
-            config: table,
-        })]);
-        let mut r = from_config(&map, "test").unwrap();
-        let out = r.process(vec![test_utils::neutron(100, 1)]);
-        assert_eq!(out.len(), 1);
+    fn test_from_config_dispatches_to_recipe_type() {
+        // (recipe type, extra config it needs beyond defaults)
+        let cases: &[(&str, &[(&str, toml::Value)])] = &[
+            ("histo_std", &[]),
+            ("histo_tof", &[]),
+            ("mesy_mpsd", &[]),
+            ("mesy_mdll", &[]),
+            ("kws_gedet", &[]),
+            ("canon", &[("reso", toml::Value::Integer(256))]),
+        ];
+        for (r#type, extra) in cases {
+            let mut config = toml::Table::new();
+            for (key, value) in *extra {
+                config.insert((*key).to_string(), value.clone());
+            }
+            let map = BTreeMap::from([("test".to_string(),
+                                       RecipeConfig { r#type: (*r#type).to_string(), config })]);
+            let mut recipe = from_config(&map, "test")
+                .unwrap_or_else(|e| panic!("building recipe {type}: {e:#}", type = r#type));
+            // one Tzero and one Neutron event covers both kinds a recipe might special-case
+            let out = recipe.process(vec![test_utils::tzero(0), test_utils::neutron(100, 1)]);
+            assert_eq!(out.len(), 2, "recipe {type} should pass through both events");
+        }
     }
 }
