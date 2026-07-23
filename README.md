@@ -269,12 +269,14 @@ UMAMI writes histogram data to a POSIX shared-memory block whose dimensions are
 defined by `[histogram]`.  The run ID is stored in the shared-memory header as
 well.
 
-The repository includes `plot_shmem.py`, a small Python viewer that attaches to
-the default shared-memory object `umami` and displays the 2D histogram as a
-live image.
+The repository includes `simple_ui.py`, a small PyQtGraph-based viewer and
+debugging tool that attaches to a shared-memory object and displays the
+histogram as a live image, alongside controls for starting/stopping runs,
+switching processing modes, viewing/editing live parameters, and a log of
+commands sent and replies received.
 
-If you use a non-default `ipc_name`, adjust the shared-memory name in the
-script accordingly before running it.
+Run it with `python simple_ui.py [ipc_name]`; it defaults to `umami` if no
+name is given.
 
 
 Authors

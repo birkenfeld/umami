@@ -2,4 +2,4 @@
 /test/data
 /dev
 /raw
-/histo.png
+__pycache__

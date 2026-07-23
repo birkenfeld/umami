@@ -1,3 +1,4 @@
 - How to deal with systems that only provide relative timestamps?
 - Parse recipe TOML config from HasParams too?
 - Output fanout instead of queue?
+- GUI: dir browse, save histo/image with only btns

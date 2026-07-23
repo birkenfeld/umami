@@ -1,8 +1,10 @@
-"""Simple live histogram viewer for UMAMI shared-memory output.
+"""Simple live histogram viewer and debugging tool for UMAMI shared-memory output.
 
-Reads a 3-D histogram (x × y × t) from a POSIX shared-memory segment
-and displays the t=0 plane as a real-time, log-scale colour image using
-PyQtGraph.  Shared-memory segment layout:
+Reads a 3-D histogram (x * y * t) from a POSIX shared-memory segment and
+displays the selected t-plane as a real-time, log-scale colour image using
+PyQtGraph. An optional 1-D projection (counts vs. x channel, summed over y)
+can be opened in a separate window via the "Projection Plot" button.
+Shared-memory segment layout:
 
     Offset  Size  Field
     ------  ----  -----
@@ -11,19 +13,21 @@ PyQtGraph.  Shared-memory segment layout:
      132       2  nx (u16)
      134       2  ny (u16)
      136       2  nt (u16)
-     138       2  ni (u16)
-     140    nx*ny*nt*ni × 4  histogram bins (u32, LE)
+     138       2  ni (u16, unused -- not implemented on the UMAMI side)
+     140    nx*ny*nt x 4  histogram bins (u32, LE)
 
-Control buttons (Reset, Clear, Start, Stop) send JSON commands to the
-UMAMI pipeline via an abstract Unix datagram socket; a Quit button closes
-the viewer.
+A control panel sends JSON commands to the UMAMI pipeline via an abstract
+Unix datagram socket: Reset, Clear, Start/Stop a run, switch processing
+mode, toggle raw-event dumping, save the current histogram to a file, and
+view/edit live recipe and output parameters. A status panel shows the
+connection state and the state of each configured input. A log of every
+command sent and reply received -- replacing the previous transient error
+popups -- is available via the "Show Log" toggle (hidden by default) to
+make this useful for debugging a running pipeline, not just watching it.
 
-Features:
-- Automatic refresh at 4 fps (250 ms timer).
-- Log10 colour-mapped display (viridis).
-- Live count-rate calculation shown in the window title.
-- Accepts an optional command-line argument to select the shared-memory
-  segment name (defaults to ``umami``).
+Usage: python simple_ui.py [ipc_name]  (defaults to "umami"; this name is
+used for both the shared-memory segment and the command socket, matching
+how `umami`/`umamictl` wire up `--ipc`.)
 """
 
 import os
@@ -35,7 +39,8 @@ import time
 import socket
 import numpy as np
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtCore, QtWidgets
+import pyqtgraph.exporters as exporters
+from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 ffi = cffi.FFI()
 ffi.cdef("""
@@ -43,109 +48,543 @@ int shm_open(const char *name, int flags, unsigned int mode);
 int shm_unlink(const char *name);
 """)
 
-try:
-    shm_name = sys.argv[1]
-except IndexError:
-    shm_name = 'umami'
+# run_id(128) + global_state(u32) + nx,ny,nt,ni(u16 x4) + reserved(u32) padding
+HEADER_SIZE = 128 + 4 * 4
 
-off_size = 128 + 4*4  # run_id(128) + global_state(u32) + nx,ny,nt,ni (4 × u16) + padding
+IMAGE_REFRESH_MS = 250
+STATE_POLL_MS = 1000
+SOCKET_TIMEOUT = 0.5
 
-lib = ffi.dlopen('rt')
-fd = lib.shm_open(shm_name.encode(), os.O_RDONLY, 0o666)
-if fd < 0:
-    raise RuntimeError(f'Could not open shared memory: {os.strerror(-fd)}')
-mapp = mmap.mmap(fd, off_size, prot=mmap.PROT_READ)
-header_values = np.frombuffer(mapp, '<u2', count=4, offset=132)
-nx = int(header_values[0])
-ny = int(header_values[1])
-del header_values
-mapp.close()
 
-mapp = mmap.mmap(fd, off_size + nx*ny*4, prot=mmap.PROT_READ)
-sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-sock.bind('\0plot-' + shm_name + '-' + str(os.getpid()))
+class ShmHistogram:
+    """Read-only view onto a UMAMI shared-memory histogram segment.
 
-prev = dict()
+    Note: the `ni` header field is not implemented on the UMAMI/Rust side --
+    the histogram offset math there never factors it in, and the shm segment
+    is only ever sized for nx*ny*nt elements. It is read here only to be
+    ignored; do not use it to size buffers or offsets.
+    """
 
-def update_buffer():
-    # run id is encoded as a c string in the first 128 bytes
-    run_id = np.frombuffer(mapp, 'S128', 1)[0].decode('ascii').rstrip('\x00')
-    buf = np.frombuffer(mapp, '<u4', nx*ny, off_size).reshape((ny, nx))
-    lbuf = np.log10(buf.astype(float) + 0.1)
-    img.setImage(lbuf)
-    total = buf.sum()
-    now = time.monotonic()
-    if prev and total >= prev['total']:
-        rate = (total - prev['total']) / (now - prev['time'])
-        plot.setTitle(f'Run {run_id}: {total} total counts ({rate:,.1f}/sec)')
-    prev['total'] = total
-    prev['time'] = now
+    def __init__(self, shm_name):
+        lib = ffi.dlopen('rt')
+        fd = lib.shm_open(shm_name.encode(), os.O_RDONLY, 0o666)
+        if fd < 0:
+            raise RuntimeError(f'Could not open shared memory {shm_name!r}: '
+                                f'{os.strerror(-fd)}')
+        header_map = mmap.mmap(fd, HEADER_SIZE, prot=mmap.PROT_READ)
+        header = np.frombuffer(header_map, '<u2', count=4, offset=132)
+        self.nx = int(header[0])
+        self.ny = int(header[1])
+        self.nt = int(header[2])
+        del header  # release the buffer export so header_map can be closed
+        header_map.close()
 
-pg.setConfigOption('background', 'w')
-pg.setConfigOption('foreground', 'k')
-app = QtWidgets.QApplication(['umami-histogram'])
+        self.mapp = mmap.mmap(fd, HEADER_SIZE + self.nx * self.ny * self.nt * 4,
+                               prot=mmap.PROT_READ)
 
-window = QtWidgets.QWidget()
-window.resize(800, 800)
-window.setWindowTitle('UMAMI histogram')
-window.setLayout(QtWidgets.QVBoxLayout())
-window.layout().setContentsMargins(0, 0, 0, 0)
+    def read_run_id(self):
+        return np.frombuffer(self.mapp, 'S128', 1)[0].decode('ascii').rstrip('\x00')
 
-graphics = pg.GraphicsLayoutWidget()
-plot = graphics.addPlot()
-plot.setTitle('starting...')
+    def read_plane(self, t=0):
+        offset = HEADER_SIZE + t * self.nx * self.ny * 4
+        return np.frombuffer(self.mapp, '<u4', self.nx * self.ny, offset) \
+                 .reshape((self.ny, self.nx))
 
-img = pg.ImageItem(border='w', axisOrder='row-major')
-plot.addItem(img)
-img.setColorMap(pg.colormap.get('viridis'))
-plot.enableAutoRange('xy', True)
 
-def send_cmd(cmd, **kwds):
-    sock.connect('\0' + shm_name)
+class LogPanel(QtWidgets.QPlainTextEdit):
+    """Scrolling, timestamped log of commands, replies, and errors."""
+
+    COLORS = {'warning': QtGui.QColor('darkorange'), 'error': QtGui.QColor('red')}
+
+    def __init__(self):
+        super().__init__()
+        self.setReadOnly(True)
+        self.setMaximumBlockCount(2000)
+        self.setFont(QtGui.QFont('monospace'))
+
+    def _append(self, level, text):
+        cursor = self.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.MoveOperation.End)
+        fmt = QtGui.QTextCharFormat()
+        if level in self.COLORS:
+            fmt.setForeground(self.COLORS[level])
+        cursor.setCharFormat(fmt)
+        cursor.insertText(f'[{time.strftime("%H:%M:%S")}] {level.upper():7} {text}\n')
+        self.setTextCursor(cursor)
+        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+
+    def info(self, text):
+        self._append('info', text)
+
+    def warning(self, text):
+        self._append('warning', text)
+
+    def error(self, text):
+        self._append('error', text)
+
+
+class UmamiClient:
+    """Talks to the UMAMI command socket. Never raises to callers; every
+    failure is logged and the call returns None instead."""
+
+    def __init__(self, ipc_name, log):
+        self.ipc_name = ipc_name
+        self.log = log
+        self.connected = False
+        self._busy = False
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.sock.settimeout(SOCKET_TIMEOUT)
+        self.sock.bind('\0plot-' + ipc_name + '-' + str(os.getpid()))
+
+    def _ensure_connected(self):
+        if self.connected:
+            return True
+        try:
+            self.sock.connect('\0' + self.ipc_name)
+        except OSError as e:
+            self.log.warning(f'Cannot reach {self.ipc_name!r}: {e}')
+            return False
+        self.connected = True
+        return True
+
+    def _call(self, cmd, **kwargs):
+        if self._busy:
+            return None  # a previous call is still (conceptually) in flight
+        self._busy = True
+        try:
+            if not self._ensure_connected():
+                return None
+            msg = json.dumps({'command': cmd, **kwargs})
+            self.log.info(f'-> {msg}')
+            try:
+                self.sock.sendall(msg.encode())
+                raw = self.sock.recv(4096)
+            except OSError as e:
+                self.connected = False
+                self.log.warning(f'Lost connection to {self.ipc_name!r}: {e}')
+                return None
+            reply = json.loads(raw.decode())
+            self.log.info(f'<- {reply}')
+            if reply['result'] == 'error':
+                module = reply.get('module')
+                prefix = f'[{module}] ' if module else ''
+                self.log.error(f'{prefix}{reply["message"]}')
+                return None
+            return reply.get('value')
+        finally:
+            self._busy = False
+
+    def ping(self):
+        return self._call('ping')
+
+    def clear(self):
+        return self._call('clear')
+
+    def start(self, run_id):
+        return self._call('start', run_id=run_id)
+
+    def stop(self):
+        return self._call('stop')
+
+    def reset(self):
+        return self._call('reset')
+
+    def get_state(self):
+        return self._call('get_state')
+
+    def set_raw_dump(self, enable, path):
+        return self._call('set_raw_dump', enable=enable, path=path)
+
+    def get_modes(self):
+        return self._call('get_modes')
+
+    def set_mode(self, name):
+        return self._call('set_mode', name=name)
+
+    def get_params(self):
+        return self._call('get_params')
+
+    def set_params(self, params):
+        return self._call('set_params', params=params)
+
+    def save_histo(self, path, max_nt):
+        return self._call('save_histo', path=path, max_nt=max_nt)
+
+
+class StatusPanel(QtWidgets.QFrame):
+    """Connection indicator, current mode, and per-input state at a glance."""
+
+    STATE_COLORS = {'idle': 'gray', 'running': 'green', 'ended': 'blue'}
+    ERROR_COLOR = 'red'
+    INPUT_ROWS = 3
+    INPUT_FONT_SIZE = 8
+
+    def __init__(self):
+        super().__init__()
+        self.setLayout(QtWidgets.QHBoxLayout())
+        self.layout().setContentsMargins(0, 2, 0, 2)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                            QtWidgets.QSizePolicy.Policy.Fixed)
+
+        self.conn_label = QtWidgets.QLabel()
+        self.layout().addWidget(self.conn_label)
+        self.layout().addSpacing(20)
+
+        self.mode_label = QtWidgets.QLabel('mode: -')
+        self.layout().addWidget(self.mode_label)
+        self.layout().addSpacing(20)
+
+        # a config can have many inputs; lay them out in a compact grid
+        inputs_widget = QtWidgets.QWidget()
+        self.inputs_layout = QtWidgets.QGridLayout(inputs_widget)
+        self.inputs_layout.setContentsMargins(0, 0, 0, 0)
+        self.inputs_layout.setHorizontalSpacing(4)
+        self.inputs_layout.setVerticalSpacing(0)
+        inputs_scroll = QtWidgets.QScrollArea()
+        inputs_scroll.setWidget(inputs_widget)
+        inputs_scroll.setWidgetResizable(True)
+        inputs_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        inputs_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        inputs_scroll.setFixedHeight(14 * self.INPUT_ROWS + 8)
+        inputs_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        inputs_scroll.setStyleSheet('background: transparent;')
+        inputs_scroll.viewport().setStyleSheet('background: transparent;')
+        inputs_widget.setAutoFillBackground(False)
+        self.layout().addWidget(inputs_scroll, stretch=1)
+        self._input_labels = {}
+
+        self.set_connected(False)
+
+    def set_connected(self, connected):
+        if connected:
+            self.conn_label.setText('● connected')
+            self.conn_label.setStyleSheet(f'color: {self.STATE_COLORS["running"]}; '
+                                          'font-weight: bold;')
+        else:
+            self.conn_label.setText('● disconnected')
+            self.conn_label.setStyleSheet(f'color: {self.ERROR_COLOR}; font-weight: bold;')
+
+    def update_state(self, state):
+        if state is None:
+            return
+        self.mode_label.setText(f"mode: {state.get('mode', '-')}")
+        for name, st in state.get('inputs', {}).items():
+            if name not in self._input_labels:
+                label = QtWidgets.QLabel()
+                font = label.font()
+                font.setPointSize(self.INPUT_FONT_SIZE)
+                label.setFont(font)
+                index = len(self._input_labels)
+                self.inputs_layout.addWidget(label, index % self.INPUT_ROWS,
+                                             index // self.INPUT_ROWS)
+                self._input_labels[name] = label
+            label = self._input_labels[name]
+            if isinstance(st, dict) and 'error' in st:
+                label.setText(f'{name}: error')
+                label.setStyleSheet(f'color: {self.ERROR_COLOR};')
+                label.setToolTip(st['error'])
+            else:
+                label.setText(f'{name}: {st}')
+                label.setStyleSheet(f'color: {self.STATE_COLORS.get(st, "#333")};')
+                label.setToolTip('')
+
+
+class ParamsTable(QtWidgets.QTableWidget):
+    """Shows current recipe/output parameters from get_params; editing a
+    cell pushes the change live via set_params."""
+
+    def __init__(self, client):
+        super().__init__(0, 2)
+        self.client = client
+        self.setHorizontalHeaderLabels(['Parameter', 'Value'])
+        self.horizontalHeader().setStretchLastSection(True)
+        self.itemChanged.connect(self._on_item_changed)
+        self._keys = []
+
+    def refresh(self):
+        params = self.client.get_params()
+        if params is None:
+            return
+        self.blockSignals(True)
+        self.setRowCount(len(params))
+        self._keys = []
+        for row, (key, info) in enumerate(sorted(params.items())):
+            name_item = QtWidgets.QTableWidgetItem(key)
+            name_item.setFlags(name_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            name_item.setToolTip(f"{info.get('datatype', '')}: {info.get('help', '')}")
+            self.setItem(row, 0, name_item)
+            self._keys.append(key)
+
+            value = info.get('value')
+            if isinstance(value, bool):
+                checkbox = QtWidgets.QCheckBox()
+                checkbox.setChecked(value)
+                checkbox.toggled.connect(lambda checked, k=key: self._send(k, checked))
+                self.setCellWidget(row, 1, checkbox)
+            else:
+                if isinstance(value, list):
+                    text = json.dumps(value)
+                elif value is None:
+                    text = ''
+                else:
+                    text = str(value)
+                self.setItem(row, 1, QtWidgets.QTableWidgetItem(text))
+        self.blockSignals(False)
+
+    def _on_item_changed(self, item):
+        if item.column() != 1 or item.row() >= len(self._keys):
+            return
+        self._send(self._keys[item.row()], self._parse(item.text()))
+
+    @staticmethod
+    def _parse(text):
+        if text == '':
+            return None
+        for conv in (int, float):
+            try:
+                return conv(text)
+            except ValueError:
+                pass
+        try:
+            value = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            return text
+        return value if isinstance(value, list) else text
+
+    def _send(self, key, value):
+        self.client.set_params({key: value})
+
+
+def main():
+    shm_name = sys.argv[1] if len(sys.argv) > 1 else 'umami'
+
+    pg.setConfigOption('background', 'w')
+    pg.setConfigOption('foreground', 'k')
+    app = QtWidgets.QApplication(['umami-histogram'])
+
     try:
-        sock.sendall(json.dumps({'command': cmd} | kwds).encode())
-        reply = json.loads(sock.recv(2048).decode())
-    except Exception as e:
-        QtWidgets.QMessageBox.critical(window, 'Error',
-                                       f'Error communicating with server: {e}')
-    else:
-        if reply['result'] == 'error':
-            QtWidgets.QMessageBox.critical(window, 'Error',
-                                           f'Error: {reply["message"]}')
+        histo = ShmHistogram(shm_name)
+    except RuntimeError as e:
+        QtWidgets.QMessageBox.critical(None, 'Error', str(e))
+        sys.exit(1)
 
-buttons = QtWidgets.QFrame()
-buttons.setLayout(QtWidgets.QHBoxLayout())
-buttons.layout().setContentsMargins(0, 5, 0, 5)
-buttons.layout().addStretch()
+    window = QtWidgets.QWidget()
+    window.resize(1100, 800)
+    window.setWindowTitle('UMAMI histogram')
+    window.setLayout(QtWidgets.QVBoxLayout())
+    window.layout().setContentsMargins(0, 0, 0, 0)
 
-btn = QtWidgets.QPushButton('Reset')
-btn.clicked.connect(lambda: send_cmd('reset'))
-buttons.layout().addWidget(btn)
+    log_panel = LogPanel()
+    client = UmamiClient(shm_name, log_panel)
 
-btn = QtWidgets.QPushButton('Clear')
-btn.clicked.connect(lambda: send_cmd('clear'))
-buttons.layout().addWidget(btn)
+    # ---- main image plot ----
+    graphics = pg.GraphicsLayoutWidget()
+    plot = graphics.addPlot()
+    plot.setTitle('starting...')
+    img = pg.ImageItem(border='w', axisOrder='row-major')
+    plot.addItem(img)
+    img.setColorMap(pg.colormap.get('viridis'))
+    plot.enableAutoRange('xy', True)
 
-btn = QtWidgets.QPushButton('Start')
-btn.clicked.connect(
-    lambda: send_cmd('start', run_id=time.strftime('%Y-%m-%d_%H:%M:%S')))
-buttons.layout().addWidget(btn)
+    # ---- projection plot: a separate window, created lazily on request ----
+    proj_x_edges = np.arange(histo.nx + 1) - 0.5
+    proj_window = None
+    proj_curve = None
 
-btn = QtWidgets.QPushButton('Stop')
-btn.clicked.connect(lambda: send_cmd('stop'))
-buttons.layout().addWidget(btn)
+    def open_projection_window():
+        nonlocal proj_window, proj_curve
+        if proj_window is None:
+            proj_window = pg.PlotWidget(title='X projection (summed over y)')
+            proj_window.setLabel('bottom', 'x channel')
+            proj_window.setLabel('left', 'counts')
+            proj_window.resize(700, 400)
+            proj_curve = proj_window.plot(stepMode='center', fillLevel=0,
+                                          brush=(0, 0, 255, 80))
+        proj_window.show()
+        proj_window.raise_()
 
-btn = QtWidgets.QPushButton('Quit')
-btn.clicked.connect(app.quit)
-buttons.layout().addWidget(btn)
+    prev = {}
 
-buttons.layout().addStretch()
-window.layout().addWidget(buttons)
-window.layout().addWidget(graphics)
-window.show()
+    def update_buffer():
+        t = t_spin.value() if t_spin is not None else 0
+        run_id = histo.read_run_id()
+        buf = histo.read_plane(t)
+        img.setImage(np.log10(buf.astype(float) + 0.1))
+        if proj_curve is not None and proj_window.isVisible():
+            proj_curve.setData(proj_x_edges, buf.sum(axis=0), stepMode='center')
 
-timer = QtCore.QTimer()
-timer.timeout.connect(update_buffer)
-timer.start(250)
+        total = int(buf.sum())
+        now = time.monotonic()
+        if prev and total >= prev['total']:
+            rate = (total - prev['total']) / (now - prev['time'])
+            plot.setTitle(f'Run {run_id}: {total} total counts ({rate:,.1f}/sec)')
+        prev['total'] = total
+        prev['time'] = now
 
-app.exec()
+    # ---- status/state polling (also serves as the connection heartbeat) ----
+    status_panel = StatusPanel()
+
+    mode_combo = QtWidgets.QComboBox()
+
+    def sync_mode_combo(mode_name):
+        if mode_name and mode_combo.currentText() != mode_name:
+            mode_combo.blockSignals(True)
+            index = mode_combo.findText(mode_name)
+            if index >= 0:
+                mode_combo.setCurrentIndex(index)
+            mode_combo.blockSignals(False)
+
+    def poll_state():
+        state = client.get_state()
+        status_panel.set_connected(client.connected)
+        if state is not None:
+            status_panel.update_state(state)
+            sync_mode_combo(state.get('mode'))
+
+    # ---- controls ----
+    buttons = QtWidgets.QFrame()
+    buttons.setLayout(QtWidgets.QHBoxLayout())
+    buttons.layout().setContentsMargins(0, 5, 0, 5)
+    buttons.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                          QtWidgets.QSizePolicy.Policy.Fixed)
+
+    btn = QtWidgets.QPushButton('Reset')
+    btn.clicked.connect(lambda: client.reset())
+    buttons.layout().addWidget(btn)
+
+    btn = QtWidgets.QPushButton('Clear')
+    btn.clicked.connect(lambda: client.clear())
+    buttons.layout().addWidget(btn)
+
+    run_id_field = QtWidgets.QLineEdit(time.strftime('%Y-%m-%d_%H:%M:%S'))
+    run_id_field.setMaximumWidth(160)
+    buttons.layout().addWidget(run_id_field)
+
+    btn = QtWidgets.QPushButton('Start')
+    btn.clicked.connect(lambda: client.start(run_id_field.text()))
+    buttons.layout().addWidget(btn)
+
+    btn = QtWidgets.QPushButton('Stop')
+    btn.clicked.connect(lambda: client.stop())
+    buttons.layout().addWidget(btn)
+
+    buttons.layout().addSpacing(20)
+    buttons.layout().addWidget(QtWidgets.QLabel('Mode:'))
+    buttons.layout().addWidget(mode_combo)
+
+    def on_mode_selected(index):
+        client.set_mode(mode_combo.itemText(index))
+    mode_combo.activated.connect(on_mode_selected)
+
+    t_spin = None
+    if histo.nt > 1:
+        buttons.layout().addSpacing(20)
+        buttons.layout().addWidget(QtWidgets.QLabel('t:'))
+        t_spin = QtWidgets.QSpinBox()
+        t_spin.setRange(0, histo.nt - 1)
+        t_spin.valueChanged.connect(lambda _: update_buffer())
+        buttons.layout().addWidget(t_spin)
+
+    buttons.layout().addSpacing(20)
+    btn = QtWidgets.QPushButton('Projection Plot')
+    btn.clicked.connect(open_projection_window)
+    buttons.layout().addWidget(btn)
+
+    log_toggle = QtWidgets.QPushButton('Show Log')
+    log_toggle.setCheckable(True)
+    buttons.layout().addWidget(log_toggle)
+
+    buttons.layout().addStretch()
+
+    btn = QtWidgets.QPushButton('Quit')
+    btn.clicked.connect(app.quit)
+    buttons.layout().addWidget(btn)
+
+    # ---- raw dump / save histo controls ----
+    dump_frame = QtWidgets.QFrame()
+    dump_frame.setLayout(QtWidgets.QHBoxLayout())
+    dump_frame.layout().setContentsMargins(0, 0, 0, 5)
+    dump_frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                             QtWidgets.QSizePolicy.Policy.Fixed)
+
+    raw_dump_check = QtWidgets.QCheckBox('Raw dump to:')
+    dump_frame.layout().addWidget(raw_dump_check)
+    raw_dump_path = QtWidgets.QLineEdit()
+    raw_dump_path.setPlaceholderText('/path/to/raw/dump/dir')
+    dump_frame.layout().addWidget(raw_dump_path)
+    raw_dump_check.toggled.connect(
+        lambda checked: client.set_raw_dump(checked, raw_dump_path.text()))
+
+    dump_frame.layout().addSpacing(20)
+
+    def save_histo_dialog():
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            window, 'Save Histogram', '', 'Text files (*.txt);;All files (*)')
+        if path:
+            client.save_histo(path, histo.nt)
+    btn = QtWidgets.QPushButton('Save Histo...')
+    btn.clicked.connect(save_histo_dialog)
+    dump_frame.layout().addWidget(btn)
+
+    def save_plot_image_dialog():
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            window, 'Save Plot Image', '', 'PNG files (*.png);;All files (*)')
+        if path:
+            exporters.ImageExporter(plot).export(path)
+    btn = QtWidgets.QPushButton('Save Plot PNG...')
+    btn.clicked.connect(save_plot_image_dialog)
+    dump_frame.layout().addWidget(btn)
+
+    # ---- params panel ----
+    params_panel = QtWidgets.QWidget()
+    params_panel.setLayout(QtWidgets.QVBoxLayout())
+    params_panel.layout().setContentsMargins(5, 0, 0, 0)
+    params_table = ParamsTable(client)
+    refresh_btn = QtWidgets.QPushButton('Refresh Params')
+    refresh_btn.clicked.connect(params_table.refresh)
+    params_panel.layout().addWidget(refresh_btn)
+    params_panel.layout().addWidget(params_table)
+
+    # ---- assembly ----
+    log_panel.setVisible(False)  # minimized by default; toggled via "Show Log"
+    log_toggle.toggled.connect(log_panel.setVisible)
+
+    left_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+    left_splitter.addWidget(graphics)
+    left_splitter.addWidget(log_panel)
+    left_splitter.setSizes([600, 200])
+
+    main_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+    main_splitter.addWidget(left_splitter)
+    main_splitter.addWidget(params_panel)
+    main_splitter.setSizes([800, 300])
+    main_splitter.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                                QtWidgets.QSizePolicy.Policy.Expanding)
+
+    window.layout().addWidget(buttons)
+    window.layout().addWidget(dump_frame)
+    window.layout().addWidget(status_panel)
+    window.layout().addWidget(main_splitter)
+    window.show()
+
+    image_timer = QtCore.QTimer()
+    image_timer.timeout.connect(update_buffer)
+    image_timer.start(IMAGE_REFRESH_MS)
+
+    state_timer = QtCore.QTimer()
+    state_timer.timeout.connect(poll_state)
+    state_timer.start(STATE_POLL_MS)
+
+    # get an initial connection/log entry and populate the mode list & params
+    # right away rather than waiting for the first timer tick
+    client.ping()
+    modes = client.get_modes() or []
+    mode_combo.addItems(modes)
+    params_table.refresh()
+    poll_state()
+
+    app.exec()
+
+
+if __name__ == '__main__':
+    main()
