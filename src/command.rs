@@ -3,18 +3,34 @@
 
 use std::collections::BTreeMap;
 use std::os::unix::net;
+use std::time::{Duration, Instant};
 use anyhow::Context;
-use itertools::Itertools;
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use uds::UnixDatagramExt;
 use crate::{ldebug, lprintln};
-use crate::channel::Sender;
+use crate::channel::{RecvTimeoutError, Sender};
 use crate::error::UResult;
 use crate::params::ParamMap;
 use crate::pipeline::PipeItem;
 
 pub type ModuleId = internment::Intern<String>;
+
+/// Cap on how long a single command waits for replies from inputs/postprocessor.
+/// A wedged component is a data-integrity problem that needs a human to look at
+/// it regardless; this timeout's only job is to keep the command socket itself
+/// responsive (so unrelated commands like `Ping` aren't collateral damage) and
+/// to report the failure clearly instead of hanging forever.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Builds the standard "gave up waiting" reply, also logging it locally since
+/// an unresponsive `who` is worth noticing even if nobody's watching the reply.
+fn unresponsive(who: &str) -> CommandReply {
+    lprintln!(ERROR, "{who} did not respond within {REPLY_TIMEOUT:?}");
+    CommandReply::new_error(format!(
+        "{who} did not respond within {REPLY_TIMEOUT:?}; it may be stuck \
+         and require manual intervention"))
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
@@ -121,66 +137,75 @@ impl CommandHandler {
         }
     }
 
+    /// Sends `item` to the postprocessor and waits for one reply on `rep_recv`,
+    /// both bounded by `deadline`; on timeout, returns [`unresponsive`] instead
+    /// of blocking forever.
+    fn post_and_wait(
+        &self, item: PipeItem, rep_recv: &crate::channel::Receiver<CommandReply>, deadline: Instant,
+    ) -> CommandReply {
+        if self.post_send.send_deadline(item, deadline).is_err() {
+            return unresponsive("postprocessor");
+        }
+        rep_recv.recv_deadline(deadline).unwrap_or_else(|_| unresponsive("postprocessor"))
+    }
+
     pub fn handle(&self, cmd: Command) -> CommandReply {
         let (rep_send, rep_recv) = crate::channel::bounded(self.input_send.len());
+        let deadline = Instant::now() + REPLY_TIMEOUT;
         match cmd {
             Command::Ping => {
                 let version = format!("UMAMI {}", env!("CARGO_PKG_VERSION"));
                 CommandReply::Data { value: version.into() }
             }
             Command::Clear => {
-                self.post_send.send(PipeItem::Clear)
-                              .expect("postprocessor command receiver died");
-                CommandReply::Ok
+                match self.post_send.send_deadline(PipeItem::Clear, deadline) {
+                    Ok(()) => CommandReply::Ok,
+                    Err(_) => unresponsive("postprocessor"),
+                }
             }
-            Command::GetState => {
-                self.post_send.send(PipeItem::GetState(rep_send))
-                              .expect("postprocessor command receiver died");
-                rep_recv.recv().expect("postprocessor command sender died")
-            }
-            Command::GetModes => {
-                self.post_send.send(PipeItem::GetModes(rep_send))
-                              .expect("postprocessor command receiver died");
-                rep_recv.recv().expect("postprocessor command sender died")
-            }
-            Command::SetMode { name } => {
-                self.post_send.send(PipeItem::SetMode(ModuleId::new(name), rep_send))
-                              .expect("postprocessor command receiver died");
-                rep_recv.recv().expect("postprocessor command sender died")
-            }
+            Command::GetState => self.post_and_wait(PipeItem::GetState(rep_send), &rep_recv, deadline),
+            Command::GetModes => self.post_and_wait(PipeItem::GetModes(rep_send), &rep_recv, deadline),
+            Command::SetMode { name } => self.post_and_wait(
+                PipeItem::SetMode(ModuleId::new(name), rep_send), &rep_recv, deadline),
+            Command::SaveHisto { path, max_nt } => self.post_and_wait(
+                PipeItem::SaveHisto(path, max_nt, rep_send), &rep_recv, deadline),
             Command::Start { .. } | Command::Stop | Command::SetRawDump { .. } |
             Command::Reset => {
-                if let Command::Start { run_id } = &cmd {
-                    self.post_send.send(PipeItem::StartOfRun(run_id.into()))
-                                  .expect("postprocessor command receiver died");
+                if let Command::Start { run_id } = &cmd
+                    && self.post_send.send_deadline(PipeItem::StartOfRun(run_id.into()), deadline).is_err()
+                {
+                    return unresponsive("postprocessor");
                 }
                 let cmd_and_send = (cmd, rep_send);
-                for sender in self.input_send.values() {
-                    sender.send(cmd_and_send.clone()).expect("input command receiver died");
+                for (name, sender) in &self.input_send {
+                    if sender.send_deadline(cmd_and_send.clone(), deadline).is_err() {
+                        return unresponsive(&format!("input {name}"));
+                    }
                 }
-                let replies = (0..self.input_send.len()).map(
-                    |_| rep_recv.recv().expect("input command sender died")
-                ).collect_vec();
-                if let Some(err) = replies.into_iter().find(|r| r.is_error()) {
-                    return err;
+                let mut replies = Vec::with_capacity(self.input_send.len());
+                for _ in 0..self.input_send.len() {
+                    match rep_recv.recv_deadline(deadline) {
+                        Ok(reply) => replies.push(reply),
+                        Err(_) => return unresponsive("an input"),
+                    }
                 }
-                CommandReply::Ok
-            }
-            Command::SaveHisto { path, max_nt } => {
-                self.post_send.send(PipeItem::SaveHisto(path, max_nt, rep_send))
-                              .expect("postprocessor command receiver died");
-                rep_recv.recv().expect("postprocessor command sender died")
+                replies.into_iter().find(|r| r.is_error()).unwrap_or(CommandReply::Ok)
             }
             Command::GetParams => {
-                // this command need a differently typed channel
+                // this command needs a differently typed channel
                 let (rep_send, rep_recv) = crate::channel::unbounded();
-                self.post_send.send(PipeItem::GetParams(rep_send))
-                              .expect("postprocessor command receiver died");
+                if self.post_send.send_deadline(PipeItem::GetParams(rep_send), deadline).is_err() {
+                    return unresponsive("postprocessor");
+                }
                 // aggregate parameters from all HasParams into a single map
                 let mut map = ParamMap::new();
-                for (name, params) in rep_recv {
-                    for (param, info) in params {
-                        map.insert(format!("{name}.{param}"), info);
+                loop {
+                    match rep_recv.recv_deadline(deadline) {
+                        Ok((name, params)) => for (param, info) in params {
+                            map.insert(format!("{name}.{param}"), info);
+                        },
+                        Err(RecvTimeoutError::Disconnected) => break,
+                        Err(RecvTimeoutError::Timeout) => return unresponsive("a recipe or output"),
                     }
                 }
                 CommandReply::Data { value: map.into() }
@@ -201,15 +226,17 @@ impl CommandHandler {
                            .insert(param.into(), value);
                 }
 
-                self.post_send.send(PipeItem::SetParams(new_map, rep_send))
-                              .expect("postprocessor command receiver died");
+                if self.post_send.send_deadline(PipeItem::SetParams(new_map, rep_send), deadline).is_err() {
+                    return unresponsive("postprocessor");
+                }
                 // aggregate errors, if any
-                let errors = rep_recv.into_iter().filter(|r| r.is_error()).collect_vec();
-                if errors.is_empty() {
-                    CommandReply::Ok
-                } else {
-                    // TODO aggregate error messages into one reply
-                    errors.into_iter().next().unwrap()
+                loop {
+                    match rep_recv.recv_deadline(deadline) {
+                        Ok(reply) if reply.is_error() => return reply,
+                        Ok(_) => {}
+                        Err(RecvTimeoutError::Disconnected) => return CommandReply::Ok,
+                        Err(RecvTimeoutError::Timeout) => return unresponsive("a recipe or output"),
+                    }
                 }
             }
         }
@@ -393,5 +420,24 @@ mod tests {
             }
             other => panic!("unexpected reply: {other:?}"),
         }
+    }
+
+    /// A wedged postprocessor or input must not hang `handle()` forever -- it
+    /// should give up around REPLY_TIMEOUT and report a clear error instead.
+    #[test]
+    fn test_unresponsive_component_times_out_instead_of_hanging() {
+        // nothing ever reads `post_recv`, simulating a wedged postprocessor
+        let (handler, _inputs, _post_recv) = make_handler(&[]);
+        let started = Instant::now();
+        assert!(handler.handle(Command::GetState).is_error());
+        assert!(started.elapsed() >= REPLY_TIMEOUT, "returned before the deadline");
+        assert!(started.elapsed() < REPLY_TIMEOUT * 2, "took far longer than the deadline");
+
+        // same for a wedged input during the Start/Stop/Reset/SetRawDump fan-out
+        let (handler, _inputs, _post_recv) = make_handler(&["mod0"]);
+        let started = Instant::now();
+        assert!(handler.handle(Command::Stop).is_error());
+        assert!(started.elapsed() >= REPLY_TIMEOUT, "returned before the deadline");
+        assert!(started.elapsed() < REPLY_TIMEOUT * 2, "took far longer than the deadline");
     }
 }
