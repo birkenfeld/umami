@@ -15,7 +15,7 @@ use crate::input::{InputCommon, InputState};
 use crate::params::ParamMap;
 use crate::shm::{ShmInterface, MAX_INPUTS};
 
-const EV_CHANNEL_SIZE: usize = 128; // TODO tune more?
+pub(crate) const EV_CHANNEL_SIZE: usize = 128; // TODO tune more?
 const OUT_CHANNEL_SIZE: usize = 16384; // give outputs some slack
 
 pub struct PipelineHandle {
@@ -93,19 +93,8 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
         Err(anyhow!("Some inputs failed to initialize"))?;
     }
 
-    // create event sorters if we have more than one input
-    while pipe_recvs.len() > 1 {
-        let read_1 = pipe_recvs.pop().expect("len checked");
-        let read_2 = pipe_recvs.pop().expect("len checked");
-        if pipe_recvs.is_empty() {
-            // this is the last sorter, write directly to the final channel
-            sorter::Sorter::new(read_1, read_2, postproc_send.clone()).start()?;
-        } else {
-            let (write, sorted_recv) = channel::bounded(EV_CHANNEL_SIZE);
-            sorter::Sorter::new(read_1, read_2, write).start()?;
-            pipe_recvs.push(sorted_recv);
-        }
-    }
+    // merge all inputs into one stream; no-op for < 2 inputs
+    sorter::build_sorter_tree(pipe_recvs, postproc_send.clone())?;
 
     // create command handler
     let handler = command::CommandHandler::new(
