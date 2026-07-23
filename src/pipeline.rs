@@ -264,9 +264,64 @@ mod tests {
         }
     }
 
+    /// Path of the golden (reference) histogram for `conf_name`, e.g.
+    /// "test/mesy.conf" -> "test/mesy.golden.gz".
+    fn golden_path(conf_name: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(conf_name).with_extension("golden.gz")
+    }
+
+    /// Compares `histo` against the golden histogram for `conf_name`, gzip-compressed
+    /// raw little-endian `u32` counts in pipeline order. If the environment variable
+    /// `UMAMI_UPDATE_GOLDEN` is set, (re)writes the golden file from `histo` instead
+    /// of comparing (use this deliberately after an intentional pipeline change).
+    fn check_or_update_golden(conf_name: &str, histo: &[u32]) {
+        use std::io::{Read, Write};
+        use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+
+        let path = golden_path(conf_name);
+        let bytes: Vec<u8> = histo.iter().flat_map(|v| v.to_le_bytes()).collect();
+
+        if std::env::var_os("UMAMI_UPDATE_GOLDEN").is_some() {
+            let file = std::fs::File::create(&path)
+                .expect(&format!("Creating golden histogram {path:?}"));
+            let mut enc = GzEncoder::new(file, Compression::best());
+            enc.write_all(&bytes).expect("Writing golden histogram");
+            enc.finish().expect("Finishing golden histogram file");
+            let _ = nix::unistd::write(
+                std::io::stderr(),
+                format!("*** Updated golden histogram {path:?}\n").as_bytes(),
+            );
+            return;
+        }
+
+        let file = std::fs::File::open(&path).expect(&format!(
+            "Opening golden histogram {path:?} (run with UMAMI_UPDATE_GOLDEN=1 to create it)"
+        ));
+        let mut golden_bytes = Vec::new();
+        GzDecoder::new(file).read_to_end(&mut golden_bytes)
+            .expect("Decompressing golden histogram");
+        let golden: Vec<u32> = golden_bytes.chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().expect("chunk of 4")))
+            .collect();
+
+        assert_eq!(golden.len(), histo.len(),
+                   "Histogram size mismatch vs golden {path:?}");
+        if golden != histo {
+            let ndiff = golden.iter().zip(histo).filter(|(g, h)| g != h).count();
+            let sample: Vec<_> = golden.iter().zip(histo).enumerate()
+                .filter(|(_, (g, h))| g != h)
+                .take(10)
+                .map(|(i, (g, h))| format!("[{i}]: golden={g} actual={h}"))
+                .collect();
+            panic!("Histogram mismatch vs golden {path:?}: {ndiff} of {} cells differ\n{}",
+                   golden.len(), sample.join("\n"));
+        }
+    }
+
     /// Runs the pipeline defined by `conf_name` (relative to the crate root) to
-    /// completion against a single run and returns the total histogram count.
-    fn run_test_pipeline(conf_name: &str) -> u64 {
+    /// completion against a single run and checks the resulting histogram against
+    /// its golden reference.
+    fn run_test_pipeline(conf_name: &str) {
         let conf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(conf_name);
         let mut config = crate::load_config(&conf_path)
             .expect("Loading test config");
@@ -303,27 +358,24 @@ mod tests {
 
         let shm_read = ShmInterface::open(handle.shm_name())
             .expect("Opening shared memory for verification");
-        let total = shm_read.histo_total();
-
+        let histo = shm_read.histo_data();
         nix::sys::mman::shm_unlink(handle.shm_name().as_bytes()).ok();
-        total
+
+        check_or_update_golden(conf_name, &histo);
     }
 
     #[test]
     fn test_pipeline_mesy_file() {
-        let total = run_test_pipeline("test/mesy.conf");
-        assert!(total > 0, "Expected non-zero neutron counts in histogram");
+        run_test_pipeline("test/mesy.conf");
     }
 
     #[test]
     fn test_pipeline_canon_file() {
-        let total = run_test_pipeline("test/canon.conf");
-        assert!(total > 0, "Expected non-zero neutron counts in histogram");
+        run_test_pipeline("test/canon.conf");
     }
 
     #[test]
     fn test_pipeline_ge_file() {
-        let total = run_test_pipeline("test/ge.conf");
-        assert!(total > 0, "Expected non-zero neutron counts in histogram");
+        run_test_pipeline("test/ge.conf");
     }
 }

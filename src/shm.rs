@@ -65,13 +65,13 @@ impl ShmBox {
     }
 
     #[cfg(test)]
-    pub fn histo_total(&self) -> u64 {
+    pub fn histo_data(&self) -> Vec<u32> {
         let size = self.histo_size(self.nt);
         let histo = unsafe {
             let ptr = self.ptr.as_ptr().add(1).cast::<u32>();
             std::slice::from_raw_parts(ptr, size)
         };
-        histo.iter().map(|&v| v as u64).sum()
+        histo.to_vec()
     }
 
     pub fn save_to_file(&self, filename: &str, max_nt: usize) -> UResult<()> {

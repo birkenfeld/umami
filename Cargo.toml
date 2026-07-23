@@ -37,6 +37,7 @@ version = "0.1"
 path = "src/derive"
 
 [dev-dependencies]
+flate2 = "1.1.9"
 ureq = "3.3.0"
 
 [features]

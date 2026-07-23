@@ -1289,6 +1289,7 @@ dependencies = [
  "bitflag-attr",
  "byteorder",
  "clap",
+ "flate2",
  "flume",
  "hdf5-metno",
  "internment",
