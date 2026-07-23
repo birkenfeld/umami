@@ -140,51 +140,61 @@ pub fn start(config: OutputConfig, common: OutputCommon) -> UResult<()> {
         "hdf5" => Ok(hdf5::HDF5EventsOutput::from_config(&common, config.config)?.start(common)?),
         "file" => Ok(file::FileOutput::from_config(&common, config.config)?.start(common)?),
         #[cfg(test)]
-        "test" => Ok(TestOutput { current_run: String::new() }.start(common)?),
+        "test" => Ok(test::TestOutput::new().start(common)?),
         _ => Err(anyhow!("Unknown output type: {}", config.r#type).into()),
     }
 }
 
 #[cfg(test)]
-static TEST_DONE_TX: std::sync::Mutex<std::collections::BTreeMap<String, Sender<()>>> =
-    std::sync::Mutex::new(std::collections::BTreeMap::new());
+pub(crate) mod test {
+    use crate::channel::{Receiver, Sender};
+    use crate::command::ModuleId;
+    use crate::error::UResult;
+    use crate::event::Event;
+    use crate::params::HasParams;
 
-#[cfg(test)]
-pub(crate) fn init_test_output(run_id: &str) -> Receiver<()> {
-    let (tx, rx) = crate::channel::bounded(1);
-    TEST_DONE_TX.lock().unwrap().insert(run_id.to_string(), tx);
-    rx
-}
+    static TEST_DONE_TX: std::sync::Mutex<std::collections::BTreeMap<String, Sender<()>>> =
+        std::sync::Mutex::new(std::collections::BTreeMap::new());
 
-#[cfg(test)]
-struct TestOutput {
-    current_run: String,
-}
+    pub fn init_test_output(run_id: &str) -> Receiver<()> {
+        let (tx, rx) = crate::channel::bounded(1);
+        TEST_DONE_TX.lock().unwrap().insert(run_id.to_string(), tx);
+        rx
+    }
 
-#[cfg(test)]
-impl HasParams for TestOutput {
-    fn get_params(&self) -> UResult<crate::params::ParamMap> {
-        Ok(crate::params::ParamMap::new())
+    pub struct TestOutput {
+        current_run: String,
     }
-    fn update_params(&mut self, _: ModuleId, _: crate::params::ParamMap) -> UResult<()> {
-        Ok(())
-    }
-}
 
-#[cfg(test)]
-impl Output for TestOutput {
-    fn from_config(_: &OutputCommon, _: toml::Table) -> UResult<Self> {
-        unreachable!()
-    }
-    fn handle_events(&mut self, _: &[Event]) -> UResult<()> { Ok(()) }
-    fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
-        self.current_run = run.to_string();
-        Ok(())
-    }
-    fn handle_end_of_run(&mut self) -> UResult<()> {
-        if let Some(tx) = TEST_DONE_TX.lock().unwrap().get(&self.current_run) {
-            tx.send(()).ok();
+    impl TestOutput {
+        pub fn new() -> Self {
+            TestOutput { current_run: String::new() }
         }
-        Ok(())
+    }
+
+    impl HasParams for TestOutput {
+        fn get_params(&self) -> UResult<crate::params::ParamMap> {
+            Ok(crate::params::ParamMap::new())
+        }
+        fn update_params(&mut self, _: ModuleId, _: crate::params::ParamMap) -> UResult<()> {
+            Ok(())
+        }
+    }
+
+    impl super::Output for TestOutput {
+        fn from_config(_: &super::OutputCommon, _: toml::Table) -> UResult<Self> {
+            unreachable!()
+        }
+        fn handle_events(&mut self, _: &[Event]) -> UResult<()> { Ok(()) }
+        fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
+            self.current_run = run.to_string();
+            Ok(())
+        }
+        fn handle_end_of_run(&mut self) -> UResult<()> {
+            if let Some(tx) = TEST_DONE_TX.lock().unwrap().get(&self.current_run) {
+                tx.send(()).ok();
+            }
+            Ok(())
+        }
     }
 }

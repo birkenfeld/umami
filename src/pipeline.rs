@@ -244,11 +244,11 @@ mod tests {
         std::fs::create_dir_all(dest.parent().expect("dest has parent"))
             .expect("Creating test data directory");
         let mut response = ureq::get(&url).call()
-            .expect(&format!("Downloading test data {url}"));
+            .unwrap_or_else(|e| panic!("Downloading test data {url}: {e}"));
         let mut file = std::fs::File::create(&dest)
-            .expect(&format!("Creating test data file {dest:?}"));
+            .unwrap_or_else(|e| panic!("Creating test data file {dest:?}: {e}"));
         std::io::copy(&mut response.body_mut().as_reader(), &mut file)
-            .expect(&format!("Writing test data file {dest:?}"));
+            .unwrap_or_else(|e| panic!("Writing test data file {dest:?}: {e}"));
     }
 
     /// Extracts the file source path of an input, if it uses a file (not IP) source.
@@ -283,7 +283,7 @@ mod tests {
 
         if std::env::var_os("UMAMI_UPDATE_GOLDEN").is_some() {
             let file = std::fs::File::create(&path)
-                .expect(&format!("Creating golden histogram {path:?}"));
+                .unwrap_or_else(|e| panic!("Creating golden histogram {path:?}: {e}"));
             let mut enc = GzEncoder::new(file, Compression::best());
             enc.write_all(&bytes).expect("Writing golden histogram");
             enc.finish().expect("Finishing golden histogram file");
@@ -294,8 +294,8 @@ mod tests {
             return;
         }
 
-        let file = std::fs::File::open(&path).expect(&format!(
-            "Opening golden histogram {path:?} (run with UMAMI_UPDATE_GOLDEN=1 to create it)"
+        let file = std::fs::File::open(&path).unwrap_or_else(|e| panic!(
+            "Opening golden histogram {path:?}: {e} (run with UMAMI_UPDATE_GOLDEN=1 to create it)"
         ));
         let mut golden_bytes = Vec::new();
         GzDecoder::new(file).read_to_end(&mut golden_bytes)
@@ -343,7 +343,7 @@ mod tests {
             OutputConfig { r#type: "test".into(), config: Default::default() },
         );
 
-        let done_rx = crate::output::init_test_output(&run_id);
+        let done_rx = crate::output::test::init_test_output(&run_id);
         let handle = start_pipeline(config, false)
             .expect("Starting test pipeline");
 
