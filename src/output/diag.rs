@@ -7,7 +7,7 @@ use itertools::Itertools;
 use crate::lprintln;
 use crate::command::ModuleId;
 use crate::error::UResult;
-use crate::event::{Event, EventData, EventTime};
+use crate::event::{Event, EventType, EventTime};
 use crate::params::HasParams;
 use super::{Output, OutputCommon};
 
@@ -111,15 +111,15 @@ impl Output for DiagOutput {
                 self.out_of_order += 1;
             }
             self.last_ts = ev_ts;
-            let display = self.event_mask.contains(match ev.data {
-                EventData::Neutron => EventMask::NEUTRON,
-                EventData::Edge { .. } => EventMask::EDGE,
-                EventData::Heartbeat => EventMask::HEARTBEAT,
-                EventData::Monitor => EventMask::MONITOR,
-                EventData::Tzero => EventMask::TZERO,
-                EventData::Gate { .. } => EventMask::GATE,
-                EventData::AuxSignal { .. } => EventMask::AUX,
-                EventData::Void => EventMask::VOID,
+            let display = self.event_mask.contains(match ev.evtype {
+                EventType::Neutron => EventMask::NEUTRON,
+                EventType::Edge { .. } => EventMask::EDGE,
+                EventType::Heartbeat => EventMask::HEARTBEAT,
+                EventType::Monitor => EventMask::MONITOR,
+                EventType::Tzero => EventMask::TZERO,
+                EventType::Gate { .. } => EventMask::GATE,
+                EventType::AuxSignal { .. } => EventMask::AUX,
+                EventType::Void => EventMask::VOID,
             });
             if display {
                 lprintln!(INFO, [self.name] "{}", ev.dump());

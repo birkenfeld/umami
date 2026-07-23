@@ -6,7 +6,7 @@ use anyhow::Context;
 use serde::Deserialize;
 use crate::config::RecipeConfig;
 use crate::error::UResult;
-use crate::event::{Event, EventData};
+use crate::event::{Event, EventType};
 use crate::params::HasParams;
 use super::Recipe;
 
@@ -22,8 +22,8 @@ impl Recipe for Psd {
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
         for event in &mut events {
-            match event.data {
-                EventData::Neutron => {
+            match event.evtype {
+                EventType::Neutron => {
                     // 8 tubes per module
                     let x = event.channel.0;
                     // TODO: calibration
@@ -32,8 +32,8 @@ impl Recipe for Psd {
                     event.histo.x = x as u16;
                     event.histo.y = y as u16;
                 }
-                EventData::Edge { up: true } => {
-                    event.data = EventData::Tzero;
+                EventType::Edge { up: true } => {
+                    event.evtype = EventType::Tzero;
                 }
                 _ => ()
             }
@@ -69,7 +69,7 @@ mod tests {
         let mut recipe = Psd::from_config(cfg, &empty_recipes()).unwrap();
         let ev = test_utils::edge(100, 5, true);
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].data, EventData::Tzero);
+        assert_eq!(out[0].evtype, EventType::Tzero);
     }
 
     #[test]
@@ -79,6 +79,6 @@ mod tests {
         let mut recipe = Psd::from_config(cfg, &empty_recipes()).unwrap();
         let ev = test_utils::edge(100, 5, false);
         let out = recipe.process(vec![ev]);
-        assert!(matches!(out[0].data, EventData::Edge { up: false }));
+        assert!(matches!(out[0].evtype, EventType::Edge { up: false }));
     }
 }

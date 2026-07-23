@@ -11,7 +11,7 @@ use crate::lprintln;
 use crate::command::{Command, CommandReply, ModuleId};
 use crate::config::{MesyConfig, SourceConfig};
 use crate::error::{UError, UResult};
-use crate::event::{Event, EventFlags, EventData, EventTime, ChannelId};
+use crate::event::{Event, EventType, EventTime};
 use crate::input::{ReplayFile, DumpHandler};
 use super::{Source, Input, InputCommon, UdpReader};
 
@@ -157,11 +157,8 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
         if nevents == 0 {
             self.no_event_buffers += 1;
             if self.no_event_buffers == 10 {
-                events.push(Event::new(EventTime::from_ticks(TIME_BASE, pkt_ts as i64),
-                                       EventTime::zero(),
-                                       ChannelId(0),
-                                       EventFlags::None,
-                                       EventData::Heartbeat));
+                events.push(Event::new(EventType::Heartbeat)
+                            .with_abs_time(EventTime::from_ticks(TIME_BASE, pkt_ts as i64)));
                 self.no_event_buffers = 0;
             }
         } else {
@@ -174,13 +171,9 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
             let event = if data >> 47 == 1 {
                 // trigger event
                 let data_id = (data >> 40) & 0b1111;
-                Event::new(
-                    EventTime::from_ticks(TIME_BASE, ts as i64),
-                    EventTime::zero(),
-                    ChannelId(data_id as u32),
-                    EventFlags::None,
-                    EventData::Edge { up: true },
-                )
+                Event::new(EventType::Edge { up: true })
+                    .with_channel(data_id as u32)
+                    .with_abs_time(EventTime::from_ticks(TIME_BASE, ts as i64))
             } else {
                 // neutron event
                 let mod_id = (data >> 44) & 0b111;
@@ -191,13 +184,11 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
                 // Most general setup, needs correction for MPSD.
                 let xpos = mcpd_id << 7 | mod_id << 4 | slot_id;
 
-                Event::new(
-                    EventTime::from_ticks(TIME_BASE, ts as i64),
-                    EventTime::zero(),
-                    ChannelId(xpos as u32),
-                    EventFlags::None,
-                    EventData::Neutron,
-                ).with_ampl(ampl as u32).with_raw(ypos as u32, 0)
+                Event::new(EventType::Neutron)
+                    .with_channel(xpos as u32)
+                    .with_abs_time(EventTime::from_ticks(TIME_BASE, ts as i64))
+                    .with_ampl(ampl as u32)
+                    .with_raw(ypos as u32, 0)
             };
             events.push(event);
         }

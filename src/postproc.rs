@@ -8,7 +8,7 @@ use crate::{lprintln, ltrace};
 use crate::channel::{Receiver, Sender};
 use crate::command::{CommandReply, ModuleId};
 use crate::error::{UResult};
-use crate::event::EventData;
+use crate::event::EventType;
 use crate::input::InputState;
 use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
@@ -74,7 +74,7 @@ impl PostProcessor {
                     let evs = self.recipes[recipe].process(evs);
                     ltrace!("Processed events: {:?}", evs);
                     for ev in &evs {
-                        if let EventData::Neutron = ev.data {
+                        if let EventType::Neutron = ev.evtype {
                             self.shm.add_histo(ev.histo);
                         }
                     }

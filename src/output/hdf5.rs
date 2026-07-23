@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context};
-use crate::event::{Event, EventData};
+use crate::event::{Event, EventType};
 use crate::error::UResult;
 use crate::params::HasParams;
 use super::{Output, OutputCommon};
@@ -101,7 +101,7 @@ impl Output for HDF5EventsOutput {
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
         for event in events {
             // TODO: zero timestamps handling (chopper?)
-            if event.data == EventData::Neutron {
+            if event.evtype == EventType::Neutron {
                 self.id_buffer.push(event.channel.0);
                 self.offset_buffer.push(event.rel_time.into());
             }

@@ -7,7 +7,7 @@
 use crate::command::{Command, CommandReply, ModuleId};
 use crate::config::TestInputConfig;
 use crate::error::{UError, UResult};
-use crate::event::{ChannelId, Event, EventData, EventFlags, EventHisto, EventTime};
+use crate::event::{Event, EventHisto, EventType};
 use super::{Input, InputCommon};
 
 pub struct TestInput {
@@ -22,8 +22,7 @@ impl TestInput {
         let mut template = Vec::with_capacity(config.nx as usize * config.ny as usize);
         for y in 0..config.ny {
             for x in 0..config.nx {
-                let mut ev = Event::new(EventTime::zero(), EventTime::zero(), ChannelId(0),
-                                         EventFlags::empty(), EventData::Neutron);
+                let mut ev = Event::new(EventType::Neutron);
                 ev.histo = EventHisto { x, y, t: 0, i: 0 };
                 template.push(ev);
             }

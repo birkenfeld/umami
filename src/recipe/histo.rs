@@ -6,7 +6,7 @@ use anyhow::Context;
 use serde::Deserialize;
 use crate::config::RecipeConfig;
 use crate::error::UResult;
-use crate::event::{Event, EventData, EventFlags, EventTime};
+use crate::event::{Event, EventType, EventFlags, EventTime};
 use crate::params::HasParams;
 use crate::recipe::Recipe;
 
@@ -65,23 +65,23 @@ impl Recipe for Tof {
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
         for event in &mut events {
-            match event.data {
-                EventData::Tzero => {
+            match event.evtype {
+                EventType::Tzero => {
                     if self.aux_mode.is_none() {
                         self.last_t0 = event.time;
                         self.cur_bin = 0;
                     }
                 }
-                EventData::AuxSignal { num } => {
+                EventType::AuxSignal { num } => {
                     if self.aux_mode == Some(num as _) {
                         self.last_t0 = event.time;
                         self.cur_bin = 0;
                     }
                 }
-                EventData::Gate { up } => self.gate_up = up,
+                EventType::Gate { up } => self.gate_up = up,
                 _ => {
                     if self.use_gate && !self.gate_up {
-                        event.data = EventData::Void;
+                        event.evtype = EventType::Void;
                         continue;
                     }
 
@@ -90,7 +90,7 @@ impl Recipe for Tof {
                         event.flags.set(EventFlags::HasRelTime);
                     }
 
-                    if let EventData::Neutron = event.data {
+                    if let EventType::Neutron = event.evtype {
                         if self.time_bins.len() > 1 {
                             // find the correct bin for this relative time
                             // this can never overflow, since the final bin is guaranteed
@@ -150,15 +150,15 @@ impl Recipe for Std {
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
         for event in &mut events {
-            match event.data {
-                EventData::Gate { up } => self.gate_up = up,
+            match event.evtype {
+                EventType::Gate { up } => self.gate_up = up,
                 _ => {
                     if self.use_gate && !self.gate_up {
-                        event.data = EventData::Void;
+                        event.evtype = EventType::Void;
                         continue;
                     }
 
-                    if let EventData::Neutron = event.data {
+                    if let EventType::Neutron = event.evtype {
                         event.histo.x /= self.bin_x;
                         event.histo.y /= self.bin_y;
                     }
@@ -220,8 +220,8 @@ mod tests {
         let out = recipe.process(events);
         // gate signal consumed, neutron passes through unchanged
         assert_eq!(out.len(), 2);
-        assert_eq!(out[0].data, EventData::Gate { up: true });
-        assert_eq!(out[1].data, EventData::Neutron);
+        assert_eq!(out[0].evtype, EventType::Gate { up: true });
+        assert_eq!(out[1].evtype, EventType::Neutron);
     }
 
     #[test]
@@ -233,7 +233,7 @@ mod tests {
         // neutron before any gate up → voided
         let events = vec![test_utils::neutron(100, 1)];
         let out = recipe.process(events);
-        assert_eq!(out[0].data, EventData::Void);
+        assert_eq!(out[0].evtype, EventType::Void);
     }
 
     #[test]
@@ -249,10 +249,10 @@ mod tests {
             test_utils::neutron(200, 2),
         ];
         let out = recipe.process(events);
-        assert_eq!(out[0].data, EventData::Gate { up: true });
-        assert_eq!(out[1].data, EventData::Neutron);  // passes
-        assert_eq!(out[2].data, EventData::Gate { up: false });
-        assert_eq!(out[3].data, EventData::Void);  // voided
+        assert_eq!(out[0].evtype, EventType::Gate { up: true });
+        assert_eq!(out[1].evtype, EventType::Neutron);  // passes
+        assert_eq!(out[2].evtype, EventType::Gate { up: false });
+        assert_eq!(out[3].evtype, EventType::Void);  // voided
     }
 
     #[test]
@@ -263,8 +263,8 @@ mod tests {
             test_utils::neutron(500, 1),
         ];
         let out = recipe.process(events);
-        assert_eq!(out[0].data, EventData::Tzero);
-        assert_eq!(out[1].data, EventData::Neutron);
+        assert_eq!(out[0].evtype, EventType::Tzero);
+        assert_eq!(out[1].evtype, EventType::Neutron);
         // rel_time = 500 - 0 = 500
         assert_eq!(out[1].rel_time, EventTime(500));
         assert!(out[1].flags.contains(EventFlags::HasRelTime));
@@ -284,10 +284,10 @@ mod tests {
             test_utils::neutron(400, 2),
         ];
         let out = recipe.process(events);
-        assert_eq!(out[1].data, EventData::Gate { up: true });
-        assert_eq!(out[2].data, EventData::Neutron);  // passes
-        assert_eq!(out[3].data, EventData::Gate { up: false });
-        assert_eq!(out[4].data, EventData::Void);  // voided
+        assert_eq!(out[1].evtype, EventType::Gate { up: true });
+        assert_eq!(out[2].evtype, EventType::Neutron);  // passes
+        assert_eq!(out[3].evtype, EventType::Gate { up: false });
+        assert_eq!(out[4].evtype, EventType::Void);  // voided
     }
 
     #[test]

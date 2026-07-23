@@ -11,7 +11,7 @@ use crate::lprintln;
 use crate::command::{Command, CommandReply, ModuleId};
 use crate::config::{CanonConfig, SourceConfig};
 use crate::error::{UError, UResult};
-use crate::event::{ChannelId, Event, EventTime, EventFlags, EventData};
+use crate::event::{Event, EventTime, EventType};
 use crate::input::{ReplayFile, DumpHandler};
 use super::{Source, Input, InputCommon};
 
@@ -101,61 +101,51 @@ impl<S: CanonSource> Input for CanonInput<S> {
             let cev = CanonEvent(BE::read_u64(&self.buffer[i * EVENT_SIZE..]));
             let event = match cev.evtype() {
                 // We don't use the TriggerSync events
-                EventType::TriggerSync | EventType::Trigger =>
+                CanonEvType::TriggerSync | CanonEvType::Trigger =>
                     continue,
-                EventType::DeviceTime => {
+                CanonEvType::DeviceTime => {
                     let time = EPOCH +
                         EventTime::from_ticks(1_000_000_000, cev.s()) +
                         EventTime::from_clock(32768, cev.ss()) +
                         EventTime::from_ticks(25, cev.us());
                     self.time_ofs = time;
-                    Event::new(
-                        self.time_ofs,
-                        EventTime::zero(),
-                        ChannelId(self.channel_ofs),
-                        EventFlags::HasRelTime,
-                        EventData::Tzero,
-                    )
+                    Event::new(EventType::Tzero)
+                        .with_channel(self.channel_ofs)
+                        .with_abs_time_and_offset(self.time_ofs, EventTime::zero())
                 },
-                EventType::DevTime32bit => {
+                CanonEvType::DevTime32bit => {
                     let time = EPOCH +
                         EventTime::from_ticks(1_000_000_000, cev.s32()) +
                         EventTime::from_clock(32768, cev.ss32()) +
                         EventTime::from_ticks(25, cev.us32());
                     self.time_ofs = time;
-                    Event::new(
-                        self.time_ofs,
-                        EventTime::zero(),
-                        ChannelId(self.channel_ofs),
-                        EventFlags::HasRelTime,
-                        EventData::Tzero,
-                    )
+                    Event::new(EventType::Tzero)
+                        .with_channel(self.channel_ofs)
+                        .with_abs_time_and_offset(self.time_ofs, EventTime::zero())
                 },
-                EventType::Neutron => {
+                CanonEvType::Neutron => {
                     let t = EventTime::from_ticks(25, cev.t());
                     let pl = u32::from(cev.pl());
                     let pr = u32::from(cev.pr());
-                    Event::new(
-                        self.time_ofs + t,
-                        t,
-                        ChannelId(self.channel_ofs + u32::from(cev.p())),
-                        EventFlags::HasRelTime,
-                        EventData::Neutron
-                    ).with_ampl(pl + pr).with_raw(pl, pr)
+                    let chan = self.channel_ofs + u32::from(cev.p());
+                    Event::new(EventType::Neutron)
+                        .with_channel(chan)
+                        .with_abs_time_and_offset(self.time_ofs, t)
+                        .with_ampl(pl + pr)
+                        .with_raw(pl, pr)
                 },
-                EventType::Neutron14bit => {
+                CanonEvType::Neutron14bit => {
                     let t = EventTime::from_ticks(25, cev.t());
                     let pl = u32::from(cev.pl14());
                     let pr = u32::from(cev.pr14());
-                    Event::new(
-                        self.time_ofs + t,
-                        t,
-                        ChannelId(self.channel_ofs + u32::from(cev.p14())),
-                        EventFlags::HasRelTime,
-                        EventData::Neutron
-                    ).with_ampl(pl + pr).with_raw(pl, pr)
+                    let chan = self.channel_ofs + u32::from(cev.p14());
+                    Event::new(EventType::Neutron)
+                        .with_channel(chan)
+                        .with_abs_time_and_offset(self.time_ofs, t)
+                        .with_ampl(pl + pr)
+                        .with_raw(pl, pr)
                 },
-                EventType::External =>
+                CanonEvType::External =>
                     continue,
                 _ => {
                     lprintln!(WARN, [self.name] "Unknown event type: {}", cev);
@@ -224,7 +214,7 @@ impl CanonSource for ReplayFile {
 struct CanonEvent(u64);
 
 #[derive(PartialEq, Eq, Debug)]
-enum EventType {
+enum CanonEvType {
     TriggerSync,  // 0x51
     Neutron,      // 0x5a (neutron or external event)
     Trigger,      // 0x5b (T0 data)
@@ -236,16 +226,16 @@ enum EventType {
 }
 
 impl CanonEvent {
-    fn evtype(&self) -> EventType {
+    fn evtype(&self) -> CanonEvType {
         match self.0 >> 56 {
-            0x51 => EventType::TriggerSync,
-            0x5a => EventType::Neutron,
-            0x5b => EventType::Trigger,
-            0x5c => EventType::DeviceTime,
-            0x5d => EventType::External,
-            0x5f => EventType::Neutron14bit,
-            0x6c => EventType::DevTime32bit,
-            c =>    EventType::Other(c as u8),
+            0x51 => CanonEvType::TriggerSync,
+            0x5a => CanonEvType::Neutron,
+            0x5b => CanonEvType::Trigger,
+            0x5c => CanonEvType::DeviceTime,
+            0x5d => CanonEvType::External,
+            0x5f => CanonEvType::Neutron14bit,
+            0x6c => CanonEvType::DevTime32bit,
+            c =>    CanonEvType::Other(c as u8),
         }
     }
 
@@ -340,27 +330,27 @@ impl CanonEvent {
 impl fmt::Display for CanonEvent {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.evtype() {
-            EventType::Other(_) =>
+            CanonEvType::Other(_) =>
                 write!(f, "??? V={:x}", self.0),
-            EventType::TriggerSync =>
+            CanonEvType::TriggerSync =>
                 write!(f, "T0s C={:3} M={:3} K={:10x}",
                        self.c(), self.m(), self.k()),
-            EventType::Neutron =>
+            CanonEvType::Neutron =>
                 write!(f, "N   T={:6x} P={} PL={:5} PR={:5}",
                        self.t(), self.p(), self.pl(), self.pr()),
-            EventType::Trigger =>
+            CanonEvType::Trigger =>
                 write!(f, "T0  C={:3} M={:3} K={:10x}",
                        self.c(), self.m(), self.k()),
-            EventType::DeviceTime =>
+            CanonEvType::DeviceTime =>
                 write!(f, "DT  S={:10} SS={:5} US={:4}",
                        self.s(), self.ss(), self.us()),
-            EventType::External =>
+            CanonEvType::External =>
                 write!(f, "EXT C={:3} M={:3} K={:10x}",
                        self.c(), self.m(), self.k()),
-            EventType::Neutron14bit =>
+            CanonEvType::Neutron14bit =>
                 write!(f, "N14 T={:6x} P={} PL={:5} PR={:5}",
                        self.t(), self.p14(), self.pl14(), self.pr14()),
-            EventType::DevTime32bit =>
+            CanonEvType::DevTime32bit =>
                 write!(f, "D32 S={:10} SS={:5} US={:4}",
                        self.s32(), self.ss32(), self.us32()),
         }

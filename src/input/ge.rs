@@ -10,7 +10,7 @@ use crate::command::{Command, CommandReply, ModuleId};
 use crate::config::{GEConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::input::{ReplayFile, DumpHandler};
-use crate::event::{ChannelId, Event, EventTime, EventFlags, EventData};
+use crate::event::{Event, EventTime, EventFlags, EventType};
 use super::{Source, Input, InputCommon};
 
 const PACKET_NORMAL:     u32 = 0x1000;
@@ -116,13 +116,7 @@ impl<S: Source> Input for GeInput<S> {
         if len == 0 {
             if pktype == PACKET_HEARTBT {
                 self.dump.write(&buffer[..16])?;
-                return Ok(vec![Event::new(
-                    header_time,
-                    EventTime::zero(),
-                    ChannelId(0),
-                    EventFlags::None,
-                    EventData::Heartbeat,
-                )]);
+                return Ok(vec![Event::new(EventType::Heartbeat).with_abs_time(header_time)]);
             }
             return Err(anyhow!("Received empty packet of type {pktype:#x}").into());
         }
@@ -152,22 +146,20 @@ impl<S: Source> Input for GeInput<S> {
         for _ in 0..nevents {
             let detid = LE::read_u32(&buffer[offset+8..]);
             let (data, ampl) = if self.is_ts {
-                (EventData::Edge { up: detid & 0x8000_0000 != 0 }, 0)
+                (EventType::Edge { up: detid & 0x8000_0000 != 0 }, 0)
             } else if pktype == PACKET_DIAG || pktype == PACKET_DIAG_FAKE {
                 // let max_heights = LE::read_u32(&buffer[offset+12..]);
                 let a_integrated = LE::read_u32(&buffer[offset+16..]);
                 let b_integrated = LE::read_u32(&buffer[offset+20..]);
-                (EventData::Neutron, a_integrated + b_integrated)
+                (EventType::Neutron, a_integrated + b_integrated)
             } else {
-                (EventData::Neutron, 0)
+                (EventType::Neutron, 0)
             };
-            let event = Event::new(
-                read_time(&buffer[offset..]),
-                EventTime::zero(),
-                ChannelId(detid),
-                flags,
-                data,
-            ).with_ampl(ampl);
+            let event = Event::new(data)
+                .with_channel(detid)
+                .with_abs_time(read_time(&buffer[offset..]))
+                .with_flags(flags)
+                .with_ampl(ampl);
 
             // Use the packet header timestamp as a criterion - we know any events before
             // this timestamp have been sent in this or a previous packet.  Any events

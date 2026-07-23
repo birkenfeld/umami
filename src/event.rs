@@ -78,7 +78,7 @@ pub struct Amplitude(pub u32);
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[derive(Archive, Serialize, Deserialize)]
-pub enum EventData {
+pub enum EventType {
     /// Neutron event.
     Neutron = 0x01,
     /// Monitor count.
@@ -97,7 +97,7 @@ pub enum EventData {
     Void = 0xFF,
 }
 
-impl Eq for EventData {}
+impl Eq for EventType {}
 
 #[bitflag_attr::bitflag(u16)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,14 +158,42 @@ pub struct Event {
     // histogram coordinates
     pub histo: EventHisto,
     pub flags: EventFlags,
-    pub data: EventData,
+    pub evtype: EventType,
 }
 
 impl Event {
-    pub fn new(time: EventTime, rel_time: EventTime, channel: ChannelId,
-               flags: EventFlags, data: EventData) -> Self {
-        Self { time, rel_time, flags, channel, data, histo: EventHisto::zero(),
-               ampl: Amplitude(0), raw: (0, 0) }
+    pub fn new(evtype: EventType) -> Self {
+        Self { evtype,
+               channel: ChannelId(0),
+               time: EventTime::zero(),
+               rel_time: EventTime::zero(),
+               flags: EventFlags::None,
+               histo: EventHisto::zero(),
+               ampl: Amplitude(0),
+               raw: (0, 0) }
+    }
+
+    pub fn with_channel(mut self, channel: u32) -> Self {
+        self.channel = ChannelId(channel);
+        self
+    }
+
+    pub fn with_abs_time_and_offset(mut self, time: EventTime, off: EventTime) -> Self {
+        self.time = time;
+        self.rel_time = time + off;
+        self.flags |= EventFlags::HasRelTime;
+        self
+    }
+
+    pub fn with_abs_time(mut self, time: EventTime) -> Self {
+        self.time = time;
+        self
+    }
+
+    pub fn with_rel_time(mut self, rel_time: EventTime) -> Self {
+        self.rel_time = rel_time;
+        self.flags |= EventFlags::HasRelTime;
+        self
     }
 
     pub fn with_ampl(mut self, ampl: u32) -> Self {
@@ -178,6 +206,11 @@ impl Event {
         self
     }
 
+    pub fn with_flags(mut self, flags: EventFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+
     pub fn dump(&self) -> DumpEvent<'_> {
         DumpEvent(self)
     }
@@ -185,10 +218,10 @@ impl Event {
 
 impl Debug for Event {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "Event(time={:.9}, rel_time={:.9}, flags={:#x}, channel={}, data={:?})",
+        write!(f, "Event(time={:.9}, rel_time={:.9}, flags={:#x}, channel={}, evtype={:?})",
                self.time.0 as f64 / 1_000_000_000.0,
                self.rel_time.0 as f64 / 1_000_000_000.0,
-               self.flags.0, self.channel.0, self.data)
+               self.flags.0, self.channel.0, self.evtype)
     }
 }
 
@@ -213,22 +246,22 @@ impl Display for DumpEvent<'_> {
                ev.time.0 as f64 / 1_000_000_000.0,
                ev.rel_time.0 as f64 / 1_000_000_000.0,
                ev.flags, ev.channel.0)?;
-        match ev.data {
-            EventData::Neutron =>
+        match ev.evtype {
+            EventType::Neutron =>
                 write!(f, "Neutron"),
-            EventData::Edge { up } =>
+            EventType::Edge { up } =>
                 write!(f, "Edge      {}", if up { "up" } else { "down" }),
-            EventData::Heartbeat =>
+            EventType::Heartbeat =>
                 write!(f, "Heartbeat"),
-            EventData::Monitor =>
+            EventType::Monitor =>
                 write!(f, "Monitor"),
-            EventData::Tzero =>
+            EventType::Tzero =>
                 write!(f, "T-zero"),
-            EventData::Gate { up } =>
+            EventType::Gate { up } =>
                 write!(f, "Gate      {}", if up { "up" } else { "down" }),
-            EventData::AuxSignal { num } =>
+            EventType::AuxSignal { num } =>
                 write!(f, "AuxSignal {num}"),
-            EventData::Void =>
+            EventType::Void =>
                 write!(f, "Void"),
         }
     }
@@ -237,44 +270,37 @@ impl Display for DumpEvent<'_> {
 #[cfg(test)]
 pub(crate) mod test_utils {
     use super::*;
-
     pub fn neutron(time_ns: i64, channel: u32) -> Event {
-        Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(channel),
-                    EventFlags::empty(), EventData::Neutron)
+        Event::new(EventType::Neutron).with_channel(channel).with_abs_time(EventTime(time_ns))
     }
 
     pub fn edge(time_ns: i64, channel: u32, up: bool) -> Event {
-        Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(channel),
-                    EventFlags::empty(), EventData::Edge { up })
+        Event::new(EventType::Edge { up }).with_channel(channel).with_abs_time(EventTime(time_ns))
     }
 
     pub fn tzero(time_ns: i64) -> Event {
-        Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(0),
-                    EventFlags::empty(), EventData::Tzero)
+        Event::new(EventType::Tzero).with_abs_time(EventTime(time_ns))
     }
 
     pub fn gate(time_ns: i64, up: bool) -> Event {
-        Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(0),
-                    EventFlags::empty(), EventData::Gate { up })
+        Event::new(EventType::Gate { up }).with_abs_time(EventTime(time_ns))
     }
 
     pub fn aux(time_ns: i64, num: u8) -> Event {
-        Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(0),
-                    EventFlags::empty(), EventData::AuxSignal { num })
+        Event::new(EventType::AuxSignal { num }).with_abs_time(EventTime(time_ns))
     }
 
     pub fn heartbeat(time_ns: i64) -> Event {
-        Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(0),
-                    EventFlags::empty(), EventData::Heartbeat)
+        Event::new(EventType::Heartbeat).with_abs_time(EventTime(time_ns))
     }
 
     pub fn void(time_ns: i64) -> Event {
-        Event::new(EventTime(time_ns), EventTime::zero(), ChannelId(0),
-                    EventFlags::empty(), EventData::Void)
+        Event::new(EventType::Void).with_abs_time(EventTime(time_ns))
     }
 
     pub fn neutron_xy(time_ns: i64, channel: u32, x: u16, y: u16) -> Event {
-        let mut ev = neutron(time_ns, channel);
+        let mut ev = Event::new(EventType::Neutron)
+            .with_channel(channel).with_abs_time(EventTime(time_ns));
         ev.histo.x = x;
         ev.histo.y = y;
         ev
@@ -357,10 +383,10 @@ mod tests {
 
     #[test]
     fn test_event_data_equality() {
-        assert_eq!(EventData::Neutron, EventData::Neutron);
-        assert_ne!(EventData::Neutron, EventData::Edge { up: true });
-        assert_eq!(EventData::Edge { up: true }, EventData::Edge { up: true });
-        assert_ne!(EventData::Edge { up: true }, EventData::Edge { up: false });
+        assert_eq!(EventType::Neutron, EventType::Neutron);
+        assert_ne!(EventType::Neutron, EventType::Edge { up: true });
+        assert_eq!(EventType::Edge { up: true }, EventType::Edge { up: true });
+        assert_ne!(EventType::Edge { up: true }, EventType::Edge { up: false });
     }
 
     #[test]
@@ -388,15 +414,16 @@ mod tests {
 
     #[test]
     fn test_event_new() {
-        let ev = Event::new(
-            EventTime(100), EventTime(50), ChannelId(42),
-            EventFlags::HasRelTime, EventData::Neutron,
-        ).with_ampl(1234);
+        let ev = Event::new(EventType::Neutron)
+            .with_channel(42)
+            .with_abs_time(EventTime(100))
+            .with_rel_time(EventTime(50))
+            .with_ampl(1234);
         assert_eq!(ev.time, EventTime(100));
         assert_eq!(ev.rel_time, EventTime(50));
         assert_eq!(ev.channel, ChannelId(42));
         assert_eq!(ev.flags, EventFlags::HasRelTime);
-        assert_eq!(ev.data, EventData::Neutron);
+        assert_eq!(ev.evtype, EventType::Neutron);
         assert_eq!(ev.ampl, Amplitude(1234));
         assert_eq!(ev.histo.x, 0);
         assert_eq!(ev.histo.y, 0);
@@ -407,28 +434,28 @@ mod tests {
     #[test]
     fn test_event_helpers() {
         let ev = test_utils::neutron(100, 5);
-        assert_eq!(ev.data, EventData::Neutron);
+        assert_eq!(ev.evtype, EventType::Neutron);
         assert_eq!(ev.time, EventTime(100));
         assert_eq!(ev.channel, ChannelId(5));
 
         let ev = test_utils::edge(200, 3, true);
-        assert_eq!(ev.data, EventData::Edge { up: true });
+        assert_eq!(ev.evtype, EventType::Edge { up: true });
         assert_eq!(ev.channel, ChannelId(3));
 
         let ev = test_utils::tzero(300);
-        assert_eq!(ev.data, EventData::Tzero);
+        assert_eq!(ev.evtype, EventType::Tzero);
 
         let ev = test_utils::gate(400, false);
-        assert_eq!(ev.data, EventData::Gate { up: false });
+        assert_eq!(ev.evtype, EventType::Gate { up: false });
 
         let ev = test_utils::aux(500, 2);
-        assert_eq!(ev.data, EventData::AuxSignal { num: 2 });
+        assert_eq!(ev.evtype, EventType::AuxSignal { num: 2 });
 
         let ev = test_utils::heartbeat(600);
-        assert_eq!(ev.data, EventData::Heartbeat);
+        assert_eq!(ev.evtype, EventType::Heartbeat);
 
         let ev = test_utils::void(700);
-        assert_eq!(ev.data, EventData::Void);
+        assert_eq!(ev.evtype, EventType::Void);
 
         let ev = test_utils::neutron_xy(800, 1, 10, 20);
         assert_eq!(ev.histo.x, 10);

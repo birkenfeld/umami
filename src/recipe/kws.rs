@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use anyhow::Context;
 use serde::Deserialize;
 use crate::config::RecipeConfig;
-use crate::event::{Event, EventData};
+use crate::event::{Event, EventType};
 use crate::error::UResult;
 use crate::params::HasParams;
 use super::Recipe;
@@ -39,8 +39,8 @@ impl Recipe for KWSGERecipe {
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
         for event in &mut events {
-            match event.data {
-                EventData::Neutron => {
+            match event.evtype {
+                EventType::Neutron => {
                     let mut x;
                     let mut y;
                     let mut id = event.channel.0;
@@ -77,16 +77,16 @@ impl Recipe for KWSGERecipe {
                     event.histo.x = x as u16;
                     event.histo.y = y as u16;
                 }
-                EventData::Edge { up } => {
+                EventType::Edge { up } => {
                     match event.channel.0 {
                         0 =>
-                            event.data = EventData::Gate { up: up ^ self.invert_ts },
+                            event.evtype = EventType::Gate { up: up ^ self.invert_ts },
                         1 if up ^ self.invert_ts =>
-                            event.data = EventData::Tzero,
+                            event.evtype = EventType::Tzero,
                         3 if up ^ self.invert_ts =>
-                            event.data = EventData::Tzero,
+                            event.evtype = EventType::Tzero,
                         2 if up ^ self.invert_ts =>
-                            event.data = EventData::AuxSignal { num: EXT_START },
+                            event.evtype = EventType::AuxSignal { num: EXT_START },
                         _ => ()
                     }
                 }
@@ -154,7 +154,7 @@ mod tests {
         let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
         let ev = test_utils::edge(100, 0, true);
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].data, EventData::Gate { up: true });
+        assert_eq!(out[0].evtype, EventType::Gate { up: true });
     }
 
     #[test]
@@ -162,7 +162,7 @@ mod tests {
         let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
         let ev = test_utils::edge(100, 1, true);
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].data, EventData::Tzero);
+        assert_eq!(out[0].evtype, EventType::Tzero);
     }
 
     #[test]
@@ -170,7 +170,7 @@ mod tests {
         let mut recipe = KWSGERecipe::from_config(toml::Table::new(), &empty_recipes()).unwrap();
         let ev = test_utils::edge(100, 2, true);
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].data, EventData::AuxSignal { num: EXT_START });
+        assert_eq!(out[0].evtype, EventType::AuxSignal { num: EXT_START });
     }
 
     #[test]
@@ -179,7 +179,7 @@ mod tests {
         let ev = test_utils::edge(100, 1, false);
         let out = recipe.process(vec![ev]);
         // down edge on ch1 doesn't match `up ^ false` → stays Edge
-        assert!(matches!(out[0].data, EventData::Edge { up: false }));
+        assert!(matches!(out[0].evtype, EventType::Edge { up: false }));
     }
 
     #[test]
@@ -190,6 +190,6 @@ mod tests {
         // down edge on ch1: up=false, invert=true → false^true=true → Tzero
         let ev = test_utils::edge(100, 1, false);
         let out = recipe.process(vec![ev]);
-        assert_eq!(out[0].data, EventData::Tzero);
+        assert_eq!(out[0].evtype, EventType::Tzero);
     }
 }

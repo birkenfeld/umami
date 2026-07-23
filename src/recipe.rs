@@ -70,7 +70,7 @@ pub fn from_config(map: &BTreeMap<String, RecipeConfig>, name: &str)
 mod tests {
     use super::*;
     use crate::event::test_utils;
-    use crate::event::EventData;
+    use crate::event::EventType;
 
     #[test]
     fn test_no_recipe_passthrough() {
@@ -81,8 +81,8 @@ mod tests {
         ];
         let out = recipe.process(events);
         assert_eq!(out.len(), 2);
-        assert_eq!(out[0].data, EventData::Neutron);
-        assert_eq!(out[1].data, EventData::Edge { up: true });
+        assert_eq!(out[0].evtype, EventType::Neutron);
+        assert_eq!(out[1].evtype, EventType::Edge { up: true });
     }
 
     fn recipe_map(name: &str, r#type: &str) -> BTreeMap<String, RecipeConfig> {
