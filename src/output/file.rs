@@ -63,3 +63,73 @@ impl Output for FileOutput {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::ModuleId;
+    use crate::event::test_utils;
+    use crate::params::{HasParams, ParamMap};
+
+    fn make_common() -> OutputCommon {
+        let (_send, recv) = crate::channel::unbounded();
+        OutputCommon::new(ModuleId::new("file".into()), recv, None)
+    }
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("umami_test_{tag}_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn dir_config(dir: &std::path::Path) -> toml::Table {
+        let mut cfg = toml::Table::new();
+        cfg.insert("dir".into(), toml::Value::String(dir.to_string_lossy().into_owned()));
+        cfg
+    }
+
+    #[test]
+    fn test_file_output_requires_dir_config() {
+        assert!(FileOutput::from_config(&make_common(), toml::Table::new()).is_err());
+    }
+
+    #[test]
+    fn test_file_output_writes_and_roundtrips_event() {
+        let dir = temp_dir("file_output");
+        let mut output = FileOutput::from_config(&make_common(), dir_config(&dir)).unwrap();
+
+        // events before a run has started are silently dropped, not an error
+        output.handle_events(&[test_utils::neutron(100, 5)]).unwrap();
+        assert!(!dir.join("run1").exists());
+
+        output.handle_start_of_run("run1").unwrap();
+        let event = test_utils::neutron(200, 7);
+        output.handle_events(&[event]).unwrap();
+        output.handle_end_of_run().unwrap();
+
+        let bytes = std::fs::read(dir.join("run1")).unwrap();
+        let restored: Event = rkyv::from_bytes::<Event, rkyv::rancor::Error>(&bytes).unwrap();
+        assert_eq!(restored, event);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_file_output_filename_param_overrides_run_id() {
+        let dir = temp_dir("file_output_name");
+        let mut output = FileOutput::from_config(&make_common(), dir_config(&dir)).unwrap();
+
+        let mut params = ParamMap::new();
+        params.insert("filename".into(), serde_json::json!("custom.dat"));
+        output.update_params(ModuleId::new("file".into()), params).unwrap();
+
+        output.handle_start_of_run("run1").unwrap();
+        output.handle_events(&[test_utils::neutron(100, 5)]).unwrap();
+        output.handle_end_of_run().unwrap();
+
+        assert!(dir.join("custom.dat").exists());
+        assert!(!dir.join("run1").exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
