@@ -1,6 +1,7 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
+mod client;
 mod command;
 mod config;
 mod error;
@@ -21,6 +22,7 @@ use anyhow::anyhow;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 // Public API
+pub use self::client::Client;
 pub use self::command::{Command, CommandReply};
 pub use self::config::load_config;
 pub use self::error::UResult;
