@@ -200,12 +200,23 @@ impl CanonSource for TcpStream {
 
 impl CanonSource for ReplayFile {
     fn request_events(&mut self, buffer: &mut [u8]) -> UResult<usize> {
-        // There are no headers in the replay file, so we just read as many events as possible.
-        match io::Read::read(&mut self.file, buffer) {
-            Ok(n) => Ok(n / EVENT_SIZE),
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Err(UError::NoMoreData),
-            Err(e) => Err(e).context("Reading events from replay file")?,
+        // There are no headers in the replay file, so we just read as many events as
+        // possible. `read` may return short of a full buffer even before EOF, so keep
+        // reading until it is full; otherwise a short read could leave us with a
+        // fractional trailing event and misalign every event read from then on.
+        let mut total = 0;
+        while total < buffer.len() {
+            match io::Read::read(&mut self.file, &mut buffer[total..]) {
+                Ok(0) => break,
+                Ok(n) => total += n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => Err(e).context("Reading events from replay file")?,
+            }
         }
+        if total == 0 {
+            return Err(UError::NoMoreData);
+        }
+        Ok(total / EVENT_SIZE)
     }
 }
 

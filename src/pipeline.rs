@@ -255,4 +255,41 @@ mod tests {
 
         nix::sys::mman::shm_unlink(handle.shm_name().as_bytes()).ok();
     }
+
+    #[test]
+    fn test_pipeline_canon_file() {
+        let conf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("test/canon.conf");
+        let mut config = crate::load_config(&conf_path)
+            .expect("Loading test config");
+
+        let test_id = SHM_COUNTER.fetch_add(1, Ordering::SeqCst);
+        config.ipc_name = format!(
+            "umami_test_{}_{}", std::process::id(), test_id,
+        );
+        let run_id = format!("test_{test_id}");
+        config.outputs.get_or_insert_with(BTreeMap::new).insert(
+            "test".into(),
+            OutputConfig { r#type: "test".into(), config: Default::default() },
+        );
+
+        let done_rx = crate::output::init_test_output(&run_id);
+        let handle = start_pipeline(config, false)
+            .expect("Starting test pipeline");
+
+        let client = Client::new(handle.ipc_name())
+            .expect("Creating test client");
+        let reply = client.send(&Command::Start { run_id })
+            .expect("Sending start command");
+        assert!(matches!(reply, CommandReply::Ok), "Start command failed: {reply:?}");
+
+        done_rx.recv_timeout(std::time::Duration::from_secs(30))
+            .expect("Pipeline did not complete in time");
+
+        let shm_read = ShmInterface::open(handle.shm_name())
+            .expect("Opening shared memory for verification");
+        let total = shm_read.histo_total();
+        assert!(total > 0, "Expected non-zero neutron counts in histogram");
+
+        nix::sys::mman::shm_unlink(handle.shm_name().as_bytes()).ok();
+    }
 }
