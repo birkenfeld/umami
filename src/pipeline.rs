@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn test_pipeline_mesy_file() {
-        let conf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("test/mesyfile.conf");
+        let conf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("test/mesy.conf");
         let mut config = crate::load_config(&conf_path)
             .expect("Loading test config");
 
