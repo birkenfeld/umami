@@ -257,6 +257,7 @@ mod tests {
             SpecificInputConfig::GE(cfg) => &cfg.source,
             SpecificInputConfig::Canon(cfg) => &cfg.source,
             SpecificInputConfig::Mesy(cfg) => &cfg.local,
+            SpecificInputConfig::Test(_) => return None,
         };
         match source {
             SourceConfig::File(path) => Some(path),
@@ -319,9 +320,8 @@ mod tests {
     }
 
     /// Runs the pipeline defined by `conf_name` (relative to the crate root) to
-    /// completion against a single run and checks the resulting histogram against
-    /// its golden reference.
-    fn run_test_pipeline(conf_name: &str) {
+    /// completion against a single run and returns the resulting histogram.
+    fn run_pipeline_and_get_histo(conf_name: &str) -> Vec<u32> {
         let conf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(conf_name);
         let mut config = crate::load_config(&conf_path)
             .expect("Loading test config");
@@ -360,7 +360,13 @@ mod tests {
             .expect("Opening shared memory for verification");
         let histo = shm_read.histo_data();
         nix::sys::mman::shm_unlink(handle.shm_name().as_bytes()).ok();
+        histo
+    }
 
+    /// Runs the pipeline defined by `conf_name` and checks the resulting histogram
+    /// against its golden reference.
+    fn run_test_pipeline(conf_name: &str) {
+        let histo = run_pipeline_and_get_histo(conf_name);
         check_or_update_golden(conf_name, &histo);
     }
 
@@ -377,5 +383,17 @@ mod tests {
     #[test]
     fn test_pipeline_ge_file() {
         run_test_pipeline("test/ge.conf");
+    }
+
+    /// Uses the synthetic "test" input backend (one Neutron event per histogram
+    /// cell) to check the pipeline mechanics -- input recipe passthrough,
+    /// postprocessing recipe binning, and histogramming -- against an exactly
+    /// known expected result, without depending on golden data files.
+    #[test]
+    fn test_pipeline_synthetic_input() {
+        let histo = run_pipeline_and_get_histo("test/synthetic.conf");
+        assert_eq!(histo.len(), 8 * 16);
+        assert!(histo.iter().all(|&count| count == 1),
+                "Expected exactly one count in every histogram cell, got {histo:?}");
     }
 }
