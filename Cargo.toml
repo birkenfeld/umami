@@ -36,5 +36,8 @@ zerocopy = { version = "0.8.39", features = ["derive"] }
 version = "0.1"
 path = "src/derive"
 
+[dev-dependencies]
+ureq = "3.3.0"
+
 [features]
 trace = []

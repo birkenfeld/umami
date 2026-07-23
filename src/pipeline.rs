@@ -216,8 +216,53 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::client::Client;
+    use crate::config::{SourceConfig, SpecificInputConfig};
 
     static SHM_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    /// Base URL of the file server hosting test data that is too large to
+    /// keep in the repository (see .gitignore for test/data).
+    const TEST_DATA_URL: &str = "https://forge.frm2.tum.de/public/umami-test";
+
+    /// Downloads the file at `confdir`/`rel_path` from the test data server if
+    /// it is not already present locally.
+    fn ensure_test_data(confdir: &Path, rel_path: &str) {
+        let dest = confdir.join(rel_path);
+        if dest.exists() {
+            return;
+        }
+        // local paths are conventionally "data/<subpath>"; the server mirrors
+        // just "<subpath>" at its root
+        let remote_rel = rel_path.strip_prefix("data/").unwrap_or(rel_path);
+        let url = format!("{TEST_DATA_URL}/{remote_rel}");
+        // cargo test captures the usual stdout/stderr writers (eprintln! et al.)
+        let _ = nix::unistd::write(
+            std::io::stderr(),
+            format!("*** Downloading missing test data file {url:?} to {dest:?}\n").as_bytes(),
+        );
+
+        std::fs::create_dir_all(dest.parent().expect("dest has parent"))
+            .expect("Creating test data directory");
+        let mut response = ureq::get(&url).call()
+            .expect(&format!("Downloading test data {url}"));
+        let mut file = std::fs::File::create(&dest)
+            .expect(&format!("Creating test data file {dest:?}"));
+        std::io::copy(&mut response.body_mut().as_reader(), &mut file)
+            .expect(&format!("Writing test data file {dest:?}"));
+    }
+
+    /// Extracts the file source path of an input, if it uses a file (not IP) source.
+    fn file_source_path(specific: &SpecificInputConfig) -> Option<&str> {
+        let source = match specific {
+            SpecificInputConfig::GE(cfg) => &cfg.source,
+            SpecificInputConfig::Canon(cfg) => &cfg.source,
+            SpecificInputConfig::Mesy(cfg) => &cfg.local,
+        };
+        match source {
+            SourceConfig::File(path) => Some(path),
+            SourceConfig::IP(_) => None,
+        }
+    }
 
     /// Runs the pipeline defined by `conf_name` (relative to the crate root) to
     /// completion against a single run and returns the total histogram count.
@@ -225,6 +270,13 @@ mod tests {
         let conf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(conf_name);
         let mut config = crate::load_config(&conf_path)
             .expect("Loading test config");
+
+        let confdir = conf_path.parent().expect("conf_path has parent");
+        for input in config.inputs.values() {
+            if let Some(path) = file_source_path(&input.specific) {
+                ensure_test_data(confdir, path);
+            }
+        }
 
         let test_id = SHM_COUNTER.fetch_add(1, Ordering::SeqCst);
         config.ipc_name = format!(
