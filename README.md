@@ -27,7 +27,7 @@ cargo build --release
 This produces two executables:
 
 * `umami`: starts and runs the acquisition pipeline
-* `umamictl`: sends control commands to a running `umami` instance
+* `umami-ctl`: sends control commands to a running `umami` instance
 
 
 How it works
@@ -59,7 +59,7 @@ At the top level, the configuration contains these sections:
 * `input_recipes`: named event-processing recipes used by inputs
 * `process_modes`: named postprocessing recipes; `default` must exist
 * `histogram`: histogram dimensions
-* `ipc_name`: optional IPC name shared by `umami` and `umamictl`
+* `ipc_name`: optional IPC name shared by `umami` and `umami-ctl`
 * `debug`: optional boolean enabling debug logging
 
 
@@ -69,7 +69,7 @@ Global settings
 `ipc_name`
 : Name of the control interface for this UMAMI instance.  If omitted, the
   default is `umami`.  When you run multiple instances on one host, give each
-  one a unique name and pass the same name to `umamictl --ipc`.
+  one a unique name and pass the same name to `umami-ctl --ipc`.
 
 `debug`
 : Enables debug logging from the configuration file.  This can also be turned
@@ -204,13 +204,13 @@ The process keeps running until it receives a terminating signal.
 Controlling a running instance
 ------------------------------
 
-`umamictl` talks to a running UMAMI instance through the IPC name selected by
+`umami-ctl` talks to a running UMAMI instance through the IPC name selected by
 `ipc_name` or `umami --ipc`.
 
 General form:
 
 ```console
-umamictl [--ipc umami] <command>
+umami-ctl [--ipc umami] <command>
 ```
 
 Available commands are:
@@ -244,13 +244,13 @@ Available commands are:
 Examples:
 
 ```console
-umamictl --ipc umami start run_0001
-umamictl --ipc umami state
-umamictl --ipc umami mode tof '{"use_gate": true, "aux_mode": 1}'
-umamictl --ipc umami raw /data/umami-raw
-umamictl --ipc umami clear
-umamictl --ipc umami stop
-umamictl --ipc umami no-raw
+umami-ctl --ipc umami start run_0001
+umami-ctl --ipc umami state
+umami-ctl --ipc umami mode tof '{"use_gate": true, "aux_mode": 1}'
+umami-ctl --ipc umami raw /data/umami-raw
+umami-ctl --ipc umami clear
+umami-ctl --ipc umami stop
+umami-ctl --ipc umami no-raw
 ```
 
 Input states are reported as one of:
@@ -269,14 +269,14 @@ UMAMI writes histogram data to a POSIX shared-memory block whose dimensions are
 defined by `[histogram]`.  The run ID is stored in the shared-memory header as
 well.
 
-The repository includes `simple_ui.py`, a small PyQtGraph-based viewer and
+The repository includes `umami-gui`, a PyQtGraph-based viewer and
 debugging tool that attaches to a shared-memory object and displays the
 histogram as a live image, alongside controls for starting/stopping runs,
 switching processing modes, viewing/editing live parameters, and a log of
 commands sent and replies received.
 
-Run it with `python simple_ui.py [ipc_name]`; it defaults to `umami` if no
-name is given.
+Run it with `./umami-gui [ipc_name]`; it defaults to `umami` if no name is
+given.
 
 
 Authors

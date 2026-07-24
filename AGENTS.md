@@ -6,7 +6,8 @@ UMAMI — Rust data acquisition backend for neutron detectors.
 Modular pipeline: detector-specific inputs → recipes → sorter →
 postprocessing → histogramming → outputs.
 
-Produces two binaries (`umami`, `umamictl`).
+Produces two binaries (`umami`, `umami-ctl`), plus a standalone Python
+debugging GUI (`umami-gui`, see "Python GUI" below).
 
 ## Build & Verify
 
@@ -15,7 +16,7 @@ Pure Cargo workspace:
 ```sh
 cargo build                         # debug build
 cargo build --release               # optimized
-cargo test                          # runs the single unit test (event size)
+cargo test                          # unit + integration suite (74+ tests)
 cargo clippy                        # lint
 cargo fmt --check                   # format check
 cargo check                         # type-check only
@@ -37,7 +38,7 @@ cargo build --features trace
 
 Entry points:
 - `src/bin/umami.rs` — main pipeline process
-- `src/bin/umamictl.rs` — CLI control client
+- `src/bin/umami-ctl.rs` — CLI control client
 
 Pipeline flow (all threaded, connected via `flume` channels):
 `Input` → `InputRecipe` → `Sorter` → `PostProcessor` (recipe + histogram) → `Output` chain
@@ -54,7 +55,7 @@ Key files:
 
 ## Conventions
 
-- **Event size is sacred.** `Event` must remain 48 bytes for `rkyv` zero-copy and shm layout. The single unit test enforces this — don't remove it.
+- **Event size is sacred.** `Event` must remain 48 bytes for `rkyv` zero-copy and shm layout.
 - Thread names are ≤16 chars: `M: <input>`, `O: <output>`, `Sorter`, `Postprocessor`, `Command handler`.
 - All module names (inputs, outputs, recipes, modes) are interned via `internment::Intern<String>` (`ModuleId`). Pipeline validates uniqueness at startup.
 - Custom log macros: `ldebug!`, `ltrace!`, `lprintln!` — write to stderr with `jiff` timestamps. Format: `YYYY-MM-DD HH:MM:SS.ffffff : LEVEL : [module] message`.
@@ -63,11 +64,44 @@ Key files:
 
 ## Testing
 
-Unit tests are in progress.
+Unit tests live alongside their modules (`#[cfg(test)] mod tests`) — recipes,
+postprocessor, command handler, sorter, shm, outputs, config, event, etc.
 
-Full pipeline testing requires pre-recorded detector data input — use the TOML configs in
-`test/` (e.g., `mesyfile.conf` replays from `test/data/00678408.mdat`). These tests are TBW.
+Full pipeline integration tests (in `src/pipeline.rs`) replay real detector
+dumps via `test/canon.conf`, `test/mesy.conf`, `test/ge.conf` and compare the
+resulting histogram against a checked-in golden file (`test/*.golden.gz`).
+The raw dump files themselves are **not** in the repo (see `.gitignore`) —
+tests auto-download them into `test/data/` on first run from
+https://forge.frm2.tum.de/public/umami-test/. To regenerate a golden file
+after an intentional behavior change, rerun with `UMAMI_UPDATE_GOLDEN=1`.
+
+A synthetic `type = "test"` input backend (`src/input/test.rs`,
+`#[cfg(test)]`-gated) generates a fully known, deterministic event stream for
+testing pipeline mechanics (wiring, sorting, histogramming) without real
+detector data — see `test/synthetic.conf` / `test_pipeline_synthetic_input`.
+
+Coverage: `cargo llvm-cov` (requires `cargo install cargo-llvm-cov` +
+`rustup component add llvm-tools-preview`); currently ~78% line coverage.
 
 ## Config
 
 Runtime config is TOML. Example configs in `test/*.conf`.
+
+## Python GUI
+
+`umami-gui` is a standalone, executable PyQtGraph script (no packaging, no
+build step — `chmod +x` + shebang) that talks to the same command socket and
+shared-memory histogram as `umami-ctl`, for interactive debugging: live
+histogram + projection plot, per-input state, mode switching, live
+param view/edit, raw-dump/save-histo controls, and a log of every command
+sent and reply received.
+
+- Lint: `ruff check umami-gui` (no other Python tooling/tests configured)
+- To exercise it live (e.g. after a change), start a real `umami` process
+  against one of the `test/*.conf` configs and drive the GUI under Xvfb:
+  `Xvfb :99 -screen 0 1280x900x24 &`, then
+  `DISPLAY=:99 python3 umami-gui <ipc_name>`. Screenshot with ImageMagick's
+  `import -window root out.png`; drive clicks with `xdotool mousemove --sync
+  X Y click 1`.
+- `umami_det.py` is a second, Tango/Entangle-based client against the same
+  wire protocol — useful as a reference for command usage patterns.

@@ -1,4 +1,5 @@
-"""Simple live histogram viewer and debugging tool for UMAMI shared-memory output.
+#!/usr/bin/env python3
+"""Live histogram viewer and debugging tool for UMAMI shared-memory output.
 
 Reads a 3-D histogram (x * y * t) from a POSIX shared-memory segment and
 displays the selected t-plane as a real-time, log-scale colour image using
@@ -25,9 +26,8 @@ command sent and reply received -- replacing the previous transient error
 popups -- is available via the "Show Log" toggle (hidden by default) to
 make this useful for debugging a running pipeline, not just watching it.
 
-Usage: python simple_ui.py [ipc_name]  (defaults to "umami"; this name is
-used for both the shared-memory segment and the command socket, matching
-how `umami`/`umamictl` wire up `--ipc`.)
+Usage: ./umami-gui [ipc_name]  (defaults to "umami"; this name is used for
+both the shared-memory segment and the command socket.)
 """
 
 import os
