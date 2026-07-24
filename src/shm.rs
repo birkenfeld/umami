@@ -75,26 +75,31 @@ impl ShmBox {
     }
 
     pub fn save_to_file(&self, filename: &str, max_nt: usize) -> UResult<()> {
+        let file = File::create(filename)
+            .context("Creating histogram output file")?;
+        self.write_histo(BufWriter::new(file), max_nt)
+    }
+
+    fn write_histo(&self, mut writer: impl Write, max_nt: usize) -> UResult<()> {
         let nt = self.nt.min(max_nt as u16);
         let size = self.histo_size(nt);
         let histo_slice = unsafe {
             let histo_ptr = self.ptr.as_ptr().add(1) as *const u32;
             std::slice::from_raw_parts(histo_ptr, size)
         };
-        let file = File::create(filename)
-            .context("Creating histogram output file")?;
-        let mut writer = BufWriter::new(file);
         for t in 0..nt {
             for y in 0..self.ny {
                 for x in 0..self.nx {
-                    let off = t * (self.nx * self.ny) + y * self.nx + x;
-                    let count = histo_slice[off as usize];
-                    write!(&mut writer, " {count}")
+                    let off = t as usize * self.nx as usize * self.ny as usize
+                            + y as usize * self.nx as usize
+                            + x as usize;
+                    let count = histo_slice[off];
+                    write!(writer, " {count}")
                         .context("Writing histogram data to file")?;
                 }
-                writeln!(&mut writer).context("Writing histogram data to file")?;
+                writeln!(writer).context("Writing histogram data to file")?;
             }
-            writeln!(&mut writer, "\n").context("Writing histogram data to file")?;
+            writeln!(writer, "\n").context("Writing histogram data to file")?;
         }
         Ok(())
     }
@@ -257,6 +262,22 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("2")); // two counts at (0,0,0)
         std::fs::remove_file(&path).ok();
+        nix::sys::mman::shm_unlink(name.as_bytes()).ok();
+    }
+
+    #[test]
+    fn test_shm_save_to_file_large_offsets() {
+        let name = unique_shm_name();
+        // nx*ny*nt exceeds u16::MAX; a prior bug computed the file-write
+        // offset using u16 arithmetic and panicked with "attempt to add
+        // with overflow" partway through writing t=1's rows
+        let config = HistoConfig { nx: 56, ny: 1024, max_nt: 2, max_ni: 0 };
+        let mut shm = ShmInterface::create(&name, &config).unwrap();
+        shm.add_histo(EventHisto { x: 10, y: 1000, t: 1, i: 0 });
+        let mut buf = Vec::new();
+        shm.write_histo(&mut buf, 2).unwrap();
+        let content = String::from_utf8(buf).unwrap();
+        assert!(content.contains('1'));
         nix::sys::mman::shm_unlink(name.as_bytes()).ok();
     }
 
