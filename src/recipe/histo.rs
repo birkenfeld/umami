@@ -29,12 +29,32 @@ pub struct Tof {
     aux_mode: Option<u8>,
     /// Contains end of time bins since T0.
     #[param(help="Time binning end times (first bin always starts at offset 0)",
-            datatype="array of integers (nanoseconds)")]
+            datatype="array of integers (nanoseconds)", has_setter=true)]
     time_bins: Vec<EventTime>,
     // Run-time state
     gate_up: bool,
     last_t0: EventTime,
     cur_bin: usize,
+}
+
+impl Tof {
+    /// The last bin must never end, so that a relative time past the last
+    /// configured edge still falls into a valid bin instead of indexing
+    /// past the end of `time_bins` in `process` below.
+    fn normalize_time_bins(mut bins: Vec<EventTime>) -> Vec<EventTime> {
+        if bins.last() != Some(&EventTime::MAX) {
+            bins.push(EventTime::MAX);
+        }
+        bins
+    }
+
+    fn set_time_bins(&mut self, value: Vec<EventTime>) -> UResult<()> {
+        self.time_bins = Self::normalize_time_bins(value);
+        // the new bins may be shorter than before; start over at bin 0
+        // rather than risk cur_bin now pointing past the end
+        self.cur_bin = 0;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -56,7 +76,7 @@ impl Recipe for Tof {
             bin_y: config.bin_y.unwrap_or(1),
             use_gate: config.use_gate.unwrap_or(false),
             aux_mode: config.aux_mode,
-            time_bins: config.time_bins.unwrap_or_default(),
+            time_bins: Self::normalize_time_bins(config.time_bins.unwrap_or_default()),
             gate_up: false,
             last_t0: EventTime::zero(),
             cur_bin: 0
@@ -172,8 +192,10 @@ impl Recipe for Std {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::ModuleId;
     use crate::event::test_utils;
     use crate::event::EventTime;
+    use crate::params::ParamMap;
 
     fn empty_recipes() -> BTreeMap<String, RecipeConfig> {
         BTreeMap::new()
@@ -343,6 +365,26 @@ mod tests {
         assert_eq!(out[1].histo.t, 0);
         assert_eq!(out[2].histo.t, 1);
         assert_eq!(out[3].histo.t, 2);
+    }
+
+    #[test]
+    fn test_tof_time_bins_set_at_runtime_without_max_sentinel() {
+        let mut recipe = Tof::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+
+        let mut params = ParamMap::new();
+        params.insert("time_bins".into(), serde_json::json!([1000, 2000]));
+        recipe.update_params(ModuleId::new("tof".into()), params).unwrap();
+
+        let events = vec![
+            test_utils::tzero(0),
+            test_utils::neutron(500, 1),
+            test_utils::neutron(1500, 2),
+            test_utils::neutron(999_999, 3),
+        ];
+        let out = recipe.process(events);
+        assert_eq!(out[1].histo.t, 0); // 0 to 1000 bin
+        assert_eq!(out[2].histo.t, 1); // 1000 to 2000 bin
+        assert_eq!(out[3].histo.t, 2); // last (implicit) 2000 to MAX bin
     }
 
     #[test]
