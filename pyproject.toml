@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "umami-gui"
 version = "0.1.0"
@@ -15,5 +19,10 @@ dev = [
     "ruff>=0.6",
 ]
 
-[tool.uv]
-package = false
+[tool.setuptools]
+script-files = ["umami-gui"]
+# there's no importable Python code here, just the script above -- without
+# this, setuptools' auto-discovery gets confused by the Rust crate's own
+# src/ directory at the repo root and mistakes it for a Python src-layout
+packages = []
+py-modules = []

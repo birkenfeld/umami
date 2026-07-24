@@ -101,15 +101,21 @@ mode switching, live param view/edit, raw-dump/save-histo controls, and a
 log of every command sent and reply received.
 
 Dependencies (`cffi`, `numpy`, `pyqtgraph`, `pyqt6`) are managed via
-`pyproject.toml` + `uv` (`[tool.uv] package = false`, since it's a script,
-not a package):
+`pyproject.toml` + `uv`:
 ```sh
 uv sync                             # create/update .venv with pinned deps
 uv run ./umami-gui [ipc_name]       # run it
 uv run ruff check umami-gui         # lint (dev dependency group)
+uv build                            # build an installable wheel
 ```
 Prefer `uv run ruff` over an ambient system `ruff` — versions/default rule
 sets can differ and surface different findings.
+
+`uv build` produces a wheel that installs `umami-gui` straight into the
+target environment's `bin/` directory (via setuptools' `script-files`
+mechanism — see `[tool.setuptools]` in `pyproject.toml`), so
+`pip install umami_gui-*.whl` gives you a working `umami-gui` command with
+no separate packaging step.
 
 - `umami_det.py` is a second, Tango/Entangle-based client against the same
   wire protocol — useful as a reference for command usage patterns.
