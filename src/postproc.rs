@@ -22,6 +22,7 @@ pub struct PostProcessor {
     output: Sender<PipeItem>,
     input_state: BTreeMap<ModuleId, InputState>,
     shm: ShmBox,
+    instance_name: Option<String>,
 }
 
 impl PostProcessor {
@@ -31,6 +32,7 @@ impl PostProcessor {
         input: Receiver<PipeItem>,
         output: Sender<PipeItem>,
         data: ShmBox,
+        instance_name: Option<String>,
     ) -> Self {
         let mut recipe_names = BTreeMap::new();
         let mut recipes = vec![];
@@ -47,6 +49,7 @@ impl PostProcessor {
             output,
             input_state: BTreeMap::new(),
             shm: data,
+            instance_name,
         }
     }
 
@@ -156,6 +159,7 @@ impl PostProcessor {
                     let mut map = serde_json::Map::new();
                     map.insert("inputs".into(), inputs.into());
                     map.insert("mode".into(), cur_recipe.as_str().into());
+                    map.insert("name".into(), serde_json::json!(self.instance_name));
                     // TODO mode parameters
                     let _ = send.send(CommandReply::Data { value: map.into() });
                     continue;
@@ -212,6 +216,7 @@ mod tests {
         let (output_send, output_recv) = channel::bounded(16);
         let postproc = PostProcessor::new(
             build_recipes(specs), ModuleId::new(default.to_string()), input_recv, output_send, shm,
+            None,
         );
         postproc.start().unwrap();
         (input_send, output_recv, shm_guard)
@@ -262,6 +267,27 @@ mod tests {
                 assert_eq!(value["mode"], "tof");
                 assert_eq!(value["inputs"]["in1"], "running");
             }
+            other => panic!("unexpected reply: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_postproc_get_state_reports_instance_name() {
+        let shm_guard = ShmGuard::unique();
+        let histo_config = HistoConfig { nx: 4, ny: 4, max_nt: 1, max_ni: 0 };
+        let shm = crate::shm::ShmInterface::create(shm_guard.name(), &histo_config).unwrap();
+        let (input_send, input_recv) = channel::bounded(16);
+        let (output_send, _output_recv) = channel::bounded(16);
+        let postproc = PostProcessor::new(
+            build_recipes(&[("std", "histo_std")]), ModuleId::new("std".into()),
+            input_recv, output_send, shm, Some("My Detector".into()),
+        );
+        postproc.start().unwrap();
+
+        let (send, recv) = channel::bounded(1);
+        input_send.send(PipeItem::GetState(send)).unwrap();
+        match recv.recv().unwrap() {
+            CommandReply::Data { value } => assert_eq!(value["name"], "My Detector"),
             other => panic!("unexpected reply: {other:?}"),
         }
     }

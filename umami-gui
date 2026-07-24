@@ -484,6 +484,7 @@ def main():
     # sentinel included), or None to fall back to plain bin-index labeling
     t_bin_edges_ns = None
     current_mode = None
+    instance_name = None
 
     def open_t_projection_window():
         nonlocal t_proj_window, t_proj_curve
@@ -610,7 +611,7 @@ def main():
     was_connected = False
 
     def poll_state():
-        nonlocal was_connected, current_mode
+        nonlocal was_connected, current_mode, instance_name
         state = client.get_state()
         status_panel.set_connected(client.connected)
         if client.connected and not was_connected:
@@ -623,6 +624,11 @@ def main():
             if new_mode and new_mode != current_mode:
                 current_mode = new_mode
                 update_t_axis_labels()
+            new_name = state.get('name')
+            if new_name != instance_name:
+                instance_name = new_name
+                title = f'UMAMI histogram — {instance_name}' if instance_name else 'UMAMI histogram'
+                window.setWindowTitle(title)
 
     # ---- controls ----
     buttons = QtWidgets.QFrame()

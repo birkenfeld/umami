@@ -151,6 +151,7 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
         postproc_recv,
         first_output_send,
         shm_area,
+        config.name.clone(),
     );
     postproc.start()?;
 

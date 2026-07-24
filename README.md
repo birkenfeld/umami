@@ -60,6 +60,7 @@ At the top level, the configuration contains these sections:
 * `process_modes`: named postprocessing recipes; `default` must exist
 * `histogram`: histogram dimensions
 * `ipc_name`: optional IPC name shared by `umami` and `umami-ctl`
+* `name`: optional display name for this instance, shown in `umami-gui`'s window title
 * `debug`: optional boolean enabling debug logging
 
 
@@ -70,6 +71,11 @@ Global settings
 : Name of the control interface for this UMAMI instance.  If omitted, the
   default is `umami`.  When you run multiple instances on one host, give each
   one a unique name and pass the same name to `umami-ctl --ipc`.
+
+`name`
+: A human-readable display name for this instance.  Reported by the `state`
+  command and shown in `umami-gui`'s window title, so it's easier to tell
+  instances apart when running several side by side.
 
 `debug`
 : Enables debug logging from the configuration file.  This can also be turned
@@ -239,7 +245,8 @@ Available commands are:
   parameters.  Parameters are passed as a JSON object.
 
 `state`
-: Prints a JSON object containing the current mode and the per-input states.
+: Prints a JSON object containing the instance's display name (if set), the
+  current mode, and the per-input states.
 
 Examples:
 
