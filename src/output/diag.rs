@@ -16,13 +16,19 @@ use super::{Output, OutputCommon};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventMask {
     NEUTRON = 0x1,
-    EDGE = 0x2,
-    HEARTBEAT = 0x20,
-    MONITOR = 0x80,
-    TZERO = 0x100,
-    GATE = 0x200,
-    AUX = 0x400,
-    VOID = 0x800,
+    MONITOR = 0x2,
+    EDGE = 0x10,
+    GATE = 0x20,
+    TZERO = 0x40,
+    AUX = 0x80,
+    HEARTBEAT = 0x100,
+    VOID = 0x200,
+
+    // combined flags
+    SIGNAL = 0xF,
+    EDGES = 0xF0,
+    OTHER = 0xF00,
+    NOTNEUTRON = 0xFF0,
     ALL = 0xFFF,
 }
 

@@ -145,18 +145,18 @@ impl<S: Source> Input for GeInput<S> {
 
         for _ in 0..nevents {
             let detid = LE::read_u32(&buffer[offset+8..]);
-            let (data, ampl) = if self.is_ts {
-                (EventType::Edge { up: detid & 0x8000_0000 != 0 }, 0)
+            let (evtype, channel, ampl) = if self.is_ts {
+                (EventType::Edge { up: detid & 0x8000_0000 != 0 }, detid & 0xFFFF, 0)
             } else if pktype == PACKET_DIAG || pktype == PACKET_DIAG_FAKE {
                 // let max_heights = LE::read_u32(&buffer[offset+12..]);
                 let a_integrated = LE::read_u32(&buffer[offset+16..]);
                 let b_integrated = LE::read_u32(&buffer[offset+20..]);
-                (EventType::Neutron, a_integrated + b_integrated)
+                (EventType::Neutron, detid, a_integrated + b_integrated)
             } else {
-                (EventType::Neutron, 0)
+                (EventType::Neutron, detid, 0)
             };
-            let event = Event::new(data)
-                .with_channel(detid)
+            let event = Event::new(evtype)
+                .with_channel(channel)
                 .with_abs_time(read_time(&buffer[offset..]))
                 .with_flags(flags)
                 .with_ampl(ampl);
