@@ -30,16 +30,18 @@ Usage: ./umami-gui [ipc_name]  (defaults to "umami"; this name is used for
 both the shared-memory segment and the command socket.)
 """
 
-import os
-import sys
-import mmap
-import cffi
 import json
-import time
+import mmap
+import os
 import socket
+import sys
+import time
+from typing import ClassVar
+
+import cffi
 import numpy as np
 import pyqtgraph as pg
-import pyqtgraph.exporters as exporters
+from pyqtgraph import exporters
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 ffi = cffi.FFI()
@@ -94,7 +96,7 @@ class ShmHistogram:
 class LogPanel(QtWidgets.QPlainTextEdit):
     """Scrolling, timestamped log of commands, replies, and errors."""
 
-    COLORS = {'warning': QtGui.QColor('darkorange'), 'error': QtGui.QColor('red')}
+    COLORS: ClassVar = {'warning': QtGui.QColor('darkorange'), 'error': QtGui.QColor('red')}
 
     def __init__(self):
         super().__init__()
@@ -214,7 +216,7 @@ class UmamiClient:
 class StatusPanel(QtWidgets.QFrame):
     """Connection indicator, current mode, and per-input state at a glance."""
 
-    STATE_COLORS = {'idle': 'gray', 'running': 'green', 'ended': 'blue'}
+    STATE_COLORS: ClassVar = {'idle': 'gray', 'running': 'green', 'ended': 'blue'}
     ERROR_COLOR = 'red'
     INPUT_ROWS = 3
     INPUT_FONT_SIZE = 8
