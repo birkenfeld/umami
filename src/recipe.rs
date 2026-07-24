@@ -19,6 +19,10 @@ pub trait Recipe : Send + HasParams {
     fn from_config(cfg: toml::Table, all: &BTreeMap<String, RecipeConfig>) -> UResult<Self>
         where Self: Sized;
     fn process(&mut self, events: Vec<Event>) -> Vec<Event>;
+
+    /// Called at the start of every run, for every configured recipe, not
+    /// just the active one.
+    fn start_of_run(&mut self) {}
 }
 
 

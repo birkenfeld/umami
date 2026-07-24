@@ -35,12 +35,13 @@ pub struct Tof {
     gate_up: bool,
     last_t0: EventTime,
     cur_bin: usize,
+    // whether last_t0 reflects a Tzero/AuxSignal seen since `start_of_run`
+    t0_known: bool,
 }
 
 impl Tof {
-    /// The last bin must never end, so that a relative time past the last
-    /// configured edge still falls into a valid bin instead of indexing
-    /// past the end of `time_bins` in `process` below.
+    /// The last bin edge is always EventTime::MAX, so a relative time past
+    /// the last configured edge still indexes a valid bin.
     fn normalize_time_bins(mut bins: Vec<EventTime>) -> Vec<EventTime> {
         if bins.last() != Some(&EventTime::MAX) {
             bins.push(EventTime::MAX);
@@ -50,8 +51,6 @@ impl Tof {
 
     fn set_time_bins(&mut self, value: Vec<EventTime>) -> UResult<()> {
         self.time_bins = Self::normalize_time_bins(value);
-        // the new bins may be shorter than before; start over at bin 0
-        // rather than risk cur_bin now pointing past the end
         self.cur_bin = 0;
         Ok(())
     }
@@ -79,8 +78,16 @@ impl Recipe for Tof {
             time_bins: Self::normalize_time_bins(config.time_bins.unwrap_or_default()),
             gate_up: false,
             last_t0: EventTime::zero(),
-            cur_bin: 0
+            cur_bin: 0,
+            t0_known: false,
         })
+    }
+
+    fn start_of_run(&mut self) {
+        self.last_t0 = EventTime::zero();
+        self.cur_bin = 0;
+        self.t0_known = false;
+        self.gate_up = false;
     }
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
@@ -90,17 +97,23 @@ impl Recipe for Tof {
                     if self.aux_mode.is_none() {
                         self.last_t0 = event.time;
                         self.cur_bin = 0;
+                        self.t0_known = true;
                     }
                 }
                 EventType::AuxSignal { num } => {
                     if self.aux_mode == Some(num as _) {
                         self.last_t0 = event.time;
                         self.cur_bin = 0;
+                        self.t0_known = true;
                     }
                 }
                 EventType::Gate { up } => self.gate_up = up,
                 _ => {
                     if self.use_gate && !self.gate_up {
+                        event.evtype = EventType::Void;
+                        continue;
+                    }
+                    if !self.t0_known {
                         event.evtype = EventType::Void;
                         continue;
                     }
@@ -166,6 +179,10 @@ impl Recipe for Std {
             use_gate: config.use_gate.unwrap_or(false),
             gate_up: false,
         })
+    }
+
+    fn start_of_run(&mut self) {
+        self.gate_up = false;
     }
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
@@ -327,6 +344,30 @@ mod tests {
         let out = recipe.process(events);
         // t0 set by aux(200, 2), rel_time = 300 - 200 = 100
         assert_eq!(out[2].rel_time, EventTime(100));
+    }
+
+    #[test]
+    fn test_tof_neutron_before_any_tzero_is_voided() {
+        let mut recipe = Tof::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let out = recipe.process(vec![test_utils::neutron(999_999_999_999, 1)]);
+        assert_eq!(out[0].evtype, EventType::Void);
+    }
+
+    #[test]
+    fn test_tof_start_forgets_stale_t0_until_a_fresh_one_arrives() {
+        let mut recipe = Tof::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+
+        let out = recipe.process(vec![test_utils::tzero(1000),
+                                       test_utils::neutron(1100, 1)]);
+        assert_eq!(out[1].rel_time, EventTime(100));
+
+        recipe.start_of_run();
+        let out = recipe.process(vec![test_utils::neutron(999_999_999_999, 2)]);
+        assert_eq!(out[0].evtype, EventType::Void);
+
+        let out = recipe.process(vec![test_utils::tzero(2000),
+                                       test_utils::neutron(2050, 3)]);
+        assert_eq!(out[1].rel_time, EventTime(50));
     }
 
     #[test]

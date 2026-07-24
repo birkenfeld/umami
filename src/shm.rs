@@ -268,9 +268,7 @@ mod tests {
     #[test]
     fn test_shm_save_to_file_large_offsets() {
         let name = unique_shm_name();
-        // nx*ny*nt exceeds u16::MAX; a prior bug computed the file-write
-        // offset using u16 arithmetic and panicked with "attempt to add
-        // with overflow" partway through writing t=1's rows
+        // nx*ny*nt exceeds u16::MAX, so offsets must be computed in usize
         let config = HistoConfig { nx: 56, ny: 1024, max_nt: 2, max_ni: 0 };
         let mut shm = ShmInterface::create(&name, &config).unwrap();
         shm.add_histo(EventHisto { x: 10, y: 1000, t: 1, i: 0 });

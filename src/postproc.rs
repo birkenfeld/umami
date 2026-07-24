@@ -84,6 +84,9 @@ impl PostProcessor {
                     current_run = run_id.clone();
                     lprintln!(INFO, "Run {current_run:?} started");
                     self.shm.set_run_id(run_id);
+                    for r in &mut self.recipes {
+                        r.start_of_run();
+                    }
                 }
                 PipeItem::EndOfRun => {
                     lprintln!(INFO, "Run {current_run:?} finished");
@@ -264,6 +267,26 @@ mod tests {
                 assert_eq!(value["inputs"]["in1"], "running");
             }
             other => panic!("unexpected reply: {other:?}"),
+        }
+
+        nix::sys::mman::shm_unlink(shm_name.as_bytes()).ok();
+    }
+
+    #[test]
+    fn test_postproc_switching_to_tof_mode_mid_run_does_not_use_stale_t0() {
+        // a recipe that just became active must not use T0 state from before
+        let (input, output, shm_name) =
+            make_postproc(&[("std", "histo_std"), ("tof", "histo_tof")], "std");
+        let timeout = std::time::Duration::from_secs(5);
+
+        let (send, recv) = channel::bounded(1);
+        input.send(PipeItem::SetMode(ModuleId::new("tof".into()), send)).unwrap();
+        assert!(matches!(recv.recv().unwrap(), CommandReply::Ok));
+
+        input.send(PipeItem::Events(vec![test_utils::neutron(999_999_999_999, 1)])).unwrap();
+        match output.recv_timeout(timeout).expect("forwarded item") {
+            PipeItem::Events(evs) => assert_eq!(evs[0].evtype, EventType::Void),
+            other => panic!("unexpected item: {other:?}"),
         }
 
         nix::sys::mman::shm_unlink(shm_name.as_bytes()).ok();
