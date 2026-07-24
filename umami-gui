@@ -33,6 +33,7 @@ both the shared-memory segment and the command socket.)
 import json
 import mmap
 import os
+import signal
 import socket
 import sys
 import time
@@ -384,6 +385,10 @@ def main():
     pg.setConfigOption('background', 'w')
     pg.setConfigOption('foreground', 'k')
     app = QtWidgets.QApplication(['umami-histogram'])
+    # Qt's event loop otherwise blocks Python's own SIGINT handling; the
+    # periodic image_timer below keeps ticking into Python so this fires
+    # promptly instead of only between mouse/keyboard events
+    signal.signal(signal.SIGINT, lambda *args: app.quit())
 
     try:
         histo = ShmHistogram(shm_name)
@@ -417,7 +422,7 @@ def main():
     def open_projection_window():
         nonlocal proj_window, proj_curve
         if proj_window is None:
-            proj_window = pg.PlotWidget(title='X projection (summed over y)')
+            proj_window = pg.PlotWidget(title='Diffractogram')
             proj_window.setLabel('bottom', 'x channel')
             proj_window.setLabel('left', 'counts')
             proj_window.resize(700, 400)
@@ -438,9 +443,11 @@ def main():
 
         total = int(buf.sum())
         now = time.monotonic()
+        title = f'Run {run_id}: {total} total counts'
         if prev and total >= prev['total']:
             rate = (total - prev['total']) / (now - prev['time'])
-            plot.setTitle(f'Run {run_id}: {total} total counts ({rate:,.1f}/sec)')
+            title += f' ({rate:,.1f}/sec)'
+        plot.setTitle(title)
         prev['total'] = total
         prev['time'] = now
 
@@ -512,14 +519,17 @@ def main():
     btn.clicked.connect(lambda: client.reset())
     buttons.layout().addWidget(btn)
 
-    btn = QtWidgets.QPushButton('Clear')
-    btn.clicked.connect(lambda: client.clear())
-    buttons.layout().addWidget(btn)
+    lbl = QtWidgets.QLabel('Run ID:')
+    buttons.layout().addWidget(lbl)
 
     run_id_field = QtWidgets.QLineEdit()
     run_id_field.setPlaceholderText('<use current time>')
     run_id_field.setMaximumWidth(160)
     buttons.layout().addWidget(run_id_field)
+
+    btn = QtWidgets.QPushButton('Clear')
+    btn.clicked.connect(lambda: client.clear())
+    buttons.layout().addWidget(btn)
 
     btn = QtWidgets.QPushButton('Start')
     btn.clicked.connect(
@@ -572,7 +582,7 @@ def main():
     dump_frame.layout().addWidget(t_spin)
     dump_frame.layout().addSpacing(20)
 
-    btn = QtWidgets.QPushButton('Projection Plot')
+    btn = QtWidgets.QPushButton('Show Diffractogram')
     btn.clicked.connect(open_projection_window)
     dump_frame.layout().addWidget(btn)
 
@@ -600,7 +610,7 @@ def main():
             t = t_spin.value()
             np.savetxt(path, histo.read_plane(t), fmt='%d')
             log_panel.info(f'Saved t={t} slice to {path}')
-    btn = QtWidgets.QPushButton('Save Histo...')
+    btn = QtWidgets.QPushButton('Save Histogram...')
     btn.clicked.connect(save_histo_dialog)
     dump_frame.layout().addWidget(btn)
 
