@@ -3,8 +3,10 @@
 
 Reads a 3-D histogram (x * y * t) from a POSIX shared-memory segment and
 displays the selected t-plane as a real-time, log-scale colour image using
-PyQtGraph. An optional 1-D projection (counts vs. x channel, summed over y)
-can be opened in a separate window via the "Projection Plot" button.
+PyQtGraph. Two optional 1-D projections can be opened in separate windows:
+a diffractogram (counts vs. x channel, summed over y, for the current
+t-plane) and a TOF spectrum (counts vs. t bin, summed over the whole x/y
+plane at each t).
 Shared-memory segment layout:
 
     Offset  Size  Field
@@ -97,6 +99,47 @@ class ShmHistogram:
         offset = HEADER_SIZE + t * self.nx * self.ny * 4
         return np.frombuffer(self.mapp, '<u4', self.nx * self.ny, offset) \
                  .reshape((self.ny, self.nx))
+
+    def read_time_projection(self, n=None):
+        n = self.nt if n is None else min(n, self.nt)
+        return np.frombuffer(self.mapp, '<u4', self.nx * self.ny * n, HEADER_SIZE) \
+                 .reshape((n, self.ny, self.nx)) \
+                 .sum(axis=(1, 2))
+
+
+class RotatedAxisItem(pg.AxisItem):
+    """An AxisItem that draws its tick labels at an angle, for long labels
+    (e.g. time-bin ranges) that would otherwise overlap."""
+
+    def __init__(self, *args, angle=-40, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tick_angle = angle
+
+    def drawPicture(self, p, axisSpec, tickSpecs, textSpecs):
+        p.setRenderHint(p.RenderHint.Antialiasing, False)
+        p.setRenderHint(p.RenderHint.TextAntialiasing, True)
+
+        pen, p1, p2 = axisSpec
+        p.setPen(pen)
+        p.drawLine(p1, p2)
+        for pen, p1, p2 in tickSpecs:
+            p.setPen(pen)
+            p.drawLine(p1, p2)
+
+        if self.style['tickFont'] is not None:
+            p.setFont(self.style['tickFont'])
+        p.setPen(self.textPen())
+        for rect, flags, text in textSpecs:
+            # pyqtgraph centers the (unrotated) label under its tick, so the
+            # tick's true x-position is rect's horizontal center, not its
+            # right edge; anchor there so the rotated label's top-right
+            # corner lines up with the tick and swings down-left below it
+            p.save()
+            p.translate(QtCore.QPointF(rect.center().x(), rect.top()))
+            p.rotate(self.tick_angle)
+            local_rect = QtCore.QRectF(-rect.width(), 0, rect.width(), rect.height())
+            p.drawText(local_rect, int(flags), text)
+            p.restore()
 
 
 class LogPanel(QtWidgets.QPlainTextEdit):
@@ -324,11 +367,13 @@ class ParamsTable(QtWidgets.QTableWidget):
         self.horizontalHeader().setStretchLastSection(True)
         self.itemChanged.connect(self._on_item_changed)
         self._keys = []
+        self.params = None
 
     def refresh(self):
         params = self.client.get_params()
         if params is None:
             return
+        self.params = params
         self.blockSignals(True)
         self.setRowCount(len(params))
         self._keys = []
@@ -414,7 +459,7 @@ def main():
     img.setColorMap(pg.colormap.get('viridis'))
     plot.enableAutoRange('xy', True)
 
-    # ---- projection plot: a separate window, created lazily on request ----
+    # ---- projection plots: separate windows, created lazily on request ----
     proj_x_edges = np.arange(histo.nx + 1) - 0.5
     proj_window = None
     proj_curve = None
@@ -432,6 +477,63 @@ def main():
         proj_window.show()
         proj_window.raise_()
 
+    t_proj_x_edges = np.arange(histo.nt + 1) - 0.5
+    t_proj_window = None
+    t_proj_curve = None
+    # raw time_bins of the active mode (nanoseconds, trailing overflow
+    # sentinel included), or None to fall back to plain bin-index labeling
+    t_bin_edges_ns = None
+    current_mode = None
+
+    def open_t_projection_window():
+        nonlocal t_proj_window, t_proj_curve
+        if t_proj_window is None:
+            t_proj_window = pg.PlotWidget(
+                title='TOF spectrum', axisItems={'bottom': RotatedAxisItem(orientation='bottom')})
+            t_proj_window.setWindowTitle('UMAMI TOF spectrum')
+            t_proj_window.setLabel('bottom', 't bin')
+            t_proj_window.setLabel('left', 'counts')
+            t_proj_window.getAxis('bottom').setHeight(70)
+            t_proj_window.resize(700, 400)
+            t_proj_curve = t_proj_window.plot(stepMode='center', fillLevel=0,
+                                              brush=(0, 0, 255, 80))
+            apply_t_axis_ticks()
+        t_proj_window.show()
+        t_proj_window.raise_()
+
+    def t_axis_tick_labels(edges_ns):
+        labels = []
+        lo = 0
+        n = len(edges_ns)
+        for i, hi in enumerate(edges_ns):
+            if i == n - 1:
+                labels.append('overflow')
+            else:
+                labels.append(f'{lo / 1e6:.3f}-{hi / 1e6:.3f}ms')
+                lo = hi
+        return labels
+
+    def apply_t_axis_ticks():
+        if t_proj_window is None:
+            return
+        axis = t_proj_window.getAxis('bottom')
+        if t_bin_edges_ns is not None:
+            labels = t_axis_tick_labels(t_bin_edges_ns)
+            axis.setTicks([list(enumerate(labels))])
+        else:
+            axis.setTicks(None)
+
+    def update_t_axis_labels():
+        nonlocal t_bin_edges_ns
+        info = (params_table.params or {}).get(f'{current_mode}.time_bins')
+        value = info.get('value') if info else None
+        t_bin_edges_ns = value if value and len(value) > 1 else None
+        apply_t_axis_ticks()
+
+    def refresh_params():
+        params_table.refresh()
+        update_t_axis_labels()
+
     prev = {}
 
     def update_buffer():
@@ -441,6 +543,14 @@ def main():
         img.setImage(np.log10(buf.astype(float) + 0.1))
         if proj_curve is not None and proj_window.isVisible():
             proj_curve.setData(proj_x_edges, buf.sum(axis=0), stepMode='center')
+        if t_proj_curve is not None and t_proj_window.isVisible():
+            if t_bin_edges_ns is not None:
+                n = len(t_bin_edges_ns)
+                edges = np.arange(n + 1) - 0.5
+            else:
+                n = histo.nt
+                edges = t_proj_x_edges
+            t_proj_curve.setData(edges, histo.read_time_projection(n), stepMode='center')
 
         total = int(buf.sum())
         now = time.monotonic()
@@ -456,7 +566,7 @@ def main():
         """Re-attach to the shm segment from scratch -- after a reconnect,
         umami may have restarted with different histogram dimensions, and
         the old mapping would otherwise keep showing stale, frozen data."""
-        nonlocal histo, proj_x_edges
+        nonlocal histo, proj_x_edges, t_proj_x_edges
         try:
             new_histo = ShmHistogram(shm_name)
         except RuntimeError as e:
@@ -465,6 +575,7 @@ def main():
         histo.close()
         histo = new_histo
         proj_x_edges = np.arange(histo.nx + 1) - 0.5
+        t_proj_x_edges = np.arange(histo.nt + 1) - 0.5
         prev.clear()
         plot.enableAutoRange('xy', True)
         t_spin.setRange(0, max(histo.nt - 1, 0))
@@ -494,12 +605,12 @@ def main():
             mode_combo.clear()
             mode_combo.addItems(modes)
             mode_combo.blockSignals(False)
-        params_table.refresh()
+        refresh_params()
 
     was_connected = False
 
     def poll_state():
-        nonlocal was_connected
+        nonlocal was_connected, current_mode
         state = client.get_state()
         status_panel.set_connected(client.connected)
         if client.connected and not was_connected:
@@ -508,6 +619,10 @@ def main():
         if state is not None:
             status_panel.update_state(state)
             sync_mode_combo(state.get('mode'))
+            new_mode = state.get('mode')
+            if new_mode and new_mode != current_mode:
+                current_mode = new_mode
+                update_t_axis_labels()
 
     # ---- controls ----
     buttons = QtWidgets.QFrame()
@@ -587,6 +702,10 @@ def main():
     btn.clicked.connect(open_projection_window)
     dump_frame.layout().addWidget(btn)
 
+    btn = QtWidgets.QPushButton('Show TOF Spectrum')
+    btn.clicked.connect(open_t_projection_window)
+    dump_frame.layout().addWidget(btn)
+
     dump_frame.layout().addSpacing(20)
 
     def save_histo_dialog():
@@ -630,7 +749,7 @@ def main():
     params_panel.layout().setContentsMargins(5, 0, 0, 0)
     params_table = ParamsTable(client)
     refresh_btn = QtWidgets.QPushButton('Refresh Params')
-    refresh_btn.clicked.connect(params_table.refresh)
+    refresh_btn.clicked.connect(refresh_params)
     params_panel.layout().addWidget(refresh_btn)
     params_panel.layout().addWidget(params_table)
 
@@ -673,7 +792,7 @@ def main():
     was_connected = client.connected
     modes = client.get_modes() or []
     mode_combo.addItems(modes)
-    params_table.refresh()
+    refresh_params()
     poll_state()
 
     app.exec()
