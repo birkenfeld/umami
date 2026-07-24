@@ -480,10 +480,12 @@ def main():
         log_panel.info('Reconnected -- reinitializing (config may have changed)')
         reopen_histogram()
         status_panel.reset_inputs()
-        mode_combo.blockSignals(True)
-        mode_combo.clear()
-        mode_combo.addItems(client.get_modes() or [])
-        mode_combo.blockSignals(False)
+        modes = client.get_modes()
+        if modes is not None:
+            mode_combo.blockSignals(True)
+            mode_combo.clear()
+            mode_combo.addItems(modes)
+            mode_combo.blockSignals(False)
         params_table.refresh()
 
     was_connected = False
