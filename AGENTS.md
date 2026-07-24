@@ -17,8 +17,7 @@ Pure Cargo workspace:
 cargo build                         # debug build
 cargo build --release               # optimized
 cargo test                          # unit + integration suite (74+ tests)
-cargo clippy                        # lint
-cargo fmt --check                   # format check
+cargo clippy --all-targets          # lint
 cargo check                         # type-check only
 ```
 
