@@ -423,6 +423,7 @@ def main():
         nonlocal proj_window, proj_curve
         if proj_window is None:
             proj_window = pg.PlotWidget(title='Diffractogram')
+            proj_window.setWindowTitle('UMAMI diffractogram')
             proj_window.setLabel('bottom', 'x channel')
             proj_window.setLabel('left', 'counts')
             proj_window.resize(700, 400)
