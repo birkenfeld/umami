@@ -73,6 +73,7 @@ class ShmHistogram:
         if fd < 0:
             raise RuntimeError(f'Could not open shared memory {shm_name!r}: '
                                 f'{os.strerror(-fd)}')
+        self.fd = fd
         header_map = mmap.mmap(fd, HEADER_SIZE, prot=mmap.PROT_READ)
         header = np.frombuffer(header_map, '<u2', count=4, offset=132)
         self.nx = int(header[0])
@@ -83,6 +84,10 @@ class ShmHistogram:
 
         self.mapp = mmap.mmap(fd, HEADER_SIZE + self.nx * self.ny * self.nt * 4,
                                prot=mmap.PROT_READ)
+
+    def close(self):
+        self.mapp.close()
+        os.close(self.fd)
 
     def read_run_id(self):
         return np.frombuffer(self.mapp, 'S128', 1)[0].decode('ascii').rstrip('\x00')
@@ -97,6 +102,7 @@ class LogPanel(QtWidgets.QPlainTextEdit):
     """Scrolling, timestamped log of commands, replies, and errors."""
 
     COLORS: ClassVar = {'warning': QtGui.QColor('darkorange'), 'error': QtGui.QColor('red')}
+    error_logged = QtCore.pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -105,6 +111,8 @@ class LogPanel(QtWidgets.QPlainTextEdit):
         self.setFont(QtGui.QFont('monospace'))
 
     def _append(self, level, text):
+        scrollbar = self.verticalScrollBar()
+        at_bottom = scrollbar.value() >= scrollbar.maximum()
         cursor = self.textCursor()
         cursor.movePosition(QtGui.QTextCursor.MoveOperation.End)
         fmt = QtGui.QTextCharFormat()
@@ -113,7 +121,8 @@ class LogPanel(QtWidgets.QPlainTextEdit):
         cursor.setCharFormat(fmt)
         cursor.insertText(f'[{time.strftime("%H:%M:%S")}] {level.upper():7} {text}\n')
         self.setTextCursor(cursor)
-        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+        if at_bottom:
+            scrollbar.setValue(scrollbar.maximum())
 
     def info(self, text):
         self._append('info', text)
@@ -123,6 +132,7 @@ class LogPanel(QtWidgets.QPlainTextEdit):
 
     def error(self, text):
         self._append('error', text)
+        self.error_logged.emit()
 
 
 class UmamiClient:
@@ -149,7 +159,7 @@ class UmamiClient:
         self.connected = True
         return True
 
-    def _call(self, cmd, **kwargs):
+    def _call(self, cmd, quiet=False, **kwargs):
         if self._busy:
             return None  # a previous call is still (conceptually) in flight
         self._busy = True
@@ -157,7 +167,8 @@ class UmamiClient:
             if not self._ensure_connected():
                 return None
             msg = json.dumps({'command': cmd, **kwargs})
-            self.log.info(f'-> {msg}')
+            if not quiet:
+                self.log.info(f'-> {msg}')
             try:
                 self.sock.sendall(msg.encode())
                 raw = self.sock.recv(4096)
@@ -166,7 +177,8 @@ class UmamiClient:
                 self.log.warning(f'Lost connection to {self.ipc_name!r}: {e}')
                 return None
             reply = json.loads(raw.decode())
-            self.log.info(f'<- {reply}')
+            if not quiet:
+                self.log.info(f'<- {reply}')
             if reply['result'] == 'error':
                 module = reply.get('module')
                 prefix = f'[{module}] ' if module else ''
@@ -192,7 +204,7 @@ class UmamiClient:
         return self._call('reset')
 
     def get_state(self):
-        return self._call('get_state')
+        return self._call('get_state', quiet=True)
 
     def set_raw_dump(self, enable, path):
         return self._call('set_raw_dump', enable=enable, path=path)
@@ -265,6 +277,15 @@ class StatusPanel(QtWidgets.QFrame):
         else:
             self.conn_label.setText('● disconnected')
             self.conn_label.setStyleSheet(f'color: {self.ERROR_COLOR}; font-weight: bold;')
+
+    def reset_inputs(self):
+        """Drop known inputs so they're rebuilt from scratch on the next
+        update_state -- used after a reconnect, since the input set may
+        have changed along with the rest of the config."""
+        for label in self._input_labels.values():
+            self.inputs_layout.removeWidget(label)
+            label.deleteLater()
+        self._input_labels.clear()
 
     def update_state(self, state):
         if state is None:
@@ -408,7 +429,7 @@ def main():
     prev = {}
 
     def update_buffer():
-        t = t_spin.value() if t_spin is not None else 0
+        t = t_spin.value()
         run_id = histo.read_run_id()
         buf = histo.read_plane(t)
         img.setImage(np.log10(buf.astype(float) + 0.1))
@@ -423,6 +444,23 @@ def main():
         prev['total'] = total
         prev['time'] = now
 
+    def reopen_histogram():
+        """Re-attach to the shm segment from scratch -- after a reconnect,
+        umami may have restarted with different histogram dimensions, and
+        the old mapping would otherwise keep showing stale, frozen data."""
+        nonlocal histo, proj_x_edges
+        try:
+            new_histo = ShmHistogram(shm_name)
+        except RuntimeError as e:
+            log_panel.error(f'Could not reopen shared memory: {e}')
+            return
+        histo.close()
+        histo = new_histo
+        proj_x_edges = np.arange(histo.nx + 1) - 0.5
+        prev.clear()
+        plot.enableAutoRange('xy', True)
+        t_spin.setRange(0, max(histo.nt - 1, 0))
+
     # ---- status/state polling (also serves as the connection heartbeat) ----
     status_panel = StatusPanel()
 
@@ -436,9 +474,27 @@ def main():
                 mode_combo.setCurrentIndex(index)
             mode_combo.blockSignals(False)
 
+    def reinit_after_reconnect():
+        """The pipeline may have (re)started with a different config across
+        a disconnect -- re-pull everything instead of trusting stale state."""
+        log_panel.info('Reconnected -- reinitializing (config may have changed)')
+        reopen_histogram()
+        status_panel.reset_inputs()
+        mode_combo.blockSignals(True)
+        mode_combo.clear()
+        mode_combo.addItems(client.get_modes() or [])
+        mode_combo.blockSignals(False)
+        params_table.refresh()
+
+    was_connected = False
+
     def poll_state():
+        nonlocal was_connected
         state = client.get_state()
         status_panel.set_connected(client.connected)
+        if client.connected and not was_connected:
+            reinit_after_reconnect()
+        was_connected = client.connected
         if state is not None:
             status_panel.update_state(state)
             sync_mode_combo(state.get('mode'))
@@ -458,12 +514,14 @@ def main():
     btn.clicked.connect(lambda: client.clear())
     buttons.layout().addWidget(btn)
 
-    run_id_field = QtWidgets.QLineEdit(time.strftime('%Y-%m-%d_%H:%M:%S'))
+    run_id_field = QtWidgets.QLineEdit()
+    run_id_field.setPlaceholderText('<use current time>')
     run_id_field.setMaximumWidth(160)
     buttons.layout().addWidget(run_id_field)
 
     btn = QtWidgets.QPushButton('Start')
-    btn.clicked.connect(lambda: client.start(run_id_field.text()))
+    btn.clicked.connect(
+        lambda: client.start(run_id_field.text() or time.strftime('%Y-%m-%d_%H:%M:%S')))
     buttons.layout().addWidget(btn)
 
     btn = QtWidgets.QPushButton('Stop')
@@ -477,20 +535,6 @@ def main():
     def on_mode_selected(index):
         client.set_mode(mode_combo.itemText(index))
     mode_combo.activated.connect(on_mode_selected)
-
-    t_spin = None
-    if histo.nt > 1:
-        buttons.layout().addSpacing(20)
-        buttons.layout().addWidget(QtWidgets.QLabel('t:'))
-        t_spin = QtWidgets.QSpinBox()
-        t_spin.setRange(0, histo.nt - 1)
-        t_spin.valueChanged.connect(lambda _: update_buffer())
-        buttons.layout().addWidget(t_spin)
-
-    buttons.layout().addSpacing(20)
-    btn = QtWidgets.QPushButton('Projection Plot')
-    btn.clicked.connect(open_projection_window)
-    buttons.layout().addWidget(btn)
 
     log_toggle = QtWidgets.QPushButton('Show Log')
     log_toggle.setCheckable(True)
@@ -519,11 +563,41 @@ def main():
 
     dump_frame.layout().addSpacing(20)
 
+    dump_frame.layout().addWidget(QtWidgets.QLabel('t:'))
+    t_spin = QtWidgets.QSpinBox()
+    t_spin.setRange(0, max(histo.nt - 1, 0))
+    t_spin.valueChanged.connect(lambda _: update_buffer())
+    dump_frame.layout().addWidget(t_spin)
+    dump_frame.layout().addSpacing(20)
+
+    btn = QtWidgets.QPushButton('Projection Plot')
+    btn.clicked.connect(open_projection_window)
+    dump_frame.layout().addWidget(btn)
+
+    dump_frame.layout().addSpacing(20)
+
     def save_histo_dialog():
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+        dialog = QtWidgets.QFileDialog(
             window, 'Save Histogram', '', 'Text files (*.txt);;All files (*)')
-        if path:
+        dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptMode.AcceptSave)
+        dialog.setOption(QtWidgets.QFileDialog.Option.DontUseNativeDialog, True)
+        all_check = None
+        if histo.nt > 1:
+            all_check = QtWidgets.QCheckBox('Save all t-slices (default: current only)')
+            layout = dialog.layout()
+            layout.addWidget(all_check, layout.rowCount(), 0, 1, layout.columnCount())
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        paths = dialog.selectedFiles()
+        if not paths:
+            return
+        path = paths[0]
+        if all_check is not None and all_check.isChecked():
             client.save_histo(path, histo.nt)
+        else:
+            t = t_spin.value()
+            np.savetxt(path, histo.read_plane(t), fmt='%d')
+            log_panel.info(f'Saved t={t} slice to {path}')
     btn = QtWidgets.QPushButton('Save Histo...')
     btn.clicked.connect(save_histo_dialog)
     dump_frame.layout().addWidget(btn)
@@ -550,6 +624,7 @@ def main():
     # ---- assembly ----
     log_panel.setVisible(False)  # minimized by default; toggled via "Show Log"
     log_toggle.toggled.connect(log_panel.setVisible)
+    log_panel.error_logged.connect(lambda: log_toggle.setChecked(True))
 
     left_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
     left_splitter.addWidget(graphics)
@@ -578,8 +653,11 @@ def main():
     state_timer.start(STATE_POLL_MS)
 
     # get an initial connection/log entry and populate the mode list & params
-    # right away rather than waiting for the first timer tick
+    # right away rather than waiting for the first timer tick; mark the
+    # connection as already-established first so poll_state()'s reconnect
+    # detection doesn't treat this initial setup as a redundant reinit
     client.ping()
+    was_connected = client.connected
     modes = client.get_modes() or []
     mode_combo.addItems(modes)
     params_table.refresh()
