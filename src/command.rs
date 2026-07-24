@@ -28,8 +28,7 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 fn unresponsive(who: &str) -> CommandReply {
     lprintln!(ERROR, "{who} did not respond within {REPLY_TIMEOUT:?}");
     CommandReply::new_error(format!(
-        "{who} did not respond within {REPLY_TIMEOUT:?}; it may be stuck \
-         and require manual intervention"))
+        "{who} did not respond within {REPLY_TIMEOUT:?}; it may be stuck"))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -144,9 +143,9 @@ impl CommandHandler {
         &self, item: PipeItem, rep_recv: &crate::channel::Receiver<CommandReply>, deadline: Instant,
     ) -> CommandReply {
         if self.post_send.send_deadline(item, deadline).is_err() {
-            return unresponsive("postprocessor");
+            return unresponsive("Postprocessor");
         }
-        rep_recv.recv_deadline(deadline).unwrap_or_else(|_| unresponsive("postprocessor"))
+        rep_recv.recv_deadline(deadline).unwrap_or_else(|_| unresponsive("Postprocessor"))
     }
 
     pub fn handle(&self, cmd: Command) -> CommandReply {
@@ -160,7 +159,7 @@ impl CommandHandler {
             Command::Clear => {
                 match self.post_send.send_deadline(PipeItem::Clear, deadline) {
                     Ok(()) => CommandReply::Ok,
-                    Err(_) => unresponsive("postprocessor"),
+                    Err(_) => unresponsive("Postprocessor"),
                 }
             }
             Command::GetState => self.post_and_wait(PipeItem::GetState(rep_send), &rep_recv, deadline),
@@ -174,19 +173,19 @@ impl CommandHandler {
                 if let Command::Start { run_id } = &cmd
                     && self.post_send.send_deadline(PipeItem::StartOfRun(run_id.into()), deadline).is_err()
                 {
-                    return unresponsive("postprocessor");
+                    return unresponsive("Postprocessor");
                 }
                 let cmd_and_send = (cmd, rep_send);
                 for (name, sender) in &self.input_send {
                     if sender.send_deadline(cmd_and_send.clone(), deadline).is_err() {
-                        return unresponsive(&format!("input {name}"));
+                        return unresponsive(&format!("Input {name}"));
                     }
                 }
                 let mut replies = Vec::with_capacity(self.input_send.len());
                 for _ in 0..self.input_send.len() {
                     match rep_recv.recv_deadline(deadline) {
                         Ok(reply) => replies.push(reply),
-                        Err(_) => return unresponsive("an input"),
+                        Err(_) => return unresponsive("An input"),
                     }
                 }
                 replies.into_iter().find(|r| r.is_error()).unwrap_or(CommandReply::Ok)
@@ -195,7 +194,7 @@ impl CommandHandler {
                 // this command needs a differently typed channel
                 let (rep_send, rep_recv) = crate::channel::unbounded();
                 if self.post_send.send_deadline(PipeItem::GetParams(rep_send), deadline).is_err() {
-                    return unresponsive("postprocessor");
+                    return unresponsive("Postprocessor");
                 }
                 // aggregate parameters from all HasParams into a single map
                 let mut map = ParamMap::new();
@@ -205,7 +204,7 @@ impl CommandHandler {
                             map.insert(format!("{name}.{param}"), info);
                         },
                         Err(RecvTimeoutError::Disconnected) => break,
-                        Err(RecvTimeoutError::Timeout) => return unresponsive("a recipe or output"),
+                        Err(RecvTimeoutError::Timeout) => return unresponsive("A recipe or output"),
                     }
                 }
                 CommandReply::Data { value: map.into() }
@@ -227,7 +226,7 @@ impl CommandHandler {
                 }
 
                 if self.post_send.send_deadline(PipeItem::SetParams(new_map, rep_send), deadline).is_err() {
-                    return unresponsive("postprocessor");
+                    return unresponsive("Postprocessor");
                 }
                 // aggregate errors, if any
                 loop {
@@ -235,7 +234,7 @@ impl CommandHandler {
                         Ok(reply) if reply.is_error() => return reply,
                         Ok(_) => {}
                         Err(RecvTimeoutError::Disconnected) => return CommandReply::Ok,
-                        Err(RecvTimeoutError::Timeout) => return unresponsive("a recipe or output"),
+                        Err(RecvTimeoutError::Timeout) => return unresponsive("A recipe or output"),
                     }
                 }
             }
