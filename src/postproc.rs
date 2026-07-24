@@ -98,7 +98,7 @@ impl PostProcessor {
                     for (&name, &index) in &self.recipe_names {
                         match self.recipes[index].get_params() {
                             Ok(params) => {
-                                send.send((name, params)).expect("param reply receiver died");
+                                let _ = send.send((name, params));
                             }
                             Err(e) => {
                                 lprintln!(ERROR, "Error getting parameters for recipe {}: {e:#}",
@@ -113,11 +113,11 @@ impl PostProcessor {
                             if let Err(e) = self.recipes[index].update_params(name, params) {
                                 lprintln!(ERROR, "Error setting parameters for recipe {}: {e:#}",
                                           name);
-                                send.send(CommandReply::new_mod_error(
+                                let _ = send.send(CommandReply::new_mod_error(
                                     name, format!("Failed to set parameters: {e:#}")
-                                )).expect("param reply receiver died");
+                                ));
                             } else {
-                                send.send(CommandReply::Ok).expect("param reply receiver died");
+                                let _ = send.send(CommandReply::Ok);
                             }
                         }
                     }
@@ -130,21 +130,19 @@ impl PostProcessor {
                 }
                 PipeItem::GetModes(send) => {
                     let modes = self.recipe_names.keys().map(|s| s.to_string()).collect_vec();
-                    send.send(CommandReply::Data { value: modes.into() })
-                        .expect("param reply receiver died");
+                    let _ = send.send(CommandReply::Data { value: modes.into() });
                     continue;
                 }
                 PipeItem::SetMode(name, send) => {
                     if !self.recipe_names.contains_key(&name) {
-                        send.send(CommandReply::new_error(
-                            format!("Recipe {name} not found")))
-                            .expect("param reply receiver died");
+                        let _ = send.send(CommandReply::new_error(
+                            format!("Recipe {name} not found")));
                         continue;
                     }
                     lprintln!(INFO, "Using processing recipe {name}");
                     recipe = *self.recipe_names.get(&name).expect("checked above");
                     cur_recipe = name;
-                    send.send(CommandReply::Ok).expect("param reply receiver died");
+                    let _ = send.send(CommandReply::Ok);
                     continue;
                 }
                 PipeItem::GetState(send) => {
@@ -156,12 +154,11 @@ impl PostProcessor {
                     map.insert("inputs".into(), inputs.into());
                     map.insert("mode".into(), cur_recipe.as_str().into());
                     // TODO mode parameters
-                    send.send(CommandReply::Data { value: map.into() })
-                        .expect("param reply receiver died");
+                    let _ = send.send(CommandReply::Data { value: map.into() });
                     continue;
                 }
                 PipeItem::SaveHisto(filename, max_nt, send) => {
-                    send.send(match self.shm.save_to_file(&filename, max_nt) {
+                    let _ = send.send(match self.shm.save_to_file(&filename, max_nt) {
                         Ok(()) => CommandReply::Ok,
                         Err(e) => {
                             lprintln!(ERROR, "Error saving histogram to file \
@@ -170,7 +167,7 @@ impl PostProcessor {
                                 format!("Failed to save histogram: {e:#}")
                             )
                         }
-                    }).expect("param reply receiver died");
+                    });
                     continue;
                 }
             }
