@@ -85,7 +85,10 @@ testing pipeline mechanics (wiring, sorting, histogramming) without real
 detector data — see `test/synthetic.conf` / `test_pipeline_synthetic_input`.
 
 Coverage: `cargo llvm-cov` (requires `cargo install cargo-llvm-cov` +
-`rustup component add llvm-tools-preview`); currently ~78% line coverage.
+`rustup component add llvm-tools-preview`); currently ~81% line coverage.
+The input backends (`input.rs`, `input/canon.rs`, `input/mesy.rs`,
+`input/mesy/cmd.rs`) are the weakest spots, since covering them properly
+would need mocking their TCP/UDP interfaces — not planned for now.
 
 ## Config
 
