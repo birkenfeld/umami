@@ -182,14 +182,12 @@ impl PostProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use crate::channel;
     use crate::config::{HistoConfig, RecipeConfig};
     use crate::event::test_utils;
     use crate::params::ParamMap;
     use crate::recipe;
-
-    static SHM_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    use crate::shm::ShmGuard;
 
     fn build_recipes(specs: &[(&str, &str)]) -> BTreeMap<ModuleId, Box<dyn Recipe>> {
         let mut configs = BTreeMap::new();
@@ -203,22 +201,20 @@ mod tests {
     }
 
     /// Spins up a real PostProcessor thread wired to fresh shared memory and
-    /// returns the channels to drive it plus its shm name (for direct readback
-    /// and cleanup).
+    /// returns the channels to drive it plus a guard owning its shm segment.
     fn make_postproc(specs: &[(&str, &str)], default: &str)
-        -> (channel::Sender<PipeItem>, channel::Receiver<PipeItem>, String)
+        -> (channel::Sender<PipeItem>, channel::Receiver<PipeItem>, ShmGuard)
     {
-        let name = format!("umami_postproc_test_{}_{}",
-                           SHM_COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id());
+        let shm_guard = ShmGuard::unique();
         let histo_config = HistoConfig { nx: 4, ny: 4, max_nt: 1, max_ni: 0 };
-        let shm = crate::shm::ShmInterface::create(&name, &histo_config).unwrap();
+        let shm = crate::shm::ShmInterface::create(shm_guard.name(), &histo_config).unwrap();
         let (input_send, input_recv) = channel::bounded(16);
         let (output_send, output_recv) = channel::bounded(16);
         let postproc = PostProcessor::new(
             build_recipes(specs), ModuleId::new(default.to_string()), input_recv, output_send, shm,
         );
         postproc.start().unwrap();
-        (input_send, output_recv, name)
+        (input_send, output_recv, shm_guard)
     }
 
     /// Sends a `GetState` request and blocks for its reply, purely to use as a
@@ -233,7 +229,7 @@ mod tests {
 
     #[test]
     fn test_postproc_mode_switching_and_state() {
-        let (input, _output, shm_name) =
+        let (input, _output, _shm) =
             make_postproc(&[("std", "histo_std"), ("tof", "histo_tof")], "std");
 
         let (send, recv) = channel::bounded(1);
@@ -268,14 +264,12 @@ mod tests {
             }
             other => panic!("unexpected reply: {other:?}"),
         }
-
-        nix::sys::mman::shm_unlink(shm_name.as_bytes()).ok();
     }
 
     #[test]
     fn test_postproc_switching_to_tof_mode_mid_run_does_not_use_stale_t0() {
         // a recipe that just became active must not use T0 state from before
-        let (input, output, shm_name) =
+        let (input, output, _shm) =
             make_postproc(&[("std", "histo_std"), ("tof", "histo_tof")], "std");
         let timeout = std::time::Duration::from_secs(5);
 
@@ -288,13 +282,11 @@ mod tests {
             PipeItem::Events(evs) => assert_eq!(evs[0].evtype, EventType::Void),
             other => panic!("unexpected item: {other:?}"),
         }
-
-        nix::sys::mman::shm_unlink(shm_name.as_bytes()).ok();
     }
 
     #[test]
     fn test_postproc_params_get_and_set() {
-        let (input, output, shm_name) = make_postproc(&[("std", "histo_std")], "std");
+        let (input, output, _shm) = make_postproc(&[("std", "histo_std")], "std");
         let timeout = std::time::Duration::from_secs(5);
 
         // GetParams/SetParams (unlike the other meta items) are forwarded on to the
@@ -336,13 +328,11 @@ mod tests {
         input.send(PipeItem::SetParams(set_map, send)).unwrap();
         output.recv_timeout(timeout).expect("forwarded item");
         assert!(recv.recv().unwrap().is_error());
-
-        nix::sys::mman::shm_unlink(shm_name.as_bytes()).ok();
     }
 
     #[test]
     fn test_postproc_histogram_accumulation_clear_and_save() {
-        let (input, _output, shm_name) = make_postproc(&[("std", "histo_std")], "std");
+        let (input, _output, shm) = make_postproc(&[("std", "histo_std")], "std");
 
         let events = vec![
             test_utils::neutron_xy(100, 0, 1, 2),
@@ -352,7 +342,7 @@ mod tests {
         input.send(PipeItem::Events(events)).unwrap();
         sync_barrier(&input);
 
-        let shm_read = crate::shm::ShmInterface::open(&shm_name).unwrap();
+        let shm_read = crate::shm::ShmInterface::open(shm.name()).unwrap();
         let histo = shm_read.histo_data();
         assert_eq!(histo.iter().sum::<u32>(), 2);
         assert_eq!(histo[2 * 4 + 1], 2); // offset for (x=1, y=2, t=0)
@@ -369,13 +359,11 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains('1'));
         std::fs::remove_file(&path).ok();
-
-        nix::sys::mman::shm_unlink(shm_name.as_bytes()).ok();
     }
 
     #[test]
     fn test_postproc_meta_items_not_forwarded() {
-        let (input, output, shm_name) = make_postproc(&[("std", "histo_std")], "std");
+        let (input, output, _shm) = make_postproc(&[("std", "histo_std")], "std");
 
         // meta items are consumed by the postprocessor and never reach the output
         let (send, _recv) = channel::bounded(1);
@@ -396,7 +384,5 @@ mod tests {
         assert!(matches!(forwarded[2], PipeItem::EndOfRun));
         // nothing else should have been forwarded
         assert!(output.try_recv().is_err());
-
-        nix::sys::mman::shm_unlink(shm_name.as_bytes()).ok();
     }
 }

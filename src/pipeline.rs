@@ -346,11 +346,10 @@ mod tests {
         done_rx.recv_timeout(std::time::Duration::from_secs(30))
             .expect("Pipeline did not complete in time");
 
-        let shm_read = ShmInterface::open(handle.shm_name())
+        let shm = crate::shm::ShmGuard::for_name(handle.shm_name());
+        let shm_read = ShmInterface::open(shm.name())
             .expect("Opening shared memory for verification");
-        let histo = shm_read.histo_data();
-        nix::sys::mman::shm_unlink(handle.shm_name().as_bytes()).ok();
-        histo
+        shm_read.histo_data()
     }
 
     /// Runs the pipeline defined by `conf_name` and checks the resulting histogram

@@ -177,17 +177,40 @@ impl ShmInterface {
     }
 }
 
+/// Owns a unique test shm segment name and unlinks it on drop, so a panicking
+/// test still cleans up instead of leaking the segment.
+#[cfg(test)]
+pub(crate) struct ShmGuard(String);
+
+#[cfg(test)]
+impl ShmGuard {
+    pub fn unique() -> Self {
+        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(format!("umami_test_{id}_{}", std::process::id()))
+    }
+
+    /// Wraps a name decided elsewhere (e.g. derived from a config's ipc_name)
+    /// so it still gets unlinked on drop.
+    pub fn for_name(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    pub fn name(&self) -> &str {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+impl Drop for ShmGuard {
+    fn drop(&mut self) {
+        nix::sys::mman::shm_unlink(self.0.as_bytes()).ok();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static SHM_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    fn unique_shm_name() -> String {
-        let id = SHM_COUNTER.fetch_add(1, Ordering::SeqCst);
-        format!("umami_test_{id}_{}", std::process::id())
-    }
 
     fn test_config() -> HistoConfig {
         HistoConfig { nx: 4, ny: 4, max_nt: 4, max_ni: 0 }
@@ -195,8 +218,8 @@ mod tests {
 
     #[test]
     fn test_shm_create_and_basic_ops() {
-        let name = unique_shm_name();
-        let mut shm = ShmInterface::create(&name, &test_config()).unwrap();
+        let shm_guard = ShmGuard::unique();
+        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
 
         // set_run_id
         shm.set_run_id("run_001");
@@ -222,24 +245,20 @@ mod tests {
         assert_eq!(histo[0], 2);
         // bin (1,2,3) → offset 3*16 + 2*4 + 1 = 57
         assert_eq!(histo[57], 1);
-
-        // cleanup
-        nix::sys::mman::shm_unlink(name.as_bytes()).ok();
     }
 
     #[test]
     fn test_shm_add_out_of_bounds_ignored() {
-        let name = unique_shm_name();
-        let mut shm = ShmInterface::create(&name, &test_config()).unwrap();
+        let shm_guard = ShmGuard::unique();
+        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
         shm.add_histo(EventHisto { x: 10, y: 10, t: 10, i: 0 }); // all out of bounds
         // should not panic
-        nix::sys::mman::shm_unlink(name.as_bytes()).ok();
     }
 
     #[test]
     fn test_shm_clear_histo() {
-        let name = unique_shm_name();
-        let mut shm = ShmInterface::create(&name, &test_config()).unwrap();
+        let shm_guard = ShmGuard::unique();
+        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
         shm.add_histo(EventHisto { x: 0, y: 0, t: 0, i: 0 });
         shm.add_histo(EventHisto { x: 1, y: 1, t: 1, i: 0 });
         shm.clear_histo();
@@ -248,13 +267,12 @@ mod tests {
             std::slice::from_raw_parts(ptr, 4 * 4 * 4)
         };
         assert!(histo.iter().all(|&v| v == 0));
-        nix::sys::mman::shm_unlink(name.as_bytes()).ok();
     }
 
     #[test]
     fn test_shm_save_to_file() {
-        let name = unique_shm_name();
-        let mut shm = ShmInterface::create(&name, &test_config()).unwrap();
+        let shm_guard = ShmGuard::unique();
+        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
         shm.add_histo(EventHisto { x: 0, y: 0, t: 0, i: 0 });
         shm.add_histo(EventHisto { x: 0, y: 0, t: 0, i: 0 });
         let path = format!("/tmp/umami_test_histo_{}", std::process::id());
@@ -262,37 +280,35 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("2")); // two counts at (0,0,0)
         std::fs::remove_file(&path).ok();
-        nix::sys::mman::shm_unlink(name.as_bytes()).ok();
     }
 
     #[test]
     fn test_shm_save_to_file_large_offsets() {
-        let name = unique_shm_name();
+        let shm_guard = ShmGuard::unique();
         // nx*ny*nt exceeds u16::MAX, so offsets must be computed in usize
         let config = HistoConfig { nx: 56, ny: 1024, max_nt: 2, max_ni: 0 };
-        let mut shm = ShmInterface::create(&name, &config).unwrap();
+        let mut shm = ShmInterface::create(shm_guard.name(), &config).unwrap();
         shm.add_histo(EventHisto { x: 10, y: 1000, t: 1, i: 0 });
         let mut buf = Vec::new();
         shm.write_histo(&mut buf, 2).unwrap();
         let content = String::from_utf8(buf).unwrap();
         assert!(content.contains('1'));
-        nix::sys::mman::shm_unlink(name.as_bytes()).ok();
     }
 
     #[test]
     fn test_shm_zero_size_fails() {
-        let name = unique_shm_name();
+        let shm_guard = ShmGuard::unique();
         let config = HistoConfig { nx: 0, ny: 1, max_nt: 1, max_ni: 0 };
-        let result = ShmInterface::create(&name, &config);
+        let result = ShmInterface::create(shm_guard.name(), &config);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_shm_oversized_fails() {
-        let name = unique_shm_name();
+        let shm_guard = ShmGuard::unique();
         // exceeds MAX_HISTO_SIZE without ever attempting to allocate it
         let config = HistoConfig { nx: 1_000_000, ny: 1_000_000, max_nt: 1_000, max_ni: 0 };
-        let result = ShmInterface::create(&name, &config);
+        let result = ShmInterface::create(shm_guard.name(), &config);
         assert!(result.is_err());
     }
 }
