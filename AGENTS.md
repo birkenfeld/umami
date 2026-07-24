@@ -55,12 +55,17 @@ Key files:
 
 ## Conventions
 
-- **Event size is sacred.** `Event` must remain 48 bytes for `rkyv` zero-copy and shm layout.
-- Thread names are ≤16 chars: `M: <input>`, `O: <output>`, `Sorter`, `Postprocessor`, `Command handler`.
-- All module names (inputs, outputs, recipes, modes) are interned via `internment::Intern<String>` (`ModuleId`). Pipeline validates uniqueness at startup.
-- Custom log macros: `ldebug!`, `ltrace!`, `lprintln!` — write to stderr with `jiff` timestamps. Format: `YYYY-MM-DD HH:MM:SS.ffffff : LEVEL : [module] message`.
-- Outputs are daisy-chained: each output forwards events to the next. A `NullOutput` is auto-created if none configured.
-- IPC commands use `#[serde(tag = "command")]` / `#[serde(tag = "result")]` for tagged JSON.
+- **Event size is sacred.** `Event` must remain 48 bytes for `rkyv` zero-copy layout.
+- Thread names are ≤16 chars: `M: <input>`, `O: <output>`, `Sorter`, `Postprocessor`,
+  `Command handler`.
+- All module names (inputs, outputs, recipes, modes) are interned via
+  `internment::Intern<String>` (`ModuleId`). Pipeline validates uniqueness at startup.
+- Custom log macros: `ldebug!`, `ltrace!`, `lprintln!` — write to stderr with `jiff`
+  timestamps. Format: `YYYY-MM-DD HH:MM:SS.ffffff : LEVEL : [module] message`.
+- Outputs are daisy-chained: each output forwards events to the next. A `NullOutput`
+  is auto-created if none configured.
+- IPC commands use `#[serde(tag = "command")]` / `#[serde(tag = "result")]` for
+  tagged JSON.
 
 ## Testing
 
@@ -89,19 +94,28 @@ Runtime config is TOML. Example configs in `test/*.conf`.
 
 ## Python GUI
 
-`umami-gui` is a standalone, executable PyQtGraph script (no packaging, no
-build step — `chmod +x` + shebang) that talks to the same command socket and
-shared-memory histogram as `umami-ctl`, for interactive debugging: live
-histogram + projection plot, per-input state, mode switching, live
-param view/edit, raw-dump/save-histo controls, and a log of every command
-sent and reply received.
+`umami-gui` is a standalone, executable PyQtGraph script that talks to the
+same command socket and shared-memory histogram as `umami-ctl`, for
+interactive debugging: live histogram + projection plot, per-input state,
+mode switching, live param view/edit, raw-dump/save-histo controls, and a
+log of every command sent and reply received.
 
-- Lint: `ruff check umami-gui` (no other Python tooling/tests configured)
-- To exercise it live (e.g. after a change), start a real `umami` process
-  against one of the `test/*.conf` configs and drive the GUI under Xvfb:
-  `Xvfb :99 -screen 0 1280x900x24 &`, then
-  `DISPLAY=:99 python3 umami-gui <ipc_name>`. Screenshot with ImageMagick's
-  `import -window root out.png`; drive clicks with `xdotool mousemove --sync
-  X Y click 1`.
+Dependencies (`cffi`, `numpy`, `pyqtgraph`, `pyqt6`) are managed via
+`pyproject.toml` + `uv` (`[tool.uv] package = false`, since it's a script,
+not a package):
+```sh
+uv sync                             # create/update .venv with pinned deps
+uv run ./umami-gui [ipc_name]       # run it
+uv run ruff check umami-gui         # lint (dev dependency group)
+```
+Prefer `uv run ruff` over an ambient system `ruff` — versions/default rule
+sets can differ and surface different findings.
+
 - `umami_det.py` is a second, Tango/Entangle-based client against the same
   wire protocol — useful as a reference for command usage patterns.
+- To exercise the GUI live (e.g. after a change), start a real `umami`
+  process against one of the `test/*.conf` configs and drive it under Xvfb:
+  `Xvfb :99 -screen 0 1280x900x24 &`, then
+  `DISPLAY=:99 uv run ./umami-gui <ipc_name>`. Screenshot with ImageMagick's
+  `import -window root out.png`; drive clicks with `xdotool mousemove --sync
+  X Y click 1`.
