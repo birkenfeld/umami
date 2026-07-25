@@ -300,7 +300,7 @@ impl Source for std::net::TcpStream {
         let stream = std::net::TcpStream::connect(addr)
             .with_context(|| format!("Connecting to {addr}"))?;
         stream.set_read_timeout(Some(Duration::from_millis(300)))
-            .context("Setting socket timeout")?; // TODO configurable?
+            .context("Setting socket timeout")?;
         Ok(stream)
     }
 
@@ -318,7 +318,7 @@ impl Source for std::net::TcpStream {
         *self = std::net::TcpStream::connect(addr)
             .with_context(|| format!("Connecting to {addr}"))?;
         self.set_read_timeout(Some(Duration::from_millis(300)))
-            .context("Setting socket timeout")?; // TODO configurable?
+            .context("Setting socket timeout")?;
         Ok(())
     }
 }
@@ -339,7 +339,7 @@ impl Source for UdpReader {
         let sock = std::net::UdpSocket::bind(addr)
             .context(format!("Binding to source socket {addr}"))?;
         sock.set_read_timeout(Some(Duration::from_millis(300)))
-            .context("Setting socket timeout")?; // TODO configurable?
+            .context("Setting socket timeout")?;
         Ok(UdpReader(sock, addr))
     }
 
@@ -357,7 +357,7 @@ impl Source for UdpReader {
         let new_sock = std::net::UdpSocket::bind(self.1)
             .context(format!("Rebinding to source socket {}", self.1))?;
         new_sock.set_read_timeout(Some(Duration::from_millis(300)))
-            .context("Setting socket timeout")?; // TODO configurable?
+            .context("Setting socket timeout")?;
         self.0 = new_sock;
         Ok(())
     }

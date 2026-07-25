@@ -36,8 +36,6 @@ impl Output for FileOutput {
         Ok(FileOutput { writer: None, filename: None, dir: PathBuf::from(dir) })
     }
 
-    // TODO: config api to set the filename
-
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
         let filename = self.filename.as_deref().unwrap_or(run);
         let path = self.dir.join(filename);

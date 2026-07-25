@@ -17,8 +17,6 @@ mod hdf5;
 #[cfg(test)]
 pub(crate) mod test;
 
-// TODO: file-based outputs: filename (needs to come from Command)?
-
 pub struct OutputCommon {
     name: ModuleId,
     input: Receiver<PipeItem>,

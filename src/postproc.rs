@@ -160,7 +160,6 @@ impl PostProcessor {
                     map.insert("inputs".into(), inputs.into());
                     map.insert("mode".into(), cur_recipe.as_str().into());
                     map.insert("name".into(), serde_json::json!(self.instance_name));
-                    // TODO mode parameters
                     let _ = send.send(CommandReply::Data { value: map.into() });
                     continue;
                 }
