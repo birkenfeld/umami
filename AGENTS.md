@@ -29,7 +29,9 @@ cargo build --features trace
 ## System Dependencies
 
 - **Linux required** (POSIX `shm_open`, abstract Unix sockets, nix crate)
-- **HDF5 library** must be installed (`hdf5-metno` crate links it)
+- **HDF5 library** must be installed (`hdf5-metno` crate links it); the
+  `hdf5` output is a default-on feature, disable with `--no-default-features`
+  if you don't need it and don't have the library
 - **jemalloc** linked at compile time (global allocator in `src/bin/umami.rs`)
 - Rust edition 2024, MSRV currently 1.88
 

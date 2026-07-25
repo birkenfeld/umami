@@ -13,6 +13,7 @@ use crate::pipeline::PipeItem;
 
 mod diag;
 mod file;
+#[cfg(feature = "hdf5")]
 mod hdf5;
 #[cfg(test)]
 pub(crate) mod test;
@@ -137,7 +138,11 @@ pub fn start(config: OutputConfig, common: OutputCommon) -> UResult<()> {
     match config.r#type.as_str() {
         "none" => Ok(NullOutput::from_config(&common, config.config)?.start(common)?),
         "diag" => Ok(diag::DiagOutput::from_config(&common, config.config)?.start(common)?),
+        #[cfg(feature = "hdf5")]
         "hdf5" => Ok(hdf5::HDF5EventsOutput::from_config(&common, config.config)?.start(common)?),
+        #[cfg(not(feature = "hdf5"))]
+        "hdf5" => Err(anyhow!(
+            "HDF5 output support was not compiled in (rebuild with --features hdf5)").into()),
         "file" => Ok(file::FileOutput::from_config(&common, config.config)?.start(common)?),
         #[cfg(test)]
         "test" => Ok(test::TestOutput::new().start(common)?),

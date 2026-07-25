@@ -9,9 +9,6 @@ use crate::error::UResult;
 use crate::params::HasParams;
 use super::{Output, OutputCommon};
 
-// TODO:
-// - behind feature?
-// - filename template
 /// Output for a HDF5-File containing events following the NXevent_data format.
 ///
 ///  Currently the following fields are not supported:
