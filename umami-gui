@@ -539,7 +539,7 @@ def main():
     last_t = None
 
     def update_buffer():
-        nonlocal last_t
+        nonlocal last_t, last_buf
         t = t_spin.value()
         if t != last_t:
             # switching slices jumps the total to an unrelated bin's count;
@@ -548,7 +548,20 @@ def main():
             last_t = t
         run_id = histo.read_run_id()
         buf = histo.read_plane(t)
-        img.setImage(np.log10(buf.astype(float) + 0.1))
+        # a copy, not the raw mmap view -- keeping a view alive across ticks
+        # would block the mmap from ever closing (e.g. on reconnect)
+        last_buf = buf.copy()
+        if log_scale_check.isChecked():
+            display = np.log10(buf.astype(float) + 0.1)
+        else:
+            display = buf.astype(float)
+        if auto_levels_check.isChecked():
+            img.setImage(display, autoLevels=True)
+        else:
+            lo, hi = level_min_spin.value(), level_max_spin.value()
+            if log_scale_check.isChecked():
+                lo, hi = np.log10(lo + 0.1), np.log10(hi + 0.1)
+            img.setImage(display, autoLevels=False, levels=(lo, hi))
         if proj_curve is not None and proj_window.isVisible():
             proj_curve.setData(proj_x_edges, buf.sum(axis=0), stepMode='center')
         if t_proj_curve is not None and t_proj_window.isVisible():
@@ -687,6 +700,81 @@ def main():
     btn.clicked.connect(app.quit)
     buttons.layout().addWidget(btn)
 
+    # ---- display controls: scale, colormap, levels, cursor readout ----
+    display_frame = QtWidgets.QFrame()
+    display_frame.setLayout(QtWidgets.QHBoxLayout())
+    display_frame.layout().setContentsMargins(8, 0, 8, 5)
+    display_frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                                QtWidgets.QSizePolicy.Policy.Fixed)
+
+    display_frame.layout().addWidget(QtWidgets.QLabel('t:'))
+    t_spin = QtWidgets.QSpinBox()
+    t_spin.setRange(0, max(histo.nt - 1, 0))
+    t_spin.valueChanged.connect(lambda _: update_buffer())
+    display_frame.layout().addWidget(t_spin)
+
+    display_frame.layout().addSpacing(20)
+
+    log_scale_check = QtWidgets.QCheckBox('Log scale')
+    log_scale_check.setChecked(True)
+    log_scale_check.toggled.connect(lambda _: update_buffer())
+    display_frame.layout().addWidget(log_scale_check)
+
+    display_frame.layout().addSpacing(20)
+    display_frame.layout().addWidget(QtWidgets.QLabel('Colormap:'))
+    colormap_combo = QtWidgets.QComboBox()
+    colormap_combo.addItems(['viridis', 'inferno', 'plasma', 'magma', 'turbo', 'grey'])
+    colormap_combo.currentTextChanged.connect(lambda name: img.setColorMap(pg.colormap.get(name)))
+    display_frame.layout().addWidget(colormap_combo)
+
+    display_frame.layout().addSpacing(20)
+    auto_levels_check = QtWidgets.QCheckBox('Auto levels')
+    auto_levels_check.setChecked(True)
+    display_frame.layout().addWidget(auto_levels_check)
+
+    level_min_spin = QtWidgets.QDoubleSpinBox()
+    level_min_spin.setRange(0, 1e9)
+    level_min_spin.setDecimals(0)
+    level_min_spin.setEnabled(False)
+    display_frame.layout().addWidget(level_min_spin)
+
+    display_frame.layout().addWidget(QtWidgets.QLabel('-'))
+
+    level_max_spin = QtWidgets.QDoubleSpinBox()
+    level_max_spin.setRange(0, 1e9)
+    level_max_spin.setDecimals(0)
+    level_max_spin.setValue(100)
+    level_max_spin.setEnabled(False)
+    display_frame.layout().addWidget(level_max_spin)
+
+    def on_auto_levels_toggled(checked):
+        level_min_spin.setEnabled(not checked)
+        level_max_spin.setEnabled(not checked)
+        update_buffer()
+    auto_levels_check.toggled.connect(on_auto_levels_toggled)
+    level_min_spin.valueChanged.connect(lambda _: update_buffer())
+    level_max_spin.valueChanged.connect(lambda _: update_buffer())
+
+    display_frame.layout().addStretch()
+
+    cursor_label = QtWidgets.QLabel('')
+    cursor_label.setMinimumWidth(200)
+    display_frame.layout().addWidget(cursor_label)
+
+    last_buf = None
+
+    def on_mouse_moved(scene_pos):
+        if not plot.sceneBoundingRect().contains(scene_pos):
+            cursor_label.setText('')
+            return
+        view_pos = plot.vb.mapSceneToView(scene_pos)
+        x, y = int(np.floor(view_pos.x())), int(np.floor(view_pos.y()))
+        if last_buf is not None and 0 <= y < last_buf.shape[0] and 0 <= x < last_buf.shape[1]:
+            cursor_label.setText(f'x={x}  y={y}  counts={int(last_buf[y, x])}')
+        else:
+            cursor_label.setText('')
+    plot.scene().sigMouseMoved.connect(on_mouse_moved)
+
     # ---- raw dump / save histo controls ----
     dump_frame = QtWidgets.QFrame()
     dump_frame.setLayout(QtWidgets.QHBoxLayout())
@@ -702,13 +790,6 @@ def main():
     raw_dump_check.toggled.connect(
         lambda checked: client.set_raw_dump(checked, raw_dump_path.text()))
 
-    dump_frame.layout().addSpacing(20)
-
-    dump_frame.layout().addWidget(QtWidgets.QLabel('t:'))
-    t_spin = QtWidgets.QSpinBox()
-    t_spin.setRange(0, max(histo.nt - 1, 0))
-    t_spin.valueChanged.connect(lambda _: update_buffer())
-    dump_frame.layout().addWidget(t_spin)
     dump_frame.layout().addSpacing(20)
 
     btn = QtWidgets.QPushButton('Show Diffractogram')
@@ -784,6 +865,7 @@ def main():
                                 QtWidgets.QSizePolicy.Policy.Expanding)
 
     window.layout().addWidget(buttons)
+    window.layout().addWidget(display_frame)
     window.layout().addWidget(dump_frame)
     window.layout().addWidget(status_panel)
     window.layout().addWidget(main_splitter)
