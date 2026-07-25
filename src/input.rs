@@ -214,6 +214,9 @@ pub trait Input: Send {
                         if common.state == InputState::Running {
                             let ev = common.recipe.process(ev);
                             ltrace!([name] "Processed events: {:?}", ev);
+                            #[cfg(feature = "profile")]
+                            crate::pipeline::MAX_EVENTS_CHANNEL_LEN.fetch_max(
+                                common.events.len(), std::sync::atomic::Ordering::Relaxed);
                             common.events.send(PipeItem::Events(ev)).expect("event channel closed");
                         }
                         continue;

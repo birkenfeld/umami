@@ -15,8 +15,15 @@ use crate::input::{InputCommon, InputState};
 use crate::params::ParamMap;
 use crate::shm::{ShmInterface, MAX_INPUTS};
 
-pub(crate) const EV_CHANNEL_SIZE: usize = 128; // TODO tune more?
+// Determined using profile_event_channel_occupancy.
+pub(crate) const EV_CHANNEL_SIZE: usize = 2048;
 const OUT_CHANNEL_SIZE: usize = 16384; // give outputs some slack
+
+// Tracks the highest occupancy seen on any input->sorter/postprocessor
+// events channel; see profile_event_channel_occupancy below.
+#[cfg(feature = "profile")]
+pub(crate) static MAX_EVENTS_CHANNEL_LEN: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 pub struct PipelineHandle {
     ipc_name: String,
@@ -376,14 +383,29 @@ mod tests {
     }
 
     /// Uses the synthetic "test" input backend (one Neutron event per histogram
-    /// cell) to check the pipeline mechanics -- input recipe passthrough,
-    /// postprocessing recipe binning, and histogramming -- against an exactly
-    /// known expected result, without depending on golden data files.
+    /// cell) to check the pipeline mechanics.
     #[test]
     fn test_pipeline_synthetic_input() {
         let histo = run_pipeline_and_get_histo("test/synthetic.conf");
         assert_eq!(histo.len(), 8 * 16);
         assert!(histo.iter().all(|&count| count == 1),
                 "Expected exactly one count in every histogram cell, got {histo:?}");
+    }
+
+    /// Not a real test: replays each real dataset sequentially and reports the
+    /// highest events-channel occupancy seen against EV_CHANNEL_SIZE, to inform
+    /// whether that constant needs tuning. Run with:
+    /// `cargo test --release --features profile -- profile --ignored --nocapture`.
+    #[cfg(feature = "profile")]
+    #[test]
+    #[ignore]
+    fn profile_event_channel_occupancy() {
+        use std::sync::atomic::Ordering;
+        for conf in ["test/mesy.conf", "test/canon.conf", "test/ge.conf"] {
+            MAX_EVENTS_CHANNEL_LEN.store(0, Ordering::Relaxed);
+            run_pipeline_and_get_histo(conf);
+            let max = MAX_EVENTS_CHANNEL_LEN.load(Ordering::Relaxed);
+            eprintln!("{conf}: max channel occupancy {max}/{EV_CHANNEL_SIZE}");
+        }
     }
 }
