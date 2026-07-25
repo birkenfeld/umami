@@ -280,7 +280,7 @@ class StatusPanel(QtWidgets.QFrame):
     def __init__(self):
         super().__init__()
         self.setLayout(QtWidgets.QHBoxLayout())
-        self.layout().setContentsMargins(0, 2, 0, 2)
+        self.layout().setContentsMargins(8, 2, 8, 2)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
                             QtWidgets.QSizePolicy.Policy.Fixed)
 
@@ -640,7 +640,7 @@ def main():
     # ---- controls ----
     buttons = QtWidgets.QFrame()
     buttons.setLayout(QtWidgets.QHBoxLayout())
-    buttons.layout().setContentsMargins(0, 5, 0, 5)
+    buttons.layout().setContentsMargins(8, 5, 8, 5)
     buttons.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
                           QtWidgets.QSizePolicy.Policy.Fixed)
 
@@ -677,11 +677,11 @@ def main():
         client.set_mode(mode_combo.itemText(index))
     mode_combo.activated.connect(on_mode_selected)
 
+    buttons.layout().addStretch()
+
     log_toggle = QtWidgets.QPushButton('Show Log')
     log_toggle.setCheckable(True)
     buttons.layout().addWidget(log_toggle)
-
-    buttons.layout().addStretch()
 
     btn = QtWidgets.QPushButton('Quit')
     btn.clicked.connect(app.quit)
@@ -690,7 +690,7 @@ def main():
     # ---- raw dump / save histo controls ----
     dump_frame = QtWidgets.QFrame()
     dump_frame.setLayout(QtWidgets.QHBoxLayout())
-    dump_frame.layout().setContentsMargins(0, 0, 0, 5)
+    dump_frame.layout().setContentsMargins(8, 0, 8, 5)
     dump_frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
                              QtWidgets.QSizePolicy.Policy.Fixed)
 
@@ -759,7 +759,7 @@ def main():
     # ---- params panel ----
     params_panel = QtWidgets.QWidget()
     params_panel.setLayout(QtWidgets.QVBoxLayout())
-    params_panel.layout().setContentsMargins(5, 0, 0, 0)
+    params_panel.layout().setContentsMargins(5, 0, 8, 5)
     params_table = ParamsTable(client)
     refresh_btn = QtWidgets.QPushButton('Refresh Params')
     refresh_btn.clicked.connect(refresh_params)
