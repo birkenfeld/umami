@@ -790,6 +790,16 @@ def main():
     raw_dump_check.toggled.connect(
         lambda checked: client.set_raw_dump(checked, raw_dump_path.text()))
 
+    def browse_raw_dump_dir():
+        path = QtWidgets.QFileDialog.getExistingDirectory(
+            window, 'Raw Dump Directory', raw_dump_path.text())
+        if path:
+            raw_dump_path.setText(path)
+    browse_btn = QtWidgets.QPushButton('...')
+    browse_btn.setMaximumWidth(30)
+    browse_btn.clicked.connect(browse_raw_dump_dir)
+    dump_frame.layout().addWidget(browse_btn)
+
     dump_frame.layout().addSpacing(20)
 
     btn = QtWidgets.QPushButton('Show Diffractogram')
