@@ -536,9 +536,16 @@ def main():
         update_t_axis_labels()
 
     prev = {}
+    last_t = None
 
     def update_buffer():
+        nonlocal last_t
         t = t_spin.value()
+        if t != last_t:
+            # switching slices jumps the total to an unrelated bin's count;
+            # drop the old baseline so the rate isn't computed across that jump
+            prev.clear()
+            last_t = t
         run_id = histo.read_run_id()
         buf = histo.read_plane(t)
         img.setImage(np.log10(buf.astype(float) + 0.1))
