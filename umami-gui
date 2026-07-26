@@ -28,6 +28,12 @@ command sent and reply received -- replacing the previous transient error
 popups -- is available via the "Show Log" toggle (hidden by default) to
 make this useful for debugging a running pipeline, not just watching it.
 
+A separate "Aux Histograms" window discovers and displays any configured
+`aux_histo` output(s): each is a user-defined 1-D or 2-D diagnostic
+histogram (e.g. an amplitude spectrum) evaluated by a small expression
+language, each backed by its own shared-memory segment named
+"<ipc_name>_<output_name>_<histo_name>".
+
 Usage: ./umami-gui [ipc_name]  (defaults to "umami"; this name is used for
 both the shared-memory segment and the command socket.)
 """
@@ -424,6 +430,372 @@ class ParamsTable(QtWidgets.QTableWidget):
         self.client.set_params({key: value})
 
 
+# Kept in sync by hand with the grammar/field table documented in
+# src/expr.rs -- there is no machine-readable source for this on the wire.
+EXPR_SYNTAX_HELP = """\
+Fields: time, rel_time, raw_0, raw_1, channel, ampl, x, y, t, i, \
+flags, evtype, auxnum, gateup
+
+Named constants (for evtype comparisons): neutron, monitor, edge, gate, \
+tzero, auxsignal, heartbeat, void
+
+Operators (usual precedence): + - * / & << >> == != < <= > >= && || !
+
+Numbers: decimal (100), hex (0xFF), binary (0b1010)
+
+Bit-slice: expr[offset..end] (unsigned) or expr[offset..end:signed] \
+(sign-extended), e.g. raw_0[0..12:signed]
+
+A filter's result is treated as a boolean (0 = drop, nonzero = keep); \
+an axis expression's result is binned into [min, max) -- values outside \
+that range are silently dropped, not clamped."""
+
+
+class HistoDefDialog(QtWidgets.QDialog):
+    """Add/edit one auxiliary histogram definition (name/filter/x/y-axis)
+    through a form, with an inline expression-syntax reference, instead of
+    hand-writing the equivalent JSON."""
+
+    def __init__(self, parent=None, spec=None):
+        super().__init__(parent)
+        self.setWindowTitle('Histogram Definition')
+        spec = spec or {}
+        x = spec.get('x') or {}
+        y = spec.get('y')
+
+        form = QtWidgets.QFormLayout()
+        self.name_edit = QtWidgets.QLineEdit(spec.get('name', ''))
+        form.addRow('Name:', self.name_edit)
+        self.filter_edit = QtWidgets.QLineEdit(spec.get('filter') or '')
+        self.filter_edit.setPlaceholderText('e.g. evtype == neutron  (empty = always true)')
+        form.addRow('Filter:', self.filter_edit)
+
+        form.addRow(QtWidgets.QLabel('<b>X axis</b>'))
+        self.x_expr = QtWidgets.QLineEdit(x.get('expr', ''))
+        form.addRow('  Expr:', self.x_expr)
+        self.x_bins = QtWidgets.QSpinBox()
+        self.x_bins.setRange(1, 65535)
+        self.x_bins.setValue(x.get('bins', 256))
+        form.addRow('  Bins:', self.x_bins)
+        self.x_min = QtWidgets.QLineEdit(str(x.get('min', 0)))
+        form.addRow('  Min:', self.x_min)
+        self.x_max = QtWidgets.QLineEdit(str(x.get('max', 256)))
+        form.addRow('  Max:', self.x_max)
+
+        self.y_check = QtWidgets.QCheckBox('2-D (add Y axis)')
+        self.y_check.setChecked(y is not None)
+        form.addRow(self.y_check)
+        form.addRow(QtWidgets.QLabel('<b>Y axis</b>'))
+        self.y_expr = QtWidgets.QLineEdit((y or {}).get('expr', ''))
+        form.addRow('  Expr:', self.y_expr)
+        self.y_bins = QtWidgets.QSpinBox()
+        self.y_bins.setRange(1, 65535)
+        self.y_bins.setValue((y or {}).get('bins', 256))
+        form.addRow('  Bins:', self.y_bins)
+        self.y_min = QtWidgets.QLineEdit(str((y or {}).get('min', 0)))
+        form.addRow('  Min:', self.y_min)
+        self.y_max = QtWidgets.QLineEdit(str((y or {}).get('max', 256)))
+        form.addRow('  Max:', self.y_max)
+
+        def sync_y_enabled(checked):
+            for w in (self.y_expr, self.y_bins, self.y_min, self.y_max):
+                w.setEnabled(checked)
+        self.y_check.toggled.connect(sync_y_enabled)
+        sync_y_enabled(self.y_check.isChecked())
+
+        help_label = QtWidgets.QLabel(EXPR_SYNTAX_HELP)
+        help_label.setWordWrap(True)
+        help_label.setStyleSheet('color: #555; font-size: 9pt;')
+        help_box = QtWidgets.QGroupBox('Expression syntax')
+        help_box.setLayout(QtWidgets.QVBoxLayout())
+        help_box.layout().addWidget(help_label)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok |
+            QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._validate_and_accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(help_box)
+        layout.addWidget(buttons)
+
+    def _int(self, field, label):
+        try:
+            return int(field.text().strip())
+        except ValueError:
+            QtWidgets.QMessageBox.warning(self, 'Invalid', f'{label} must be an integer.')
+            return None
+
+    def _validate_and_accept(self):
+        if not self.name_edit.text().strip():
+            QtWidgets.QMessageBox.warning(self, 'Invalid', 'Name is required.')
+            return
+        if not self.x_expr.text().strip():
+            QtWidgets.QMessageBox.warning(self, 'Invalid', 'X expression is required.')
+            return
+        x_min, x_max = self._int(self.x_min, 'X min'), self._int(self.x_max, 'X max')
+        if x_min is None or x_max is None:
+            return
+        if x_max <= x_min:
+            QtWidgets.QMessageBox.warning(self, 'Invalid', 'X max must be greater than X min.')
+            return
+        if self.y_check.isChecked():
+            if not self.y_expr.text().strip():
+                QtWidgets.QMessageBox.warning(self, 'Invalid', 'Y expression is required.')
+                return
+            y_min, y_max = self._int(self.y_min, 'Y min'), self._int(self.y_max, 'Y max')
+            if y_min is None or y_max is None:
+                return
+            if y_max <= y_min:
+                QtWidgets.QMessageBox.warning(self, 'Invalid', 'Y max must be greater than Y min.')
+                return
+        # Note: this is a client-side sanity check only -- the authoritative
+        # validation (expression syntax, etc.) happens server-side and any
+        # rejection there still surfaces as a logged error via set_params.
+        self.accept()
+
+    def spec(self):
+        result = {
+            'name': self.name_edit.text().strip(),
+            'x': {'expr': self.x_expr.text().strip(),
+                  'bins': self.x_bins.value(),
+                  'min': int(self.x_min.text().strip()),
+                  'max': int(self.x_max.text().strip())},
+        }
+        filt = self.filter_edit.text().strip()
+        if filt:
+            result['filter'] = filt
+        if self.y_check.isChecked():
+            result['y'] = {'expr': self.y_expr.text().strip(),
+                           'bins': self.y_bins.value(),
+                           'min': int(self.y_min.text().strip()),
+                           'max': int(self.y_max.text().strip())}
+        return result
+
+
+class AuxHistoWindow(QtWidgets.QWidget):
+    """Separate window for user-defined auxiliary/diagnostic histograms
+    (the `aux_histo` output type): discovers active ones via get_params
+    (any "<module>.histos" key), lets the user add/edit/delete definitions
+    through a form instead of hand-written JSON, and live-plots each one
+    (1-D as a step curve, 2-D as a log-scale image) from its own shm
+    segment. Follows the same "closing just hides, state is kept" pattern
+    as the diffractogram/TOF-spectrum windows -- reopening is instant.
+    """
+
+    REFRESH_MS = 500
+
+    def __init__(self, client, ipc_name, log):
+        super().__init__()
+        self.client = client
+        self.ipc_name = ipc_name
+        self.log = log
+        self.setWindowTitle('UMAMI auxiliary histograms')
+        self.resize(1000, 700)
+
+        self._shms = {}   # (module, histo_name) -> ShmHistogram
+        self._plots = {}  # (module, histo_name) -> (PlotItem, ImageItem|PlotDataItem, is_2d)
+        self._defs = {}   # module -> list of specs, as last seen from get_params
+
+        top = QtWidgets.QHBoxLayout()
+        add_btn = QtWidgets.QPushButton('Add Histogram...')
+        add_btn.clicked.connect(self._add_histogram)
+        top.addWidget(add_btn)
+        refresh_btn = QtWidgets.QPushButton('Refresh')
+        refresh_btn.clicked.connect(self.refresh)
+        top.addWidget(refresh_btn)
+        top.addStretch()
+        help_btn = QtWidgets.QPushButton('Expression syntax...')
+        help_btn.clicked.connect(self._show_syntax_help)
+        top.addWidget(help_btn)
+
+        self.table = QtWidgets.QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(['Module', 'Name', 'Filter', 'X', 'Y', ''])
+        self.table.horizontalHeader().setSectionResizeMode(
+            2, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+
+        self.plot_area = pg.GraphicsLayoutWidget()
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidget(self.plot_area)
+        scroll.setWidgetResizable(True)
+
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        splitter.addWidget(self.table)
+        splitter.addWidget(scroll)
+        splitter.setSizes([200, 500])
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(top)
+        layout.addWidget(splitter)
+
+        # Only ticks while the window is actually visible (see showEvent /
+        # hideEvent) -- no point polling params or shm segments for a window
+        # the user has never opened.
+        self._timer = QtCore.QTimer(self)
+        self._timer.timeout.connect(self._update_plots)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh()
+        self._timer.start(self.REFRESH_MS)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._timer.stop()
+
+    def _show_syntax_help(self):
+        QtWidgets.QMessageBox.information(self, 'Expression syntax', EXPR_SYNTAX_HELP)
+
+    def refresh(self):
+        """Re-pull histogram definitions from get_params and rebuild the
+        table/plot grid to match (adding new ones, dropping removed ones).
+        Safe to call often -- e.g. piggybacked on the main window's own
+        params refresh -- since it no-ops on a failed/empty get_params."""
+        params = self.client.get_params()
+        if params is None:
+            return
+        modules = {}
+        for key, info in params.items():
+            if key.endswith('.histos') and isinstance(info.get('value'), list):
+                modules[key[:-len('.histos')]] = info['value']
+        self._defs = modules
+        self._rebuild()
+
+    def _forget(self, key):
+        self._shms.pop(key).close()
+        plot_item, _, _ = self._plots.pop(key)
+        self.plot_area.removeItem(plot_item)
+
+    def _invalidate_module(self, module):
+        """Every histogram belonging to `module` gets a fresh shm segment
+        (new shape, possibly) whenever its `histos` list is set, even for
+        entries whose name/definition didn't change -- so all of that
+        module's cached segments must be dropped, not just the edited one.
+        """
+        for key in [k for k in self._shms if k[0] == module]:
+            self._forget(key)
+
+    def invalidate_all(self):
+        """Force every cached shm segment to be reopened on the next
+        refresh. Call this whenever the umami process itself may have
+        restarted (same-named segments recreated from scratch) -- e.g. from
+        the main window's own reconnect handling -- since name-based
+        diffing in _rebuild() has no way to notice that on its own."""
+        for key in list(self._shms):
+            self._forget(key)
+
+    def _rebuild(self):
+        current_keys = {(m, h['name']) for m, hs in self._defs.items() for h in hs}
+        for key in [k for k in self._shms if k not in current_keys]:
+            self._forget(key)
+
+        rows = [(m, h) for m, hs in sorted(self._defs.items()) for h in hs]
+        self.table.setRowCount(len(rows))
+        for row, (module, spec) in enumerate(rows):
+            self.table.setItem(row, 0, QtWidgets.QTableWidgetItem(module))
+            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(spec['name']))
+            self.table.setItem(row, 2, QtWidgets.QTableWidgetItem(spec.get('filter') or ''))
+            self.table.setItem(row, 3, QtWidgets.QTableWidgetItem(spec['x']['expr']))
+            self.table.setItem(row, 4,
+                QtWidgets.QTableWidgetItem(spec['y']['expr'] if spec.get('y') else ''))
+            btn_widget = QtWidgets.QWidget()
+            btn_layout = QtWidgets.QHBoxLayout(btn_widget)
+            btn_layout.setContentsMargins(0, 0, 0, 0)
+            edit_btn = QtWidgets.QPushButton('Edit')
+            edit_btn.clicked.connect(lambda _, m=module, s=spec: self._edit_histogram(m, s))
+            del_btn = QtWidgets.QPushButton('Delete')
+            del_btn.clicked.connect(lambda _, m=module, n=spec['name']: self._delete_histogram(m, n))
+            btn_layout.addWidget(edit_btn)
+            btn_layout.addWidget(del_btn)
+            self.table.setCellWidget(row, 5, btn_widget)
+
+        col_count = 3
+        for i, (module, spec) in enumerate(rows):
+            key = (module, spec['name'])
+            if key in self._plots:
+                continue
+            shm_name = f'{self.ipc_name}_{module}_{spec["name"]}'
+            try:
+                shm = ShmHistogram(shm_name)
+            except RuntimeError as e:
+                self.log.warning(f'Could not open {shm_name!r}: {e}')
+                continue
+            self._shms[key] = shm
+            is_2d = shm.ny > 1
+            plot_item = self.plot_area.addPlot(row=i // col_count, col=i % col_count,
+                                               title=f'{module}.{spec["name"]}')
+            if is_2d:
+                img = pg.ImageItem(border='w', axisOrder='row-major')
+                plot_item.addItem(img)
+                img.setColorMap(pg.colormap.get('viridis'))
+                self._plots[key] = (plot_item, img, True)
+            else:
+                curve = plot_item.plot(stepMode='center', fillLevel=0, brush=(0, 0, 255, 80))
+                self._plots[key] = (plot_item, curve, False)
+
+    def _update_plots(self):
+        for key, shm in list(self._shms.items()):
+            if key not in self._plots:
+                continue
+            _, item, is_2d = self._plots[key]
+            try:
+                if is_2d:
+                    buf = shm.read_plane(0)
+                    item.setImage(np.log10(buf.astype(float) + 0.1), autoLevels=True)
+                else:
+                    # pyqtgraph keeps this array reference alive indefinitely
+                    # (until the next setData) -- must be a copy, not a raw
+                    # view into the mmap, or closing this shm later fails
+                    # with "cannot close exported pointers exist"
+                    buf = shm.read_plane(0)[0].copy()
+                    edges = np.arange(shm.nx + 1) - 0.5
+                    item.setData(edges, buf, stepMode='center')
+            except OSError as e:
+                self.log.warning(f'Error reading aux histogram {key}: {e}')
+
+    def _add_histogram(self):
+        if not self._defs:
+            QtWidgets.QMessageBox.warning(
+                self, 'No output', 'No active aux_histo output found -- configure one first.')
+            return
+        module, ok = QtWidgets.QInputDialog.getItem(
+            self, 'Select output', 'Add to which output module?', list(self._defs), 0, False)
+        if not ok:
+            return
+        dialog = HistoDefDialog(self)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        new_specs = self._defs[module] + [dialog.spec()]
+        self.client.set_params({f'{module}.histos': new_specs})
+        self._invalidate_module(module)
+        self.refresh()
+
+    def _edit_histogram(self, module, spec):
+        dialog = HistoDefDialog(self, spec)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        new_specs = [dialog.spec() if h['name'] == spec['name'] else h
+                     for h in self._defs[module]]
+        self.client.set_params({f'{module}.histos': new_specs})
+        self._invalidate_module(module)
+        self.refresh()
+
+    def _delete_histogram(self, module, name):
+        reply = QtWidgets.QMessageBox.question(
+            self, 'Delete', f'Delete histogram {name!r}?',
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No)
+        if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        new_specs = [h for h in self._defs[module] if h['name'] != name]
+        self.client.set_params({f'{module}.histos': new_specs})
+        self._invalidate_module(module)
+        self.refresh()
+
+
 def main():
     shm_name = sys.argv[1] if len(sys.argv) > 1 else 'umami'
 
@@ -449,6 +821,7 @@ def main():
 
     log_panel = LogPanel()
     client = UmamiClient(shm_name, log_panel)
+    aux_histo_window = AuxHistoWindow(client, shm_name, log_panel)
 
     # ---- main image plot ----
     graphics = pg.GraphicsLayoutWidget()
@@ -534,6 +907,8 @@ def main():
     def refresh_params():
         params_table.refresh()
         update_t_axis_labels()
+        if aux_histo_window.isVisible():
+            aux_histo_window.refresh()
 
     prev = {}
     last_t = None
@@ -619,6 +994,7 @@ def main():
         a disconnect -- re-pull everything instead of trusting stale state."""
         log_panel.info('Reconnected -- reinitializing (config may have changed)')
         reopen_histogram()
+        aux_histo_window.invalidate_all()
         status_panel.reset_inputs()
         modes = client.get_modes()
         if modes is not None:
@@ -691,6 +1067,10 @@ def main():
     mode_combo.activated.connect(on_mode_selected)
 
     buttons.layout().addStretch()
+
+    aux_histo_btn = QtWidgets.QPushButton('Aux Histograms')
+    aux_histo_btn.clicked.connect(lambda: (aux_histo_window.show(), aux_histo_window.raise_()))
+    buttons.layout().addWidget(aux_histo_btn)
 
     log_toggle = QtWidgets.QPushButton('Show Log')
     log_toggle.setCheckable(True)
