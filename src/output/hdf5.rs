@@ -119,7 +119,7 @@ mod tests {
 
     fn make_common() -> OutputCommon {
         let (_send, recv) = crate::channel::unbounded();
-        OutputCommon::new(ModuleId::new("hdf5".into()), recv, None)
+        OutputCommon::new(ModuleId::new("hdf5".into()), "umami".into(), recv, None)
     }
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {

@@ -20,6 +20,7 @@ pub(crate) mod test;
 
 pub struct OutputCommon {
     name: ModuleId,
+    ipc_name: String,
     input: Receiver<PipeItem>,
     output: Option<Sender<PipeItem>>,
 }
@@ -27,10 +28,11 @@ pub struct OutputCommon {
 impl OutputCommon {
     pub fn new(
         name: ModuleId,
+        ipc_name: String,
         input: Receiver<PipeItem>,
         output: Option<Sender<PipeItem>>,
     ) -> Self {
-        Self { name, input, output }
+        Self { name, ipc_name, input, output }
     }
 }
 
@@ -42,6 +44,12 @@ pub trait Output: Send + HasParams {
     fn handle_events(&mut self, events: &[Event]) -> UResult<()>;
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()>;
     fn handle_end_of_run(&mut self) -> UResult<()>;
+
+    /// Called on `Command::Clear`. Default no-op; most outputs don't hold
+    /// clearable state, but e.g. `aux_histo` zeroes its histograms.
+    fn handle_clear(&mut self) -> UResult<()> {
+        Ok(())
+    }
 
     fn main_loop(mut self, common: OutputCommon)
     where Self: Sized
@@ -66,6 +74,11 @@ pub trait Output: Send + HasParams {
                         lprintln!(ERROR, [name] "Error handling end of run: {e:#}");
                     }
                     lprintln!(INFO, [name] "Finished with run {:?}", current_run);
+                }
+                PipeItem::Clear => {
+                    if let Err(e) = self.handle_clear() {
+                        lprintln!(ERROR, [name] "Error handling clear: {e:#}");
+                    }
                 }
                 PipeItem::GetParams(send) => {
                     match self.get_params() {

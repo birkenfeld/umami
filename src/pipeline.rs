@@ -127,6 +127,7 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
         let out_name = ModuleId::new(out_name);
         ldebug!("Initializing output {out_name}: {:?}", out_config);
         let common = OutputCommon::new(out_name,
+                                       config.ipc_name.clone(),
                                        output_recvs.pop().expect("one per output"),
                                        output_sends.pop());
         if let Err(e) = output::start(out_config, common) {
