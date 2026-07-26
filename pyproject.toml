@@ -14,15 +14,16 @@ dependencies = [
     "pyqt6>=6.6",
 ]
 
+[project.scripts]
+umami-gui = "umami_gui.app:main"
+
 [dependency-groups]
 dev = [
     "ruff>=0.6",
 ]
 
 [tool.setuptools]
-script-files = ["umami-gui"]
-# there's no importable Python code here, just the script above -- without
-# this, setuptools' auto-discovery gets confused by the Rust crate's own
-# src/ directory at the repo root and mistakes it for a Python src-layout
-packages = []
-py-modules = []
+# explicit, not auto-discovered -- the Rust crate's own src/ directory at
+# the repo root would otherwise confuse setuptools' auto-discovery into
+# mistaking it for a second (invalid) Python src-layout
+packages = ["umami_gui"]
