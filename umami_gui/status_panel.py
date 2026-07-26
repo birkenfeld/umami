@@ -4,6 +4,10 @@ from typing import ClassVar
 
 from pyqtgraph.Qt import QtCore, QtWidgets
 
+from .icons import load_icon
+
+CONN_ICON_SIZE = QtCore.QSize(16, 16)
+
 
 class StatusPanel(QtWidgets.QFrame):
     """Connection indicator, current mode, and per-input state at a glance."""
@@ -20,6 +24,8 @@ class StatusPanel(QtWidgets.QFrame):
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
                             QtWidgets.QSizePolicy.Policy.Fixed)
 
+        self.conn_icon = QtWidgets.QLabel()
+        self.layout().addWidget(self.conn_icon)
         self.conn_label = QtWidgets.QLabel()
         self.layout().addWidget(self.conn_label)
         self.layout().addSpacing(20)
@@ -50,12 +56,14 @@ class StatusPanel(QtWidgets.QFrame):
         self.set_connected(False)
 
     def set_connected(self, connected):
+        icon = load_icon('connected' if connected else 'disconnected')
+        self.conn_icon.setPixmap(icon.pixmap(CONN_ICON_SIZE))
         if connected:
-            self.conn_label.setText('● connected')
+            self.conn_label.setText('connected')
             self.conn_label.setStyleSheet(f'color: {self.STATE_COLORS["running"]}; '
                                           'font-weight: bold;')
         else:
-            self.conn_label.setText('● disconnected')
+            self.conn_label.setText('disconnected')
             self.conn_label.setStyleSheet(f'color: {self.ERROR_COLOR}; font-weight: bold;')
 
     def reset_inputs(self):
