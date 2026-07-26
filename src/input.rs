@@ -4,7 +4,6 @@
 mod ge;
 mod canon;
 mod mesy;
-mod jumiom_decode;
 #[cfg(feature = "jumiom")]
 mod jumiom;
 #[cfg(test)]

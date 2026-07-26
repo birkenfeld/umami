@@ -69,10 +69,10 @@ pub enum SpecificInputConfig {
 
 /// Acquisition mode for the Jumiom PSD (selects both the hardware mode set
 /// up via `jumpsd_set_*_mode` and the raw word-stream decoding). `Tof2` is
-/// intentionally not supported (see `src/input/jumiom_decode.rs`).
+/// intentionally not supported (see `src/input/jumiom/decode.rs`).
+#[cfg(feature = "jumiom")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
-#[cfg_attr(not(any(test, feature = "jumiom")), allow(dead_code))]
 pub enum JumiomMode {
     Tof1,
     Raw,
@@ -85,10 +85,39 @@ pub struct JumiomConfig {
     /// Device number, i.e. `/dev/jumpsd_d<device>`.
     pub device: i32,
     pub mode: JumiomMode,
-    /// If true, keep Neutron events even when the hardware gate bit is unset
-    /// (matches the legacy `ignoregate` toggle).
+    /// Hardware calibration to push at acquisition start, matching what
+    /// `jumiom_dma_wrapper`'s startup sequence used to write from
+    /// `globalData.gp` when `loadCard` was set. If unset, umami leaves the
+    /// hardware's current settings untouched (like `loadCard = 0`).
     #[serde(default)]
-    pub use_gate: bool,
+    pub calibration: Option<JumiomCalibration>,
+}
+
+/// Hardware calibration values for the Jumiom PSD, pushed via the
+/// `jumpsd_write_*` API in `jumpsd_setup_callback`
+/// (see `src/input/jumiom.rs`). Grouped to match how they're set together in
+/// the field's `entangle` config (`jumiom_det.ImageChannel`).
+#[cfg(feature = "jumiom")]
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct JumiomCalibration {
+    /// Upper/lower/gate ADC thresholds (`jumpsd_write_threshold` levels 0..2).
+    pub thresholds: [i32; 3],
+    /// Gain potentiometer setting per ADC channel (`jumpsd_write_poti`).
+    pub poti: [i32; 4],
+    /// DAC offset per ADC channel, single-ended (`jumpsd_write_dac`).
+    pub dac1: [i32; 4],
+    /// DAC offset per ADC channel, differential (`jumpsd_write_dac2`).
+    pub dac2: [i32; 4],
+    /// Pileup rejection count.
+    pub pileup: i32,
+    /// Monitor timer reset delay [us] (`jumpsd_write_monitor_delay`).
+    /// Monitor recording is always enabled, regardless of this block.
+    #[serde(default)]
+    pub monitor_delay: i32,
+    /// Chopper timer reset delay [us] (`jumpsd_write_chopper_delay`).
+    /// Chopper recording is always enabled, regardless of this block.
+    #[serde(default)]
+    pub chopper_delay: i32,
 }
 
 /// Config for a synthetic input backend used only in pipeline tests: it

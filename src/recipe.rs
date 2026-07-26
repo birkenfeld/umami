@@ -5,6 +5,7 @@ mod kws;
 mod mesy;
 mod canon;
 mod histo;
+mod jumiom;
 
 use std::collections::BTreeMap;
 use anyhow::{anyhow, Context};
@@ -67,6 +68,7 @@ pub fn from_config(map: &BTreeMap<String, RecipeConfig>, name: &str)
         "mesy_mpsd" => mesy::Mpsd,
         "canon" => canon::Psd,
         "kws_gedet" => kws::KWSGERecipe,
+        "jumiom" => jumiom::Position,
     }
 }
 
@@ -134,6 +136,7 @@ mod tests {
             ("mesy_mdll", &[]),
             ("kws_gedet", &[]),
             ("canon", &[("reso", toml::Value::Integer(256))]),
+            ("jumiom", &[]),
         ];
         for (r#type, extra) in cases {
             let mut config = toml::Table::new();

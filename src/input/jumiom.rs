@@ -5,11 +5,14 @@
 //! `libjumpsd.so`. We reuse its `wrapped_jumpsd_dma()` ring-buffer DMA
 //! acquisition loop as-is and only provide the two callbacks it expects
 //! (`jumpsd_fillhisto`, `jumpsd_setup_callback`), decoding into [`Event`]s
-//! via [`JumiomDecoder`] instead of the legacy shared-memory histogram.
+//! via [`decode::JumiomDecoder`] instead of the legacy shared-memory
+//! histogram.
 //!
 //! `wrapped_jumpsd_dma`'s callbacks carry no device-id/context parameter, so
 //! only one Jumiom input can be active per umami process; this is enforced
 //! via the `SHARED` static (see [`JumiomInput::start`]).
+
+mod decode;
 
 use std::ffi::{c_char, c_int};
 use std::path::Path;
@@ -20,12 +23,11 @@ use std::time::Duration;
 use anyhow::{anyhow, Context};
 use crate::channel::{Receiver, RecvTimeoutError};
 use crate::command::{Command, CommandReply, ModuleId};
-use crate::config::{JumiomConfig, JumiomMode};
+use crate::config::{JumiomCalibration, JumiomConfig, JumiomMode};
 use crate::error::{UError, UResult};
 use crate::event::Event;
 use crate::lprintln;
-use super::jumiom_decode::JumiomDecoder;
-use super::{DumpHandler, Input, InputCommon};
+use crate::input::{DumpHandler, Input, InputCommon};
 
 unsafe extern "C" {
     fn wrapped_jumpsd_dma(dev: c_int) -> c_int;
@@ -33,6 +35,15 @@ unsafe extern "C" {
     fn jumpsd_set_tof1_mode(fd: c_int, adcs: c_int) -> c_int;
     fn jumpsd_set_raw_mode(fd: c_int, adcs: c_int) -> c_int;
     fn jumpsd_set_ramp_mode(fd: c_int) -> c_int;
+    fn jumpsd_write_threshold(fd: c_int, level: c_int, data: c_int) -> c_int;
+    fn jumpsd_write_poti(fd: c_int, channel: c_int, data: c_int) -> c_int;
+    fn jumpsd_write_dac(fd: c_int, level: c_int, data: c_int) -> c_int;
+    fn jumpsd_write_dac2(fd: c_int, level: c_int, data: c_int) -> c_int;
+    fn jumpsd_write_pileup(fd: c_int, data: c_int) -> c_int;
+    fn jumpsd_set_monitor(fd: c_int, set: c_int) -> c_int;
+    fn jumpsd_set_chopper(fd: c_int, set: c_int) -> c_int;
+    fn jumpsd_write_monitor_delay(fd: c_int, data: c_int) -> c_int;
+    fn jumpsd_write_chopper_delay(fd: c_int, data: c_int) -> c_int;
 }
 
 /// DMA break/stop bit, see `DriverJumiom/inc/jumpsd_var.h`.
@@ -40,7 +51,8 @@ const DMA_BREAK: c_int = 0x04;
 
 struct Shared {
     mode: JumiomMode,
-    decoder: JumiomDecoder,
+    calibration: Option<JumiomCalibration>,
+    decoder: decode::JumiomDecoder,
     dump: DumpHandler,
     sender: crate::channel::Sender<Vec<Event>>,
 }
@@ -54,13 +66,36 @@ static FD: AtomicI32 = AtomicI32::new(-1);
 #[unsafe(no_mangle)]
 extern "C" fn jumpsd_setup_callback(fd: c_int) {
     FD.store(fd, Ordering::SeqCst);
-    let Some(mode) = SHARED.lock().unwrap().as_ref().map(|s| s.mode) else { return };
+    let Some((mode, calibration)) = SHARED.lock().unwrap()
+        .as_ref().map(|s| (s.mode, s.calibration)) else { return };
     unsafe {
         match mode {
             JumiomMode::Tof1 => { jumpsd_set_tof1_mode(fd, 0xF); }
             JumiomMode::Raw => { jumpsd_set_raw_mode(fd, 0xF); }
             JumiomMode::Ramp => { jumpsd_set_ramp_mode(fd); }
         }
+        if let Some(cal) = calibration {
+            for (level, &data) in cal.thresholds.iter().enumerate() {
+                jumpsd_write_threshold(fd, level as c_int, data);
+            }
+            for (channel, &data) in cal.poti.iter().enumerate() {
+                jumpsd_write_poti(fd, channel as c_int, data);
+            }
+            for (level, &data) in cal.dac1.iter().enumerate() {
+                jumpsd_write_dac(fd, level as c_int, data);
+            }
+            for (level, &data) in cal.dac2.iter().enumerate() {
+                jumpsd_write_dac2(fd, level as c_int, data);
+            }
+            jumpsd_write_pileup(fd, cal.pileup);
+        }
+        let (monitor_delay, chopper_delay) = calibration
+            .map(|cal| (cal.monitor_delay, cal.chopper_delay))
+            .unwrap_or((0, 0));
+        jumpsd_set_monitor(fd, 1);
+        jumpsd_write_monitor_delay(fd, monitor_delay);
+        jumpsd_set_chopper(fd, 1);
+        jumpsd_write_chopper_delay(fd, chopper_delay);
     }
 }
 
@@ -89,7 +124,6 @@ pub struct JumiomInput {
     name: ModuleId,
     device: i32,
     mode: JumiomMode,
-    use_gate: bool,
     receiver: Receiver<Vec<Event>>,
     thread: Option<JoinHandle<()>>,
 }
@@ -105,7 +139,8 @@ impl JumiomInput {
             }
             *guard = Some(Shared {
                 mode: config.mode,
-                decoder: JumiomDecoder::new(config.mode, config.use_gate),
+                calibration: config.calibration,
+                decoder: decode::JumiomDecoder::new(config.mode),
                 dump: DumpHandler::default(),
                 sender,
             });
@@ -114,7 +149,6 @@ impl JumiomInput {
             name: common.name,
             device: config.device,
             mode: config.mode,
-            use_gate: config.use_gate,
             receiver,
             thread: None,
         };
@@ -141,7 +175,7 @@ impl Input for JumiomInput {
         {
             let mut guard = SHARED.lock().unwrap();
             let shared = guard.as_mut().expect("Jumiom shared state installed at construction");
-            shared.decoder = JumiomDecoder::new(self.mode, self.use_gate);
+            shared.decoder = decode::JumiomDecoder::new(self.mode);
             shared.dump.start(self.name, &run_id)?;
         }
         let device = self.device;
