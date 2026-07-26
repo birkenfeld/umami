@@ -318,8 +318,12 @@ class AuxHistoWindow(QtWidgets.QWidget):
             if is_2d:
                 img = pg.ImageItem(border='w', axisOrder='row-major')
                 # shift by half a pixel so integer axis ticks land on pixel
-                # centers (pixel i spans [i-0.5, i+0.5]) instead of edges
-                img.setRect(QtCore.QRectF(-0.5, -0.5, shm.nx, shm.ny))
+                # centers (pixel i spans [i-0.5, i+0.5]) instead of edges --
+                # a plain translation via setPos(), not setRect(), since
+                # setRect() derives its scale from the image's current
+                # dimensions and computes the wrong scale before any image
+                # has been assigned yet
+                img.setPos(-0.5, -0.5)
                 plot_item.addItem(img)
                 img.setColorMap(pg.colormap.get('viridis'))
                 self._plots[name] = (plot_item, img, True)

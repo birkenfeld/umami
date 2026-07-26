@@ -95,8 +95,11 @@ class MainWindow(QtWidgets.QWidget):
         self.plot.setTitle('starting...')
         self.img = pg.ImageItem(border='w', axisOrder='row-major')
         # shift by half a pixel so integer axis ticks land on pixel centers
-        # (pixel i spans [i-0.5, i+0.5]) instead of edges
-        self.img.setRect(QtCore.QRectF(-0.5, -0.5, self.histo.nx, self.histo.ny))
+        # (pixel i spans [i-0.5, i+0.5]) instead of edges -- a plain
+        # translation via setPos(), not setRect(), since setRect() derives
+        # its scale from the image's current dimensions and computes the
+        # wrong scale before any image has been assigned yet
+        self.img.setPos(-0.5, -0.5)
         self.plot.addItem(self.img)
         self.img.setColorMap(pg.colormap.get('viridis'))
         self.plot.enableAutoRange('xy', True)
