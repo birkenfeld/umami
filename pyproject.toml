@@ -26,4 +26,9 @@ dev = [
 # explicit, not auto-discovered -- the Rust crate's own src/ directory at
 # the repo root would otherwise confuse setuptools' auto-discovery into
 # mistaking it for a second (invalid) Python src-layout
-packages = ["umami_gui"]
+packages = ["umami_gui", "umami_gui.icons"]
+
+[tool.setuptools.package-data]
+# bundled SVG icons -- not .py files, so setuptools won't include them
+# in the wheel unless listed explicitly here
+umami_gui = ["icons/*.svg"]

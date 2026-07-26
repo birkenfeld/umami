@@ -11,6 +11,7 @@ from pyqtgraph.Qt import QtCore, QtWidgets
 from .aux_histo import AuxHistoWindow
 from .axis_items import RotatedAxisItem
 from .client import UmamiClient
+from .icons import icon_button
 from .log_panel import LogPanel
 from .params_table import ParamsTable
 from .shm import ShmHistogram
@@ -297,7 +298,7 @@ class MainWindow(QtWidgets.QWidget):
         frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
                             QtWidgets.QSizePolicy.Policy.Fixed)
 
-        btn = QtWidgets.QPushButton('Reset')
+        btn = icon_button('reset', 'Reset')
         btn.clicked.connect(lambda: self.client.reset())
         frame.layout().addWidget(btn)
 
@@ -308,15 +309,18 @@ class MainWindow(QtWidgets.QWidget):
         self.run_id_field.setMaximumWidth(160)
         frame.layout().addWidget(self.run_id_field)
 
-        btn = QtWidgets.QPushButton('Clear')
+        btn = icon_button('clear', 'Clear')
+        btn.setStyleSheet('background-color: rgb(190, 190, 190); color: black;')
         btn.clicked.connect(lambda: self.client.clear())
         frame.layout().addWidget(btn)
 
-        btn = QtWidgets.QPushButton('Start')
+        btn = icon_button('start', 'Start')
+        btn.setStyleSheet('background-color: rgb(140, 205, 140); color: black;')
         btn.clicked.connect(self.on_start_clicked)
         frame.layout().addWidget(btn)
 
-        btn = QtWidgets.QPushButton('Stop')
+        btn = icon_button('stop', 'Stop')
+        btn.setStyleSheet('background-color: rgb(255, 150, 150); color: black;')
         btn.clicked.connect(lambda: self.client.stop())
         frame.layout().addWidget(btn)
 
@@ -330,11 +334,11 @@ class MainWindow(QtWidgets.QWidget):
 
         frame.layout().addStretch()
 
-        self.log_toggle = QtWidgets.QPushButton('Show Log')
+        self.log_toggle = icon_button('show_log', 'Show Log')
         self.log_toggle.setCheckable(True)
         frame.layout().addWidget(self.log_toggle)
 
-        btn = QtWidgets.QPushButton('Quit')
+        btn = icon_button('quit', 'Quit')
         btn.clicked.connect(QtWidgets.QApplication.instance().quit)
         frame.layout().addWidget(btn)
 
@@ -460,11 +464,11 @@ class MainWindow(QtWidgets.QWidget):
 
         frame.layout().addSpacing(20)
 
-        btn = QtWidgets.QPushButton('Save Histogram...')
+        btn = icon_button('save', 'Save Histogram...')
         btn.clicked.connect(self.save_histo_dialog)
         frame.layout().addWidget(btn)
 
-        btn = QtWidgets.QPushButton('Save Plot PNG...')
+        btn = icon_button('save', 'Save Plot PNG...')
         btn.clicked.connect(self.save_plot_image_dialog)
         frame.layout().addWidget(btn)
 
@@ -512,7 +516,7 @@ class MainWindow(QtWidgets.QWidget):
         panel.setLayout(QtWidgets.QVBoxLayout())
         panel.layout().setContentsMargins(5, 0, 8, 5)
         self.params_table = ParamsTable(self.client)
-        refresh_btn = QtWidgets.QPushButton('Refresh Params')
+        refresh_btn = icon_button('refresh', 'Refresh Params')
         refresh_btn.clicked.connect(self.refresh_params)
         panel.layout().addWidget(refresh_btn)
         panel.layout().addWidget(self.params_table)

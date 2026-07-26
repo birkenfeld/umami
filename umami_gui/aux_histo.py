@@ -6,6 +6,7 @@ import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets
 
+from .icons import icon_button
 from .shm import ShmHistogram
 
 # Kept in sync by hand with the grammar/field table documented in
@@ -200,10 +201,10 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self.table.cellDoubleClicked.connect(self._on_row_double_clicked)
 
         btn_col = QtWidgets.QVBoxLayout()
-        add_btn = QtWidgets.QPushButton('Add')
+        add_btn = icon_button('add', 'Add')
         add_btn.clicked.connect(self._add_histogram)
         btn_col.addWidget(add_btn)
-        refresh_btn = QtWidgets.QPushButton('Refresh')
+        refresh_btn = icon_button('refresh', 'Refresh')
         refresh_btn.clicked.connect(self.refresh)
         btn_col.addWidget(refresh_btn)
         btn_col.addStretch()
@@ -292,14 +293,20 @@ class AuxHistoWindow(QtWidgets.QWidget):
             self.table.setItem(row, 3, QtWidgets.QTableWidgetItem(spec.get('filter') or ''))
             btn_widget = QtWidgets.QWidget()
             btn_layout = QtWidgets.QHBoxLayout(btn_widget)
-            btn_layout.setContentsMargins(0, 0, 0, 0)
-            edit_btn = QtWidgets.QPushButton('Edit')
+            btn_layout.setContentsMargins(5, 0, 5, 0)
+            edit_btn = icon_button('edit')
+            edit_btn.setToolTip('Edit')
             edit_btn.clicked.connect(lambda _, s=spec: self._edit_histogram(s))
-            del_btn = QtWidgets.QPushButton('Delete')
+            del_btn = icon_button('delete')
+            del_btn.setToolTip('Delete')
             del_btn.clicked.connect(lambda _, n=spec['name']: self._delete_histogram(n))
             btn_layout.addWidget(edit_btn)
             btn_layout.addWidget(del_btn)
             self.table.setCellWidget(row, 4, btn_widget)
+        # the icon on the Delete button widens it beyond the buttons
+        # column's default width, clipping its text -- widen the column to
+        # fit now that the cell widgets (and their size hints) are in place
+        self.table.resizeColumnToContents(4)
 
         col_count = 3
         for i, spec in enumerate(self._histos):
