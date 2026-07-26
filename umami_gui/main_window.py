@@ -321,11 +321,11 @@ class MainWindow(QtWidgets.QWidget):
         frame.layout().addWidget(QtWidgets.QLabel('Mode:'))
         frame.layout().addWidget(self.mode_combo)
 
-        frame.layout().addStretch()
-
         aux_histo_btn = QtWidgets.QPushButton('Aux Histograms')
         aux_histo_btn.clicked.connect(self.show_aux_histo_window)
         frame.layout().addWidget(aux_histo_btn)
+
+        frame.layout().addStretch()
 
         self.log_toggle = QtWidgets.QPushButton('Show Log')
         self.log_toggle.setCheckable(True)

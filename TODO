@@ -3,9 +3,6 @@
 - Output fanout instead of queue?
 - Expr lang: inject additional identifiers?
 - Input parameters runtime settable?
-- plot how to zoom into region?
 - arrangement of extra plots
 - ICONS
-- ugly space around histo list
-- resizable columns awkward middle one -> move to right
 - dark mode readability

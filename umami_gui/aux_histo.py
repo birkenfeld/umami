@@ -191,10 +191,10 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self._plots = {}     # histo_name -> (PlotItem, ImageItem|PlotDataItem, is_2d)
 
         self.table = QtWidgets.QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(['Name', 'Filter', 'X', 'Y', ''])
+        self.table.setHorizontalHeaderLabels(['Name', 'X', 'Y', 'Filter', ''])
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.cellDoubleClicked.connect(self._on_row_double_clicked)
@@ -209,6 +209,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
         btn_col.addStretch()
 
         table_row = QtWidgets.QHBoxLayout()
+        table_row.setContentsMargins(5, 5, 8, 5)
         table_row.addWidget(self.table)
         table_row.addLayout(btn_col)
         table_container = QtWidgets.QWidget()
@@ -225,6 +226,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
         splitter.setSizes([200, 500])
 
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(splitter)
 
         # Only ticks while the window is actually visible (see showEvent /
@@ -284,10 +286,10 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self.table.setRowCount(len(self._histos))
         for row, spec in enumerate(self._histos):
             self.table.setItem(row, 0, QtWidgets.QTableWidgetItem(spec['name']))
-            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(spec.get('filter') or ''))
-            self.table.setItem(row, 2, QtWidgets.QTableWidgetItem(spec['x']['expr']))
-            self.table.setItem(row, 3,
+            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(spec['x']['expr']))
+            self.table.setItem(row, 2,
                 QtWidgets.QTableWidgetItem(spec['y']['expr'] if spec.get('y') else ''))
+            self.table.setItem(row, 3, QtWidgets.QTableWidgetItem(spec.get('filter') or ''))
             btn_widget = QtWidgets.QWidget()
             btn_layout = QtWidgets.QHBoxLayout(btn_widget)
             btn_layout.setContentsMargins(0, 0, 0, 0)
