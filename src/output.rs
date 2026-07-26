@@ -11,6 +11,7 @@ use crate::event::Event;
 use crate::params::HasParams;
 use crate::pipeline::PipeItem;
 
+mod aux_histo;
 mod diag;
 mod file;
 #[cfg(feature = "hdf5")]
@@ -157,6 +158,7 @@ pub fn start(config: OutputConfig, common: OutputCommon) -> UResult<()> {
         "hdf5" => Err(anyhow!(
             "HDF5 output support was not compiled in (rebuild with --features hdf5)").into()),
         "file" => Ok(file::FileOutput::from_config(&common, config.config)?.start(common)?),
+        "aux_histo" => Ok(aux_histo::AuxHistoOutput::from_config(&common, config.config)?.start(common)?),
         #[cfg(test)]
         "test" => Ok(test::TestOutput::new().start(common)?),
         _ => Err(anyhow!("Unknown output type: {}", config.r#type).into()),

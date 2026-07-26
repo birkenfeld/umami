@@ -6,6 +6,7 @@ mod command;
 mod config;
 mod error;
 mod event;
+mod expr;
 mod input;
 mod output;
 mod params;

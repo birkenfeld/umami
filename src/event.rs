@@ -78,6 +78,7 @@ pub struct Amplitude(pub u32);
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[derive(Archive, Serialize, Deserialize)]
+// Note: if you change this, update the src/expr.rs language accordingly.
 pub enum EventType {
     /// Neutron event.
     Neutron = 0x01,
@@ -148,6 +149,7 @@ impl EventHisto {
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
+// Note: if you change this, update the src/expr.rs language accordingly.
 pub struct Event {
     // Do not change the structure, the serialization format depends on it.
     pub time: EventTime,
