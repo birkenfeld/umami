@@ -191,13 +191,30 @@ impl CommandHandler {
                 replies.into_iter().find(|r| r.is_error()).unwrap_or(CommandReply::Ok)
             }
             Command::GetParams => {
+                let mut map = ParamMap::new();
+
+                // gather from each input's recipe first, using the shared fixed-count
+                // channel (same pattern as the Start/Stop/Reset fan-out above)
+                for (name, sender) in &self.input_send {
+                    if sender.send_deadline((Command::GetParams, rep_send.clone()), deadline).is_err() {
+                        return unresponsive(&format!("Input {name}"));
+                    }
+                }
+                for _ in 0..self.input_send.len() {
+                    match rep_recv.recv_deadline(deadline) {
+                        Ok(CommandReply::Data { value: Value::Object(obj) }) => map.extend(obj),
+                        Ok(reply) if reply.is_error() => return reply,
+                        Ok(_) => {} // shouldn't happen
+                        Err(_) => return unresponsive("An input"),
+                    }
+                }
+
                 // this command needs a differently typed channel
                 let (rep_send, rep_recv) = crate::channel::unbounded();
                 if self.post_send.send_deadline(PipeItem::GetParams(rep_send), deadline).is_err() {
                     return unresponsive("Postprocessor");
                 }
                 // aggregate parameters from all HasParams into a single map
-                let mut map = ParamMap::new();
                 loop {
                     match rep_recv.recv_deadline(deadline) {
                         Ok((name, params)) => for (param, info) in params {
@@ -210,21 +227,45 @@ impl CommandHandler {
                 CommandReply::Data { value: map.into() }
             }
             Command::SetParams { params } => {
-                // parse parameters from single map into multiple maps
-                let mut new_map = BTreeMap::new();
-                for (name, value) in params {
+                // validate keys up front, before touching any channel
+                for name in params.keys() {
                     if !name.contains('.') {
                         return CommandReply::new_error(
                             format!("Invalid param key {name}, needs to be of the \
                                      form <module>.<param>")
                         );
                     }
-                    let (module, param) = name.split_once('.').expect("checked");
+                }
+
+                // broadcast the full (unsplit) map to every input; each applies only
+                // the portion addressed to its own recipe name and no-ops otherwise
+                for (name, sender) in &self.input_send {
+                    if sender.send_deadline(
+                        (Command::SetParams { params: params.clone() }, rep_send.clone()), deadline,
+                    ).is_err() {
+                        return unresponsive(&format!("Input {name}"));
+                    }
+                }
+                for _ in 0..self.input_send.len() {
+                    match rep_recv.recv_deadline(deadline) {
+                        Ok(reply) if reply.is_error() => return reply,
+                        Ok(_) => {}
+                        Err(_) => return unresponsive("An input"),
+                    }
+                }
+
+                // parse parameters from single map into multiple maps, for the
+                // postprocessor's recipes and the outputs
+                let mut new_map = BTreeMap::new();
+                for (name, value) in params {
+                    let (module, param) = name.split_once('.').expect("checked above");
                     new_map.entry(ModuleId::new(module.into()))
                            .or_insert_with(ParamMap::new)
                            .insert(param.into(), value);
                 }
 
+                // new pair to not mix input and postprocessor replies on the same channel
+                let (rep_send, rep_recv) = crate::channel::unbounded();
                 if self.post_send.send_deadline(PipeItem::SetParams(new_map, rep_send), deadline).is_err() {
                     return unresponsive("Postprocessor");
                 }
@@ -419,6 +460,89 @@ mod tests {
             }
             other => panic!("unexpected reply: {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_get_params_merges_inputs_and_postprocessor() {
+        let (handler, inputs, post_recv) = make_handler(&["ge01"]);
+        let recv0 = inputs.into_values().next().unwrap();
+        std::thread::spawn(move || {
+            let (cmd, rep) = recv0.recv().unwrap();
+            assert!(matches!(cmd, Command::GetParams));
+            let mut value = serde_json::Map::new();
+            value.insert("ge.rebin_8x8".into(), serde_json::json!({"value": false}));
+            rep.send(CommandReply::Data { value: value.into() }).unwrap();
+        });
+        std::thread::spawn(move || {
+            match post_recv.recv().unwrap() {
+                PipeItem::GetParams(send) => {
+                    let mut p = ParamMap::new();
+                    p.insert("bin_x".into(), serde_json::json!(1));
+                    send.send((ModuleId::new("std".into()), p)).unwrap();
+                    // dropping `send` here closes the channel, ending the aggregation loop
+                }
+                other => panic!("unexpected item: {other:?}"),
+            }
+        });
+        match handler.handle(Command::GetParams) {
+            CommandReply::Data { value } => {
+                assert_eq!(value["ge.rebin_8x8"]["value"], false);
+                assert_eq!(value["std.bin_x"], 1);
+            }
+            other => panic!("unexpected reply: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_get_params_propagates_input_error() {
+        let (handler, inputs, _post_recv) = make_handler(&["ge01"]);
+        let recv0 = inputs.into_values().next().unwrap();
+        respond_to_input(recv0, CommandReply::new_error("recipe get_params failed".into()));
+        assert!(handler.handle(Command::GetParams).is_error());
+    }
+
+    /// SetParams forwards the whole (unsplit) dotted map to every input, so
+    /// each can pick out only the keys addressed to its own recipe name --
+    /// the split-by-module map is only computed for the postprocessor/outputs.
+    #[test]
+    fn test_set_params_broadcasts_full_map_to_inputs() {
+        let (handler, inputs, post_recv) = make_handler(&["ge01"]);
+        let recv0 = inputs.into_values().next().unwrap();
+        std::thread::spawn(move || {
+            let (cmd, rep) = recv0.recv().unwrap();
+            match cmd {
+                Command::SetParams { params } => {
+                    assert_eq!(params.len(), 2);
+                    assert_eq!(params["ge.rebin_8x8"], true);
+                    assert_eq!(params["std.bin_x"], 4);
+                }
+                other => panic!("unexpected command: {other:?}"),
+            }
+            rep.send(CommandReply::Ok).unwrap();
+        });
+        std::thread::spawn(move || {
+            match post_recv.recv().unwrap() {
+                PipeItem::SetParams(map, send) => {
+                    assert_eq!(map.len(), 1);
+                    send.send(CommandReply::Ok).unwrap();
+                }
+                other => panic!("unexpected item: {other:?}"),
+            }
+        });
+        let mut params = ParamMap::new();
+        params.insert("ge.rebin_8x8".into(), serde_json::json!(true));
+        params.insert("std.bin_x".into(), serde_json::json!(4));
+        assert!(matches!(handler.handle(Command::SetParams { params }), CommandReply::Ok));
+    }
+
+    #[test]
+    fn test_set_params_propagates_input_error_before_reaching_postprocessor() {
+        let (handler, inputs, _post_recv) = make_handler(&["ge01"]);
+        let recv0 = inputs.into_values().next().unwrap();
+        respond_to_input(recv0, CommandReply::new_error("bad value".into()));
+        let mut params = ParamMap::new();
+        params.insert("ge.rebin_8x8".into(), serde_json::json!("not a bool"));
+        assert!(handler.handle(Command::SetParams { params }).is_error());
     }
 
     /// A wedged postprocessor or input must not hang `handle()` forever -- it

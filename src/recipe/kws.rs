@@ -23,10 +23,13 @@ const EXT_START: u8 = 1;
 #[serde(deny_unknown_fields)]
 pub struct KWSGERecipe {
     #[serde(default)]
+    #[param(help="Whether to use 1024-pixel (calibration mode) resolution")]
     reso_1024: bool,
     #[serde(default)]
+    #[param(help="Whether to rebin the y axis so pixels are ~8x8mm")]
     rebin_8x8: bool,
     #[serde(default)]
+    #[param(help="Whether to assume inverted timestamper edges")]
     invert_ts: bool,
 }
 

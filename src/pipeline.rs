@@ -87,7 +87,8 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
         let (command_send, command_recv) = channel::bounded(1);
         let common = InputCommon::new(
             input_name, postproc_send.clone(), event_send, command_recv,
-            recipe::from_config(&config.input_recipes, &input_config.recipe)?
+            recipe::from_config(&config.input_recipes, &input_config.recipe)?,
+            ModuleId::new(input_config.recipe.clone()),
         );
         command_sends.insert(input_name, command_send);
 

@@ -21,6 +21,7 @@ use crate::command::{Command, CommandReply, ModuleId};
 use crate::config::SpecificInputConfig;
 use crate::error::{UError, UResult};
 use crate::event::Event;
+use crate::params::ParamMap;
 use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
 use crate::util::resolve;
@@ -41,6 +42,7 @@ pub struct InputCommon {
     events: Sender<PipeItem>,
     command: Receiver<(Command, Sender<CommandReply>)>,
     recipe: Box<dyn Recipe>,
+    recipe_name: ModuleId,
 }
 
 impl InputCommon {
@@ -50,6 +52,7 @@ impl InputCommon {
         events: Sender<PipeItem>,
         command: Receiver<(Command, Sender<CommandReply>)>,
         recipe: Box<dyn Recipe>,
+        recipe_name: ModuleId,
     ) -> Self {
         Self {
             name,
@@ -58,6 +61,7 @@ impl InputCommon {
             events,
             command,
             recipe,
+            recipe_name,
         }
     }
 
@@ -123,8 +127,7 @@ pub trait Input: Send {
                         if let Err(e) = self.stop() {
                             let msg = format!("Failed to stop input for restart: {e:#}");
                             common.set_state(InputState::Error(msg.clone()));
-                            rep.send(CommandReply::new_mod_error(name, msg))
-                               .expect("command channel closed");
+                            let _ = rep.send(CommandReply::new_mod_error(name, msg));
                             return;
                         } else {
                             common.set_state(InputState::Idle);
@@ -179,6 +182,37 @@ pub trait Input: Send {
                 }
                 _ => CommandReply::Ok
             }
+            // allow retrieving/changing input recipe params
+            Command::GetParams => match common.recipe.get_params() {
+                Ok(params) => {
+                    let mut map = ParamMap::new();
+                    for (param, info) in params {
+                        map.insert(format!("{}.{param}", common.recipe_name), info);
+                    }
+                    CommandReply::Data { value: map.into() }
+                }
+                Err(e) => CommandReply::new_mod_error(
+                    name, format!("Failed to get recipe params: {e:#}")),
+            }
+            Command::SetParams { params } => {
+                let prefix = format!("{}.", common.recipe_name);
+                let mut own_params = ParamMap::new();
+                for (key, value) in params {
+                    if let Some(param) = key.strip_prefix(&prefix) {
+                        own_params.insert(param.into(), value);
+                    }
+                }
+                if own_params.is_empty() {
+                    // no params addressed to this input's recipe
+                    CommandReply::Ok
+                } else {
+                    match common.recipe.update_params(common.recipe_name, own_params) {
+                        Ok(()) => CommandReply::Ok,
+                        Err(e) => CommandReply::new_mod_error(
+                            name, format!("Failed to set recipe params: {e:#}")),
+                    }
+                }
+            }
             _ => match self.handle(cmd) {
                 Ok(reply) => reply,
                 Err(e) => {
@@ -188,7 +222,7 @@ pub trait Input: Send {
                 }
             }
         };
-        rep.send(reply).expect("command channel closed");
+        let _ = rep.send(reply);
     }
 
     fn main_loop(mut self, mut common: InputCommon)
@@ -404,5 +438,73 @@ impl DumpHandler {
             file.write_all(data).context("Writing to raw dump file")?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::time::Duration;
+    use crate::config::{RecipeConfig, TestInputConfig};
+    use crate::recipe;
+
+    type CommandSend = Sender<(Command, Sender<CommandReply>)>;
+
+    /// Starts a `TestInput` wired up with a real `kws_gedet` recipe named
+    /// `recipe_name`, and returns the command channel to drive it plus the
+    /// state/event receivers, which must be kept alive for the input's sends
+    /// to keep succeeding.
+    fn start_test_input(recipe_name: &str) -> (CommandSend, Receiver<PipeItem>, Receiver<PipeItem>) {
+        let mut recipes = BTreeMap::new();
+        recipes.insert(recipe_name.to_string(),
+                       RecipeConfig { r#type: "kws_gedet".into(), config: toml::Table::new() });
+        let recipe = recipe::from_config(&recipes, recipe_name).unwrap();
+
+        let (state_send, state_recv) = crate::channel::unbounded();
+        let (events_send, events_recv) = crate::channel::unbounded();
+        let (command_send, command_recv) = crate::channel::bounded(1);
+        let common = InputCommon::new(
+            ModuleId::new("in1".into()), state_send, events_send, command_recv,
+            recipe, ModuleId::new(recipe_name.into()),
+        );
+        test::TestInput::start(TestInputConfig { nx: 1, ny: 1 }, common).unwrap();
+        (command_send, state_recv, events_recv)
+    }
+
+    fn send_command(command_send: &CommandSend, cmd: Command) -> CommandReply {
+        let (rep_send, rep_recv) = crate::channel::bounded(1);
+        command_send.send((cmd, rep_send)).unwrap();
+        rep_recv.recv_timeout(Duration::from_secs(5)).expect("input did not reply")
+    }
+
+    #[test]
+    fn test_get_set_params_are_addressed_by_recipe_name_not_input_name() {
+        let (command_send, _state_recv, _events_recv) = start_test_input("ge");
+
+        match send_command(&command_send, Command::GetParams) {
+            CommandReply::Data { value } => assert_eq!(value["ge.rebin_8x8"]["value"], false),
+            other => panic!("unexpected reply: {other:?}"),
+        }
+
+        // a key addressed to some other recipe name doesn't touch this input
+        let mut other = ParamMap::new();
+        other.insert("other.rebin_8x8".into(), serde_json::json!(true));
+        assert!(matches!(
+            send_command(&command_send, Command::SetParams { params: other }), CommandReply::Ok));
+        match send_command(&command_send, Command::GetParams) {
+            CommandReply::Data { value } => assert_eq!(value["ge.rebin_8x8"]["value"], false),
+            other => panic!("unexpected reply: {other:?}"),
+        }
+
+        // a key addressed to this input's own recipe name updates it
+        let mut mine = ParamMap::new();
+        mine.insert("ge.rebin_8x8".into(), serde_json::json!(true));
+        assert!(matches!(
+            send_command(&command_send, Command::SetParams { params: mine }), CommandReply::Ok));
+        match send_command(&command_send, Command::GetParams) {
+            CommandReply::Data { value } => assert_eq!(value["ge.rebin_8x8"]["value"], true),
+            other => panic!("unexpected reply: {other:?}"),
+        }
     }
 }
