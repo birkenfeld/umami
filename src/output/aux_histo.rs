@@ -29,7 +29,10 @@ use super::{Output, OutputCommon};
 pub struct AxisSpec {
     pub expr: String,
     pub bins: u16,
+    /// Inclusive lower bound of the binned range.
     pub min: i64,
+    /// Inclusive upper bound of the binned range (unlike e.g. Rust's `..`
+    /// ranges, `max` itself is a valid, in-range value).
     pub max: i64,
 }
 
@@ -65,9 +68,9 @@ struct CompiledAxis {
 }
 
 fn compile_axis(axis: &AxisSpec, histo_name: &str) -> UResult<CompiledAxis> {
-    if axis.bins == 0 || axis.max <= axis.min {
+    if axis.bins == 0 || axis.max < axis.min {
         return Err(anyhow!(
-            "Invalid axis range for histogram {histo_name:?} (need bins > 0, max > min)").into());
+            "Invalid axis range for histogram {histo_name:?} (need bins > 0, max >= min)").into());
     }
     let expr = Expr::parse(&axis.expr)
         .with_context(|| format!("Parsing expression for histogram {histo_name:?}"))?;
@@ -93,11 +96,14 @@ struct PreparedHisto {
     histo_config: HistoConfig,
 }
 
+/// `max` is inclusive, so the range spans `max - min + 1` representable
+/// values (e.g. `bins=56, min=0, max=55` puts each of the 56 integer values
+/// 0..=55 in its own bin).
 fn bin_index(v: i64, min: i64, max: i64, bins: u16) -> Option<u16> {
-    if v < min || v >= max || bins == 0 {
+    if v < min || v > max || bins == 0 {
         return None;
     }
-    let bin = (v - min) * bins as i64 / (max - min);
+    let bin = (v - min) * bins as i64 / (max - min + 1);
     Some(bin.clamp(0, bins as i64 - 1) as u16)
 }
 
@@ -251,7 +257,7 @@ mod tests {
             [[histos]]
             name = "amp"
             filter = "evtype == neutron"
-            x = { expr = "ampl", bins = 4, min = 0, max = 8 }
+            x = { expr = "ampl", bins = 4, min = 0, max = 7 }
         "#).unwrap();
         let mut output = AuxHistoOutput::from_config(&common, cfg).unwrap();
         let _guard = ShmGuard::for_name(format!("{ipc}_aux_amp"));
@@ -278,8 +284,8 @@ mod tests {
         let cfg: toml::Table = toml::from_str(r#"
             [[histos]]
             name = "xy"
-            x = { expr = "raw_0[0..12:signed]", bins = 4, min = -8, max = 8 }
-            y = { expr = "raw_1[0..12:signed]", bins = 4, min = -8, max = 8 }
+            x = { expr = "raw_0[0..12:signed]", bins = 4, min = -8, max = 7 }
+            y = { expr = "raw_1[0..12:signed]", bins = 4, min = -8, max = 7 }
         "#).unwrap();
         let mut output = AuxHistoOutput::from_config(&common, cfg).unwrap();
         let _guard = ShmGuard::for_name(format!("{ipc}_aux_xy"));
@@ -302,13 +308,13 @@ mod tests {
         let cfg: toml::Table = toml::from_str(r#"
             [[histos]]
             name = "amp"
-            x = { expr = "ampl", bins = 4, min = 0, max = 8 }
+            x = { expr = "ampl", bins = 4, min = 0, max = 7 }
         "#).unwrap();
         let mut output = AuxHistoOutput::from_config(&common, cfg).unwrap();
         let _guard = ShmGuard::for_name(format!("{ipc}_aux_amp"));
 
         let mut ev = test_utils::neutron(0, 0);
-        ev.ampl = Amplitude(100); // way out of [0,8)
+        ev.ampl = Amplitude(100); // way out of [0,7]
         output.handle_events(&[ev]).unwrap();
 
         let shm = ShmInterface::open(&format!("{ipc}_aux_amp")).unwrap();
@@ -322,7 +328,7 @@ mod tests {
         let cfg: toml::Table = toml::from_str(r#"
             [[histos]]
             name = "amp"
-            x = { expr = "ampl", bins = 4, min = 0, max = 8 }
+            x = { expr = "ampl", bins = 4, min = 0, max = 7 }
         "#).unwrap();
         let mut output = AuxHistoOutput::from_config(&common, cfg).unwrap();
         let _guard = ShmGuard::for_name(format!("{ipc}_aux_amp"));
@@ -363,7 +369,7 @@ mod tests {
         let cfg: toml::Table = toml::from_str(r#"
             [[histos]]
             name = "amp"
-            x = { expr = "ampl", bins = 4, min = 0, max = 8 }
+            x = { expr = "ampl", bins = 4, min = 0, max = 7 }
         "#).unwrap();
         let mut output = AuxHistoOutput::from_config(&common, cfg).unwrap();
         let _guard1 = ShmGuard::for_name(format!("{ipc}_aux_amp"));
@@ -371,7 +377,7 @@ mod tests {
         // a bad update is rejected, old histogram list is untouched
         let mut bad = ParamMap::new();
         bad.insert("histos".into(), serde_json::json!([
-            { "name": "bad", "x": { "expr": "nonsense", "bins": 4, "min": 0, "max": 8 } }
+            { "name": "bad", "x": { "expr": "nonsense", "bins": 4, "min": 0, "max": 7 } }
         ]));
         assert!(output.update_params(ModuleId::new("aux".into()), bad).is_err());
         assert_eq!(output.histos.len(), 1);
@@ -380,7 +386,7 @@ mod tests {
         // a good update replaces the list and creates a new segment
         let mut good = ParamMap::new();
         good.insert("histos".into(), serde_json::json!([
-            { "name": "chan", "x": { "expr": "channel", "bins": 2, "min": 0, "max": 2 } }
+            { "name": "chan", "x": { "expr": "channel", "bins": 2, "min": 0, "max": 1 } }
         ]));
         output.update_params(ModuleId::new("aux".into()), good).unwrap();
         let _guard2 = ShmGuard::for_name(format!("{ipc}_aux_chan"));
@@ -397,7 +403,7 @@ mod tests {
         let cfg: toml::Table = toml::from_str(r#"
             [[histos]]
             name = "amp"
-            x = { expr = "ampl", bins = 4, min = 0, max = 8 }
+            x = { expr = "ampl", bins = 4, min = 0, max = 7 }
         "#).unwrap();
         let mut output = AuxHistoOutput::from_config(&common, cfg).unwrap();
         let _guard = ShmGuard::for_name(format!("{ipc}_aux_amp"));
@@ -417,7 +423,7 @@ mod tests {
         let cfg: toml::Table = toml::from_str(r#"
             [[histos]]
             name = "amp"
-            x = { expr = "ampl", bins = 4, min = 0, max = 8 }
+            x = { expr = "ampl", bins = 4, min = 0, max = 7 }
         "#).unwrap();
         let mut output = AuxHistoOutput::from_config(&common, cfg).unwrap();
         let _guard = ShmGuard::for_name(format!("{ipc}_aux_amp"));
@@ -435,7 +441,7 @@ mod tests {
         let cfg: toml::Table = toml::from_str(r#"
             [[histos]]
             name = "amp"
-            x = { expr = "ampl", bins = 4, min = 0, max = 8 }
+            x = { expr = "ampl", bins = 4, min = 0, max = 7 }
         "#).unwrap();
         let output = AuxHistoOutput::from_config(&common, cfg).unwrap();
         let _guard = ShmGuard::for_name(format!("{ipc}_aux_amp"));
@@ -443,5 +449,30 @@ mod tests {
         let params = output.get_params().unwrap();
         assert_eq!(params["enabled"]["value"], true);
         assert_eq!(params["histos"]["value"][0]["name"], "amp");
+    }
+
+    #[test]
+    fn test_max_is_inclusive() {
+        let ipc = unique_ipc();
+        let common = test_common(&ipc, "aux");
+        let cfg: toml::Table = toml::from_str(r#"
+            [[histos]]
+            name = "chan"
+            x = { expr = "channel", bins = 56, min = 0, max = 55 }
+        "#).unwrap();
+        let mut output = AuxHistoOutput::from_config(&common, cfg).unwrap();
+        let _guard = ShmGuard::for_name(format!("{ipc}_aux_chan"));
+
+        for channel in [0u32, 55] {
+            let mut ev = test_utils::neutron(0, 0);
+            ev.channel = crate::event::ChannelId(channel);
+            output.handle_events(&[ev]).unwrap();
+        }
+
+        let shm = ShmInterface::open(&format!("{ipc}_aux_chan")).unwrap();
+        let data = shm.histo_data();
+        assert_eq!(data[0], 1, "channel 0 should land in bin 0");
+        assert_eq!(data[55], 1, "channel 55 (== max) should land in bin 55, not be dropped");
+        assert_eq!(data.iter().sum::<u32>(), 2);
     }
 }
