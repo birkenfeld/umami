@@ -612,21 +612,29 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self._shms = {}      # histo_name -> ShmHistogram
         self._plots = {}     # histo_name -> (PlotItem, ImageItem|PlotDataItem, is_2d)
 
-        top = QtWidgets.QHBoxLayout()
-        add_btn = QtWidgets.QPushButton('Add Histogram...')
-        add_btn.clicked.connect(self._add_histogram)
-        top.addWidget(add_btn)
-        refresh_btn = QtWidgets.QPushButton('Refresh')
-        refresh_btn.clicked.connect(self.refresh)
-        top.addWidget(refresh_btn)
-        top.addStretch()
-
         self.table = QtWidgets.QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(['Name', 'Filter', 'X', 'Y', ''])
-        self.table.horizontalHeader().setSectionResizeMode(
-            1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.cellDoubleClicked.connect(self._on_row_double_clicked)
+
+        btn_col = QtWidgets.QVBoxLayout()
+        add_btn = QtWidgets.QPushButton('Add')
+        add_btn.clicked.connect(self._add_histogram)
+        btn_col.addWidget(add_btn)
+        refresh_btn = QtWidgets.QPushButton('Refresh')
+        refresh_btn.clicked.connect(self.refresh)
+        btn_col.addWidget(refresh_btn)
+        btn_col.addStretch()
+
+        table_row = QtWidgets.QHBoxLayout()
+        table_row.addWidget(self.table)
+        table_row.addLayout(btn_col)
+        table_container = QtWidgets.QWidget()
+        table_container.setLayout(table_row)
 
         self.plot_area = pg.GraphicsLayoutWidget()
         scroll = QtWidgets.QScrollArea()
@@ -634,12 +642,11 @@ class AuxHistoWindow(QtWidgets.QWidget):
         scroll.setWidgetResizable(True)
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        splitter.addWidget(self.table)
+        splitter.addWidget(table_container)
         splitter.addWidget(scroll)
         splitter.setSizes([200, 500])
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(top)
         layout.addWidget(splitter)
 
         # Only ticks while the window is actually visible (see showEvent /
@@ -730,6 +737,9 @@ class AuxHistoWindow(QtWidgets.QWidget):
             plot_item = self.plot_area.addPlot(row=i // col_count, col=i % col_count, title=name)
             if is_2d:
                 img = pg.ImageItem(border='w', axisOrder='row-major')
+                # shift by half a pixel so integer axis ticks land on pixel
+                # centers (pixel i spans [i-0.5, i+0.5]) instead of edges
+                img.setRect(QtCore.QRectF(-0.5, -0.5, shm.nx, shm.ny))
                 plot_item.addItem(img)
                 img.setColorMap(pg.colormap.get('viridis'))
                 self._plots[name] = (plot_item, img, True)
@@ -756,6 +766,10 @@ class AuxHistoWindow(QtWidgets.QWidget):
                     item.setData(edges, buf, stepMode='center')
             except OSError as e:
                 self.log.warning(f'Error reading aux histogram {name!r}: {e}')
+
+    def _on_row_double_clicked(self, row, _column):
+        if 0 <= row < len(self._histos):
+            self._edit_histogram(self._histos[row])
 
     def _add_histogram(self):
         if self._module is None:
@@ -823,6 +837,9 @@ def main():
     plot = graphics.addPlot()
     plot.setTitle('starting...')
     img = pg.ImageItem(border='w', axisOrder='row-major')
+    # shift by half a pixel so integer axis ticks land on pixel centers
+    # (pixel i spans [i-0.5, i+0.5]) instead of edges
+    img.setRect(QtCore.QRectF(-0.5, -0.5, histo.nx, histo.ny))
     plot.addItem(img)
     img.setColorMap(pg.colormap.get('viridis'))
     plot.enableAutoRange('xy', True)
