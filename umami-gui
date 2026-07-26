@@ -805,88 +805,122 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self.refresh()
 
 
-def main():
-    shm_name = sys.argv[1] if len(sys.argv) > 1 else 'umami'
+class MainWindow(QtWidgets.QWidget):
+    """Top-level UMAMI histogram viewer: control buttons, the live 2-D
+    histogram image, per-input status, and a docked recipe/output params
+    table. Owns the shm mapping and command-socket client, and drives all
+    periodic polling (image refresh, connection/state heartbeat)."""
 
-    pg.setConfigOption('background', 'w')
-    pg.setConfigOption('foreground', 'k')
-    app = QtWidgets.QApplication(['umami-histogram'])
-    # Qt's event loop otherwise blocks Python's own SIGINT handling; the
-    # periodic image_timer below keeps ticking into Python so this fires
-    # promptly instead of only between mouse/keyboard events
-    signal.signal(signal.SIGINT, lambda *args: app.quit())
+    def __init__(self, shm_name):
+        super().__init__()
+        self.shm_name = shm_name
+        self.resize(1100, 800)
+        self.setWindowTitle('UMAMI histogram')
+        self.setLayout(QtWidgets.QVBoxLayout())
+        self.layout().setContentsMargins(0, 0, 0, 0)
 
-    try:
-        histo = ShmHistogram(shm_name)
-    except RuntimeError as e:
-        QtWidgets.QMessageBox.critical(None, 'Error', str(e))
-        sys.exit(1)
+        try:
+            self.histo = ShmHistogram(shm_name)
+        except RuntimeError as e:
+            QtWidgets.QMessageBox.critical(None, 'Error', str(e))
+            sys.exit(1)
 
-    window = QtWidgets.QWidget()
-    window.resize(1100, 800)
-    window.setWindowTitle('UMAMI histogram')
-    window.setLayout(QtWidgets.QVBoxLayout())
-    window.layout().setContentsMargins(0, 0, 0, 0)
+        self.log_panel = LogPanel()
+        self.client = UmamiClient(shm_name, self.log_panel)
+        self.aux_histo_window = AuxHistoWindow(self.client, shm_name, self.log_panel)
 
-    log_panel = LogPanel()
-    client = UmamiClient(shm_name, log_panel)
-    aux_histo_window = AuxHistoWindow(client, shm_name, log_panel)
+        self.proj_window = None
+        self.proj_curve = None
+        self.t_proj_window = None
+        self.t_proj_curve = None
+        # raw time_bins of the active mode (nanoseconds, trailing overflow
+        # sentinel included), or None to fall back to plain bin-index labeling
+        self.t_bin_edges_ns = None
+        self.current_mode = None
+        self.instance_name = None
+        self.prev = {}
+        self.last_t = None
+        self.last_buf = None
+        self.was_connected = False
+
+        self._build_main_plot()
+        self._build_projection_state()
+        self._build_status_and_mode()
+        self._build_buttons()
+        self._build_display_controls()
+        self._build_dump_controls()
+        self._build_params_panel()
+        self._assemble()
+
+        self.image_timer = QtCore.QTimer()
+        self.image_timer.timeout.connect(self.update_buffer)
+        self.image_timer.start(IMAGE_REFRESH_MS)
+
+        self.state_timer = QtCore.QTimer()
+        self.state_timer.timeout.connect(self.poll_state)
+        self.state_timer.start(STATE_POLL_MS)
+
+        # get an initial connection/log entry and populate the mode list &
+        # params right away rather than waiting for the first timer tick;
+        # mark the connection as already-established first so poll_state()'s
+        # reconnect detection doesn't treat this initial setup as a
+        # redundant reinit
+        self.client.ping()
+        self.was_connected = self.client.connected
+        modes = self.client.get_modes() or []
+        self.mode_combo.addItems(modes)
+        self.refresh_params()
+        self.poll_state()
 
     # ---- main image plot ----
-    graphics = pg.GraphicsLayoutWidget()
-    plot = graphics.addPlot()
-    plot.setTitle('starting...')
-    img = pg.ImageItem(border='w', axisOrder='row-major')
-    # shift by half a pixel so integer axis ticks land on pixel centers
-    # (pixel i spans [i-0.5, i+0.5]) instead of edges
-    img.setRect(QtCore.QRectF(-0.5, -0.5, histo.nx, histo.ny))
-    plot.addItem(img)
-    img.setColorMap(pg.colormap.get('viridis'))
-    plot.enableAutoRange('xy', True)
+
+    def _build_main_plot(self):
+        self.graphics = pg.GraphicsLayoutWidget()
+        self.plot = self.graphics.addPlot()
+        self.plot.setTitle('starting...')
+        self.img = pg.ImageItem(border='w', axisOrder='row-major')
+        # shift by half a pixel so integer axis ticks land on pixel centers
+        # (pixel i spans [i-0.5, i+0.5]) instead of edges
+        self.img.setRect(QtCore.QRectF(-0.5, -0.5, self.histo.nx, self.histo.ny))
+        self.plot.addItem(self.img)
+        self.img.setColorMap(pg.colormap.get('viridis'))
+        self.plot.enableAutoRange('xy', True)
+        self.plot.scene().sigMouseMoved.connect(self.on_mouse_moved)
 
     # ---- projection plots: separate windows, created lazily on request ----
-    proj_x_edges = np.arange(histo.nx + 1) - 0.5
-    proj_window = None
-    proj_curve = None
 
-    def open_projection_window():
-        nonlocal proj_window, proj_curve
-        if proj_window is None:
-            proj_window = pg.PlotWidget(title='Diffractogram')
-            proj_window.setWindowTitle('UMAMI diffractogram')
-            proj_window.setLabel('bottom', 'x channel')
-            proj_window.setLabel('left', 'counts')
-            proj_window.resize(700, 400)
-            proj_curve = proj_window.plot(stepMode='center', fillLevel=0,
-                                          brush=(0, 0, 255, 80))
-        proj_window.show()
-        proj_window.raise_()
+    def _build_projection_state(self):
+        self.proj_x_edges = np.arange(self.histo.nx + 1) - 0.5
+        self.t_proj_x_edges = np.arange(self.histo.nt + 1) - 0.5
 
-    t_proj_x_edges = np.arange(histo.nt + 1) - 0.5
-    t_proj_window = None
-    t_proj_curve = None
-    # raw time_bins of the active mode (nanoseconds, trailing overflow
-    # sentinel included), or None to fall back to plain bin-index labeling
-    t_bin_edges_ns = None
-    current_mode = None
-    instance_name = None
+    def open_projection_window(self):
+        if self.proj_window is None:
+            self.proj_window = pg.PlotWidget(title='Diffractogram')
+            self.proj_window.setWindowTitle('UMAMI diffractogram')
+            self.proj_window.setLabel('bottom', 'x channel')
+            self.proj_window.setLabel('left', 'counts')
+            self.proj_window.resize(700, 400)
+            self.proj_curve = self.proj_window.plot(stepMode='center', fillLevel=0,
+                                                     brush=(0, 0, 255, 80))
+        self.proj_window.show()
+        self.proj_window.raise_()
 
-    def open_t_projection_window():
-        nonlocal t_proj_window, t_proj_curve
-        if t_proj_window is None:
-            t_proj_window = pg.PlotWidget(
+    def open_t_projection_window(self):
+        if self.t_proj_window is None:
+            self.t_proj_window = pg.PlotWidget(
                 title='TOF spectrum', axisItems={'bottom': RotatedAxisItem(orientation='bottom')})
-            t_proj_window.setWindowTitle('UMAMI TOF spectrum')
-            t_proj_window.setLabel('bottom', 't bin')
-            t_proj_window.setLabel('left', 'counts')
-            t_proj_window.getAxis('bottom').setHeight(70)
-            t_proj_window.resize(700, 400)
-            t_proj_curve = t_proj_window.plot(stepMode='center', fillLevel=0,
-                                              brush=(0, 0, 255, 80))
-            apply_t_axis_ticks()
-        t_proj_window.show()
-        t_proj_window.raise_()
+            self.t_proj_window.setWindowTitle('UMAMI TOF spectrum')
+            self.t_proj_window.setLabel('bottom', 't bin')
+            self.t_proj_window.setLabel('left', 'counts')
+            self.t_proj_window.getAxis('bottom').setHeight(70)
+            self.t_proj_window.resize(700, 400)
+            self.t_proj_curve = self.t_proj_window.plot(stepMode='center', fillLevel=0,
+                                                         brush=(0, 0, 255, 80))
+            self.apply_t_axis_ticks()
+        self.t_proj_window.show()
+        self.t_proj_window.raise_()
 
+    @staticmethod
     def t_axis_tick_labels(edges_ns):
         labels = []
         lo = 0
@@ -899,318 +933,338 @@ def main():
                 lo = hi
         return labels
 
-    def apply_t_axis_ticks():
-        if t_proj_window is None:
+    def apply_t_axis_ticks(self):
+        if self.t_proj_window is None:
             return
-        axis = t_proj_window.getAxis('bottom')
-        if t_bin_edges_ns is not None:
-            labels = t_axis_tick_labels(t_bin_edges_ns)
+        axis = self.t_proj_window.getAxis('bottom')
+        if self.t_bin_edges_ns is not None:
+            labels = self.t_axis_tick_labels(self.t_bin_edges_ns)
             axis.setTicks([list(enumerate(labels))])
         else:
             axis.setTicks(None)
 
-    def update_t_axis_labels():
-        nonlocal t_bin_edges_ns
-        info = (params_table.params or {}).get(f'{current_mode}.time_bins')
+    def update_t_axis_labels(self):
+        info = (self.params_table.params or {}).get(f'{self.current_mode}.time_bins')
         value = info.get('value') if info else None
-        t_bin_edges_ns = value if value and len(value) > 1 else None
-        apply_t_axis_ticks()
+        self.t_bin_edges_ns = value if value and len(value) > 1 else None
+        self.apply_t_axis_ticks()
 
-    def refresh_params():
-        params_table.refresh()
-        update_t_axis_labels()
-        if aux_histo_window.isVisible():
-            aux_histo_window.refresh()
+    def refresh_params(self):
+        self.params_table.refresh()
+        self.update_t_axis_labels()
+        if self.aux_histo_window.isVisible():
+            self.aux_histo_window.refresh()
 
-    prev = {}
-    last_t = None
-
-    def update_buffer():
-        nonlocal last_t, last_buf
-        t = t_spin.value()
-        if t != last_t:
+    def update_buffer(self):
+        t = self.t_spin.value()
+        if t != self.last_t:
             # switching slices jumps the total to an unrelated bin's count;
             # drop the old baseline so the rate isn't computed across that jump
-            prev.clear()
-            last_t = t
-        run_id = histo.read_run_id()
-        buf = histo.read_plane(t)
+            self.prev.clear()
+            self.last_t = t
+        run_id = self.histo.read_run_id()
+        buf = self.histo.read_plane(t)
         # a copy, not the raw mmap view -- keeping a view alive across ticks
         # would block the mmap from ever closing (e.g. on reconnect)
-        last_buf = buf.copy()
-        if log_scale_check.isChecked():
+        self.last_buf = buf.copy()
+        if self.log_scale_check.isChecked():
             display = np.log10(buf.astype(float) + 0.1)
         else:
             display = buf.astype(float)
-        if auto_levels_check.isChecked():
-            img.setImage(display, autoLevels=True)
+        if self.auto_levels_check.isChecked():
+            self.img.setImage(display, autoLevels=True)
         else:
-            lo, hi = level_min_spin.value(), level_max_spin.value()
-            if log_scale_check.isChecked():
+            lo, hi = self.level_min_spin.value(), self.level_max_spin.value()
+            if self.log_scale_check.isChecked():
                 lo, hi = np.log10(lo + 0.1), np.log10(hi + 0.1)
-            img.setImage(display, autoLevels=False, levels=(lo, hi))
-        if proj_curve is not None and proj_window.isVisible():
-            proj_curve.setData(proj_x_edges, buf.sum(axis=0), stepMode='center')
-        if t_proj_curve is not None and t_proj_window.isVisible():
-            if t_bin_edges_ns is not None:
-                n = len(t_bin_edges_ns)
+            self.img.setImage(display, autoLevels=False, levels=(lo, hi))
+        if self.proj_curve is not None and self.proj_window.isVisible():
+            self.proj_curve.setData(self.proj_x_edges, buf.sum(axis=0), stepMode='center')
+        if self.t_proj_curve is not None and self.t_proj_window.isVisible():
+            if self.t_bin_edges_ns is not None:
+                n = len(self.t_bin_edges_ns)
                 edges = np.arange(n + 1) - 0.5
             else:
-                n = histo.nt
-                edges = t_proj_x_edges
-            t_proj_curve.setData(edges, histo.read_time_projection(n), stepMode='center')
+                n = self.histo.nt
+                edges = self.t_proj_x_edges
+            self.t_proj_curve.setData(edges, self.histo.read_time_projection(n),
+                                      stepMode='center')
 
         total = int(buf.sum())
         now = time.monotonic()
         title = f'Run {run_id}: {total} total counts'
-        if prev and total >= prev['total']:
-            rate = (total - prev['total']) / (now - prev['time'])
+        if self.prev and total >= self.prev['total']:
+            rate = (total - self.prev['total']) / (now - self.prev['time'])
             title += f' ({rate:,.1f}/sec)'
-        plot.setTitle(title)
-        prev['total'] = total
-        prev['time'] = now
+        self.plot.setTitle(title)
+        self.prev['total'] = total
+        self.prev['time'] = now
 
-    def reopen_histogram():
+    def reopen_histogram(self):
         """Re-attach to the shm segment from scratch -- after a reconnect,
         umami may have restarted with different histogram dimensions, and
         the old mapping would otherwise keep showing stale, frozen data."""
-        nonlocal histo, proj_x_edges, t_proj_x_edges
         try:
-            new_histo = ShmHistogram(shm_name)
+            new_histo = ShmHistogram(self.shm_name)
         except RuntimeError as e:
-            log_panel.error(f'Could not reopen shared memory: {e}')
+            self.log_panel.error(f'Could not reopen shared memory: {e}')
             return
-        histo.close()
-        histo = new_histo
-        proj_x_edges = np.arange(histo.nx + 1) - 0.5
-        t_proj_x_edges = np.arange(histo.nt + 1) - 0.5
-        prev.clear()
-        plot.enableAutoRange('xy', True)
-        t_spin.setRange(0, max(histo.nt - 1, 0))
+        self.histo.close()
+        self.histo = new_histo
+        self.proj_x_edges = np.arange(self.histo.nx + 1) - 0.5
+        self.t_proj_x_edges = np.arange(self.histo.nt + 1) - 0.5
+        self.prev.clear()
+        self.plot.enableAutoRange('xy', True)
+        self.t_spin.setRange(0, max(self.histo.nt - 1, 0))
 
     # ---- status/state polling (also serves as the connection heartbeat) ----
-    status_panel = StatusPanel()
 
-    mode_combo = QtWidgets.QComboBox()
+    def _build_status_and_mode(self):
+        self.status_panel = StatusPanel()
+        self.mode_combo = QtWidgets.QComboBox()
+        self.mode_combo.activated.connect(self.on_mode_selected)
 
-    def sync_mode_combo(mode_name):
-        if mode_name and mode_combo.currentText() != mode_name:
-            mode_combo.blockSignals(True)
-            index = mode_combo.findText(mode_name)
+    def on_mode_selected(self, index):
+        self.client.set_mode(self.mode_combo.itemText(index))
+
+    def sync_mode_combo(self, mode_name):
+        if mode_name and self.mode_combo.currentText() != mode_name:
+            self.mode_combo.blockSignals(True)
+            index = self.mode_combo.findText(mode_name)
             if index >= 0:
-                mode_combo.setCurrentIndex(index)
-            mode_combo.blockSignals(False)
+                self.mode_combo.setCurrentIndex(index)
+            self.mode_combo.blockSignals(False)
 
-    def reinit_after_reconnect():
+    def reinit_after_reconnect(self):
         """The pipeline may have (re)started with a different config across
         a disconnect -- re-pull everything instead of trusting stale state."""
-        log_panel.info('Reconnected -- reinitializing (config may have changed)')
-        reopen_histogram()
-        aux_histo_window.invalidate_all()
-        status_panel.reset_inputs()
-        modes = client.get_modes()
+        self.log_panel.info('Reconnected -- reinitializing (config may have changed)')
+        self.reopen_histogram()
+        self.aux_histo_window.invalidate_all()
+        self.status_panel.reset_inputs()
+        modes = self.client.get_modes()
         if modes is not None:
-            mode_combo.blockSignals(True)
-            mode_combo.clear()
-            mode_combo.addItems(modes)
-            mode_combo.blockSignals(False)
-        refresh_params()
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.clear()
+            self.mode_combo.addItems(modes)
+            self.mode_combo.blockSignals(False)
+        self.refresh_params()
 
-    was_connected = False
-
-    def poll_state():
-        nonlocal was_connected, current_mode, instance_name
-        state = client.get_state()
-        status_panel.set_connected(client.connected)
-        if client.connected and not was_connected:
-            reinit_after_reconnect()
-        was_connected = client.connected
+    def poll_state(self):
+        state = self.client.get_state()
+        self.status_panel.set_connected(self.client.connected)
+        if self.client.connected and not self.was_connected:
+            self.reinit_after_reconnect()
+        self.was_connected = self.client.connected
         if state is not None:
-            status_panel.update_state(state)
-            sync_mode_combo(state.get('mode'))
+            self.status_panel.update_state(state)
+            self.sync_mode_combo(state.get('mode'))
             new_mode = state.get('mode')
-            if new_mode and new_mode != current_mode:
-                current_mode = new_mode
-                update_t_axis_labels()
+            if new_mode and new_mode != self.current_mode:
+                self.current_mode = new_mode
+                self.update_t_axis_labels()
             new_name = state.get('name')
-            if new_name != instance_name:
-                instance_name = new_name
-                title = f'UMAMI histogram — {instance_name}' if instance_name else 'UMAMI histogram'
-                window.setWindowTitle(title)
+            if new_name != self.instance_name:
+                self.instance_name = new_name
+                title = (f'UMAMI histogram — {self.instance_name}'
+                         if self.instance_name else 'UMAMI histogram')
+                self.setWindowTitle(title)
 
     # ---- controls ----
-    buttons = QtWidgets.QFrame()
-    buttons.setLayout(QtWidgets.QHBoxLayout())
-    buttons.layout().setContentsMargins(8, 5, 8, 5)
-    buttons.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
-                          QtWidgets.QSizePolicy.Policy.Fixed)
 
-    btn = QtWidgets.QPushButton('Reset')
-    btn.clicked.connect(lambda: client.reset())
-    buttons.layout().addWidget(btn)
+    def _build_buttons(self):
+        frame = QtWidgets.QFrame()
+        frame.setLayout(QtWidgets.QHBoxLayout())
+        frame.layout().setContentsMargins(8, 5, 8, 5)
+        frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                            QtWidgets.QSizePolicy.Policy.Fixed)
 
-    lbl = QtWidgets.QLabel('Run ID:')
-    buttons.layout().addWidget(lbl)
+        btn = QtWidgets.QPushButton('Reset')
+        btn.clicked.connect(lambda: self.client.reset())
+        frame.layout().addWidget(btn)
 
-    run_id_field = QtWidgets.QLineEdit()
-    run_id_field.setPlaceholderText('<use current time>')
-    run_id_field.setMaximumWidth(160)
-    buttons.layout().addWidget(run_id_field)
+        frame.layout().addWidget(QtWidgets.QLabel('Run ID:'))
 
-    btn = QtWidgets.QPushButton('Clear')
-    btn.clicked.connect(lambda: client.clear())
-    buttons.layout().addWidget(btn)
+        self.run_id_field = QtWidgets.QLineEdit()
+        self.run_id_field.setPlaceholderText('<use current time>')
+        self.run_id_field.setMaximumWidth(160)
+        frame.layout().addWidget(self.run_id_field)
 
-    btn = QtWidgets.QPushButton('Start')
-    btn.clicked.connect(
-        lambda: client.start(run_id_field.text() or time.strftime('%Y-%m-%d_%H:%M:%S')))
-    buttons.layout().addWidget(btn)
+        btn = QtWidgets.QPushButton('Clear')
+        btn.clicked.connect(lambda: self.client.clear())
+        frame.layout().addWidget(btn)
 
-    btn = QtWidgets.QPushButton('Stop')
-    btn.clicked.connect(lambda: client.stop())
-    buttons.layout().addWidget(btn)
+        btn = QtWidgets.QPushButton('Start')
+        btn.clicked.connect(self.on_start_clicked)
+        frame.layout().addWidget(btn)
 
-    buttons.layout().addSpacing(20)
-    buttons.layout().addWidget(QtWidgets.QLabel('Mode:'))
-    buttons.layout().addWidget(mode_combo)
+        btn = QtWidgets.QPushButton('Stop')
+        btn.clicked.connect(lambda: self.client.stop())
+        frame.layout().addWidget(btn)
 
-    def on_mode_selected(index):
-        client.set_mode(mode_combo.itemText(index))
-    mode_combo.activated.connect(on_mode_selected)
+        frame.layout().addSpacing(20)
+        frame.layout().addWidget(QtWidgets.QLabel('Mode:'))
+        frame.layout().addWidget(self.mode_combo)
 
-    buttons.layout().addStretch()
+        frame.layout().addStretch()
 
-    aux_histo_btn = QtWidgets.QPushButton('Aux Histograms')
-    aux_histo_btn.clicked.connect(lambda: (aux_histo_window.show(), aux_histo_window.raise_()))
-    buttons.layout().addWidget(aux_histo_btn)
+        aux_histo_btn = QtWidgets.QPushButton('Aux Histograms')
+        aux_histo_btn.clicked.connect(self.show_aux_histo_window)
+        frame.layout().addWidget(aux_histo_btn)
 
-    log_toggle = QtWidgets.QPushButton('Show Log')
-    log_toggle.setCheckable(True)
-    buttons.layout().addWidget(log_toggle)
+        self.log_toggle = QtWidgets.QPushButton('Show Log')
+        self.log_toggle.setCheckable(True)
+        frame.layout().addWidget(self.log_toggle)
 
-    btn = QtWidgets.QPushButton('Quit')
-    btn.clicked.connect(app.quit)
-    buttons.layout().addWidget(btn)
+        btn = QtWidgets.QPushButton('Quit')
+        btn.clicked.connect(QtWidgets.QApplication.instance().quit)
+        frame.layout().addWidget(btn)
+
+        self.buttons_frame = frame
+
+    def on_start_clicked(self):
+        self.client.start(self.run_id_field.text() or time.strftime('%Y-%m-%d_%H:%M:%S'))
+
+    def show_aux_histo_window(self):
+        self.aux_histo_window.show()
+        self.aux_histo_window.raise_()
 
     # ---- display controls: scale, colormap, levels, cursor readout ----
-    display_frame = QtWidgets.QFrame()
-    display_frame.setLayout(QtWidgets.QHBoxLayout())
-    display_frame.layout().setContentsMargins(8, 0, 8, 5)
-    display_frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
-                                QtWidgets.QSizePolicy.Policy.Fixed)
 
-    display_frame.layout().addWidget(QtWidgets.QLabel('t:'))
-    t_spin = QtWidgets.QSpinBox()
-    t_spin.setRange(0, max(histo.nt - 1, 0))
-    t_spin.valueChanged.connect(lambda _: update_buffer())
-    display_frame.layout().addWidget(t_spin)
+    def _build_display_controls(self):
+        frame = QtWidgets.QFrame()
+        frame.setLayout(QtWidgets.QHBoxLayout())
+        frame.layout().setContentsMargins(8, 0, 8, 5)
+        frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                            QtWidgets.QSizePolicy.Policy.Fixed)
 
-    display_frame.layout().addSpacing(20)
+        frame.layout().addWidget(QtWidgets.QLabel('t:'))
+        self.t_spin = QtWidgets.QSpinBox()
+        self.t_spin.setRange(0, max(self.histo.nt - 1, 0))
+        self.t_spin.valueChanged.connect(lambda _: self.update_buffer())
+        frame.layout().addWidget(self.t_spin)
 
-    log_scale_check = QtWidgets.QCheckBox('Log scale')
-    log_scale_check.setChecked(True)
-    log_scale_check.toggled.connect(lambda _: update_buffer())
-    display_frame.layout().addWidget(log_scale_check)
+        frame.layout().addSpacing(20)
 
-    display_frame.layout().addSpacing(20)
-    display_frame.layout().addWidget(QtWidgets.QLabel('Colormap:'))
-    colormap_combo = QtWidgets.QComboBox()
-    colormap_combo.addItems(['viridis', 'inferno', 'plasma', 'magma', 'turbo', 'grey'])
-    colormap_combo.currentTextChanged.connect(lambda name: img.setColorMap(pg.colormap.get(name)))
-    display_frame.layout().addWidget(colormap_combo)
+        self.log_scale_check = QtWidgets.QCheckBox('Log scale')
+        self.log_scale_check.setChecked(True)
+        self.log_scale_check.toggled.connect(lambda _: self.update_buffer())
+        frame.layout().addWidget(self.log_scale_check)
 
-    display_frame.layout().addSpacing(20)
-    auto_levels_check = QtWidgets.QCheckBox('Auto levels')
-    auto_levels_check.setChecked(True)
-    display_frame.layout().addWidget(auto_levels_check)
+        frame.layout().addSpacing(20)
+        frame.layout().addWidget(QtWidgets.QLabel('Colormap:'))
+        colormap_combo = QtWidgets.QComboBox()
+        colormap_combo.addItems(['viridis', 'inferno', 'plasma', 'magma', 'turbo', 'grey'])
+        colormap_combo.currentTextChanged.connect(
+            lambda name: self.img.setColorMap(pg.colormap.get(name)))
+        frame.layout().addWidget(colormap_combo)
 
-    level_min_spin = QtWidgets.QDoubleSpinBox()
-    level_min_spin.setRange(0, 1e9)
-    level_min_spin.setDecimals(0)
-    level_min_spin.setEnabled(False)
-    display_frame.layout().addWidget(level_min_spin)
+        frame.layout().addSpacing(20)
+        self.auto_levels_check = QtWidgets.QCheckBox('Auto levels')
+        self.auto_levels_check.setChecked(True)
+        frame.layout().addWidget(self.auto_levels_check)
 
-    display_frame.layout().addWidget(QtWidgets.QLabel('-'))
+        self.level_min_spin = QtWidgets.QDoubleSpinBox()
+        self.level_min_spin.setRange(0, 1e9)
+        self.level_min_spin.setDecimals(0)
+        self.level_min_spin.setEnabled(False)
+        frame.layout().addWidget(self.level_min_spin)
 
-    level_max_spin = QtWidgets.QDoubleSpinBox()
-    level_max_spin.setRange(0, 1e9)
-    level_max_spin.setDecimals(0)
-    level_max_spin.setValue(100)
-    level_max_spin.setEnabled(False)
-    display_frame.layout().addWidget(level_max_spin)
+        frame.layout().addWidget(QtWidgets.QLabel('-'))
 
-    def on_auto_levels_toggled(checked):
-        level_min_spin.setEnabled(not checked)
-        level_max_spin.setEnabled(not checked)
-        update_buffer()
-    auto_levels_check.toggled.connect(on_auto_levels_toggled)
-    level_min_spin.valueChanged.connect(lambda _: update_buffer())
-    level_max_spin.valueChanged.connect(lambda _: update_buffer())
+        self.level_max_spin = QtWidgets.QDoubleSpinBox()
+        self.level_max_spin.setRange(0, 1e9)
+        self.level_max_spin.setDecimals(0)
+        self.level_max_spin.setValue(100)
+        self.level_max_spin.setEnabled(False)
+        frame.layout().addWidget(self.level_max_spin)
 
-    display_frame.layout().addStretch()
+        self.auto_levels_check.toggled.connect(self.on_auto_levels_toggled)
+        self.level_min_spin.valueChanged.connect(lambda _: self.update_buffer())
+        self.level_max_spin.valueChanged.connect(lambda _: self.update_buffer())
 
-    cursor_label = QtWidgets.QLabel('')
-    cursor_label.setMinimumWidth(200)
-    display_frame.layout().addWidget(cursor_label)
+        frame.layout().addStretch()
 
-    last_buf = None
+        self.cursor_label = QtWidgets.QLabel('')
+        self.cursor_label.setMinimumWidth(200)
+        frame.layout().addWidget(self.cursor_label)
 
-    def on_mouse_moved(scene_pos):
-        if not plot.sceneBoundingRect().contains(scene_pos):
-            cursor_label.setText('')
+        self.display_frame = frame
+
+    def on_auto_levels_toggled(self, checked):
+        self.level_min_spin.setEnabled(not checked)
+        self.level_max_spin.setEnabled(not checked)
+        self.update_buffer()
+
+    def on_mouse_moved(self, scene_pos):
+        if not self.plot.sceneBoundingRect().contains(scene_pos):
+            self.cursor_label.setText('')
             return
-        view_pos = plot.vb.mapSceneToView(scene_pos)
+        view_pos = self.plot.vb.mapSceneToView(scene_pos)
         x, y = int(np.floor(view_pos.x())), int(np.floor(view_pos.y()))
-        if last_buf is not None and 0 <= y < last_buf.shape[0] and 0 <= x < last_buf.shape[1]:
-            cursor_label.setText(f'x={x}  y={y}  counts={int(last_buf[y, x])}')
+        if (self.last_buf is not None
+                and 0 <= y < self.last_buf.shape[0] and 0 <= x < self.last_buf.shape[1]):
+            self.cursor_label.setText(f'x={x}  y={y}  counts={int(self.last_buf[y, x])}')
         else:
-            cursor_label.setText('')
-    plot.scene().sigMouseMoved.connect(on_mouse_moved)
+            self.cursor_label.setText('')
 
     # ---- raw dump / save histo controls ----
-    dump_frame = QtWidgets.QFrame()
-    dump_frame.setLayout(QtWidgets.QHBoxLayout())
-    dump_frame.layout().setContentsMargins(8, 0, 8, 5)
-    dump_frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
-                             QtWidgets.QSizePolicy.Policy.Fixed)
 
-    raw_dump_check = QtWidgets.QCheckBox('Raw dump to:')
-    dump_frame.layout().addWidget(raw_dump_check)
-    raw_dump_path = QtWidgets.QLineEdit()
-    raw_dump_path.setPlaceholderText('/path/to/raw/dump/dir')
-    dump_frame.layout().addWidget(raw_dump_path)
-    raw_dump_check.toggled.connect(
-        lambda checked: client.set_raw_dump(checked, raw_dump_path.text()))
+    def _build_dump_controls(self):
+        frame = QtWidgets.QFrame()
+        frame.setLayout(QtWidgets.QHBoxLayout())
+        frame.layout().setContentsMargins(8, 0, 8, 5)
+        frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                            QtWidgets.QSizePolicy.Policy.Fixed)
 
-    def browse_raw_dump_dir():
+        self.raw_dump_check = QtWidgets.QCheckBox('Raw dump to:')
+        frame.layout().addWidget(self.raw_dump_check)
+        self.raw_dump_path = QtWidgets.QLineEdit()
+        self.raw_dump_path.setPlaceholderText('/path/to/raw/dump/dir')
+        frame.layout().addWidget(self.raw_dump_path)
+        self.raw_dump_check.toggled.connect(
+            lambda checked: self.client.set_raw_dump(checked, self.raw_dump_path.text()))
+
+        browse_btn = QtWidgets.QPushButton('...')
+        browse_btn.setMaximumWidth(30)
+        browse_btn.clicked.connect(self.browse_raw_dump_dir)
+        frame.layout().addWidget(browse_btn)
+
+        frame.layout().addSpacing(20)
+
+        btn = QtWidgets.QPushButton('Show Diffractogram')
+        btn.clicked.connect(self.open_projection_window)
+        frame.layout().addWidget(btn)
+
+        btn = QtWidgets.QPushButton('Show TOF Spectrum')
+        btn.clicked.connect(self.open_t_projection_window)
+        frame.layout().addWidget(btn)
+
+        frame.layout().addSpacing(20)
+
+        btn = QtWidgets.QPushButton('Save Histogram...')
+        btn.clicked.connect(self.save_histo_dialog)
+        frame.layout().addWidget(btn)
+
+        btn = QtWidgets.QPushButton('Save Plot PNG...')
+        btn.clicked.connect(self.save_plot_image_dialog)
+        frame.layout().addWidget(btn)
+
+        self.dump_frame = frame
+
+    def browse_raw_dump_dir(self):
         path = QtWidgets.QFileDialog.getExistingDirectory(
-            window, 'Raw Dump Directory', raw_dump_path.text())
+            self, 'Raw Dump Directory', self.raw_dump_path.text())
         if path:
-            raw_dump_path.setText(path)
-    browse_btn = QtWidgets.QPushButton('...')
-    browse_btn.setMaximumWidth(30)
-    browse_btn.clicked.connect(browse_raw_dump_dir)
-    dump_frame.layout().addWidget(browse_btn)
+            self.raw_dump_path.setText(path)
 
-    dump_frame.layout().addSpacing(20)
-
-    btn = QtWidgets.QPushButton('Show Diffractogram')
-    btn.clicked.connect(open_projection_window)
-    dump_frame.layout().addWidget(btn)
-
-    btn = QtWidgets.QPushButton('Show TOF Spectrum')
-    btn.clicked.connect(open_t_projection_window)
-    dump_frame.layout().addWidget(btn)
-
-    dump_frame.layout().addSpacing(20)
-
-    def save_histo_dialog():
+    def save_histo_dialog(self):
         dialog = QtWidgets.QFileDialog(
-            window, 'Save Histogram', '', 'Text files (*.txt);;All files (*)')
+            self, 'Save Histogram', '', 'Text files (*.txt);;All files (*)')
         dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptMode.AcceptSave)
         dialog.setOption(QtWidgets.QFileDialog.Option.DontUseNativeDialog, True)
         all_check = None
-        if histo.nt > 1:
+        if self.histo.nt > 1:
             all_check = QtWidgets.QCheckBox('Save all t-slices (default: current only)')
             layout = dialog.layout()
             layout.addWidget(all_check, layout.rowCount(), 0, 1, layout.columnCount())
@@ -1221,77 +1275,70 @@ def main():
             return
         path = paths[0]
         if all_check is not None and all_check.isChecked():
-            client.save_histo(path, histo.nt)
+            self.client.save_histo(path, self.histo.nt)
         else:
-            t = t_spin.value()
-            np.savetxt(path, histo.read_plane(t), fmt='%d')
-            log_panel.info(f'Saved t={t} slice to {path}')
-    btn = QtWidgets.QPushButton('Save Histogram...')
-    btn.clicked.connect(save_histo_dialog)
-    dump_frame.layout().addWidget(btn)
+            t = self.t_spin.value()
+            np.savetxt(path, self.histo.read_plane(t), fmt='%d')
+            self.log_panel.info(f'Saved t={t} slice to {path}')
 
-    def save_plot_image_dialog():
+    def save_plot_image_dialog(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            window, 'Save Plot Image', '', 'PNG files (*.png);;All files (*)')
+            self, 'Save Plot Image', '', 'PNG files (*.png);;All files (*)')
         if path:
-            exporters.ImageExporter(plot).export(path)
-    btn = QtWidgets.QPushButton('Save Plot PNG...')
-    btn.clicked.connect(save_plot_image_dialog)
-    dump_frame.layout().addWidget(btn)
+            exporters.ImageExporter(self.plot).export(path)
 
     # ---- params panel ----
-    params_panel = QtWidgets.QWidget()
-    params_panel.setLayout(QtWidgets.QVBoxLayout())
-    params_panel.layout().setContentsMargins(5, 0, 8, 5)
-    params_table = ParamsTable(client)
-    refresh_btn = QtWidgets.QPushButton('Refresh Params')
-    refresh_btn.clicked.connect(refresh_params)
-    params_panel.layout().addWidget(refresh_btn)
-    params_panel.layout().addWidget(params_table)
+
+    def _build_params_panel(self):
+        panel = QtWidgets.QWidget()
+        panel.setLayout(QtWidgets.QVBoxLayout())
+        panel.layout().setContentsMargins(5, 0, 8, 5)
+        self.params_table = ParamsTable(self.client)
+        refresh_btn = QtWidgets.QPushButton('Refresh Params')
+        refresh_btn.clicked.connect(self.refresh_params)
+        panel.layout().addWidget(refresh_btn)
+        panel.layout().addWidget(self.params_table)
+        self.params_panel = panel
 
     # ---- assembly ----
-    log_panel.setVisible(False)  # minimized by default; toggled via "Show Log"
-    log_toggle.toggled.connect(log_panel.setVisible)
-    log_panel.error_logged.connect(lambda: log_toggle.setChecked(True))
 
-    left_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-    left_splitter.addWidget(graphics)
-    left_splitter.addWidget(log_panel)
-    left_splitter.setSizes([600, 200])
+    def _assemble(self):
+        self.log_panel.setVisible(False)  # minimized by default; toggled via "Show Log"
+        self.log_toggle.toggled.connect(self.log_panel.setVisible)
+        self.log_panel.error_logged.connect(lambda: self.log_toggle.setChecked(True))
 
-    main_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-    main_splitter.addWidget(left_splitter)
-    main_splitter.addWidget(params_panel)
-    main_splitter.setSizes([800, 300])
-    main_splitter.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
-                                QtWidgets.QSizePolicy.Policy.Expanding)
+        left_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        left_splitter.addWidget(self.graphics)
+        left_splitter.addWidget(self.log_panel)
+        left_splitter.setSizes([600, 200])
 
-    window.layout().addWidget(buttons)
-    window.layout().addWidget(display_frame)
-    window.layout().addWidget(dump_frame)
-    window.layout().addWidget(status_panel)
-    window.layout().addWidget(main_splitter)
+        main_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        main_splitter.addWidget(left_splitter)
+        main_splitter.addWidget(self.params_panel)
+        main_splitter.setSizes([800, 300])
+        main_splitter.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                                    QtWidgets.QSizePolicy.Policy.Expanding)
+
+        self.layout().addWidget(self.buttons_frame)
+        self.layout().addWidget(self.display_frame)
+        self.layout().addWidget(self.dump_frame)
+        self.layout().addWidget(self.status_panel)
+        self.layout().addWidget(main_splitter)
+
+
+def main():
+    shm_name = sys.argv[1] if len(sys.argv) > 1 else 'umami'
+
+    pg.setConfigOption('background', 'w')
+    pg.setConfigOption('foreground', 'k')
+    app = QtWidgets.QApplication(['umami-histogram'])
+    # Qt's event loop otherwise blocks Python's own SIGINT handling; the
+    # periodic image_timer below keeps ticking into Python so this fires
+    # promptly instead of only between mouse/keyboard events
+    signal.signal(signal.SIGINT, lambda *args: app.quit())
+
+    window = MainWindow(shm_name)
     window.show()
-
-    image_timer = QtCore.QTimer()
-    image_timer.timeout.connect(update_buffer)
-    image_timer.start(IMAGE_REFRESH_MS)
-
-    state_timer = QtCore.QTimer()
-    state_timer.timeout.connect(poll_state)
-    state_timer.start(STATE_POLL_MS)
-
-    # get an initial connection/log entry and populate the mode list & params
-    # right away rather than waiting for the first timer tick; mark the
-    # connection as already-established first so poll_state()'s reconnect
-    # detection doesn't treat this initial setup as a redundant reinit
-    client.ping()
-    was_connected = client.connected
-    modes = client.get_modes() or []
-    mode_combo.addItems(modes)
-    refresh_params()
-    poll_state()
-
     app.exec()
 
 
