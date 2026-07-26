@@ -99,9 +99,9 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bitflag-attr"
-version = "0.13.1"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "212252f2d7935a34bb21da37dcf3bab496668e6bd0ff77f04982d0e8dbaddad0"
+checksum = "6485adef09238c113b7a8aeb5ddd5a5d0ea7b7aee289cbb1ba657356a45bafcc"
 dependencies = [
  "bitflags-attr-macros",
 ]
@@ -120,9 +120,9 @@ checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
 name = "bitflags-attr-macros"
-version = "0.13.1"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aecb76a3b8f0919f0fa59ce75239fdbaa226ba579e251cc87f4ad4827e94d98d"
+checksum = "f1eb629b2281381ca352cebe7b0684628768b0bbfacddea13e3b08ff3e4a982d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -314,9 +314,9 @@ dependencies = [
 
 [[package]]
 name = "either"
-version = "1.16.0"
+version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
+checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 
 [[package]]
 name = "equivalent"
@@ -419,9 +419,9 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hdf5-metno"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "845de82d327e55f72a16db43ddc875ad3b1dc8f8b5860b9df135851c5f4e11a3"
+checksum = "effaf90242ed59abcbed70e156cb1830dd29fad918990cdf3413fd25934b999c"
 dependencies = [
  "bitflags 2.13.1",
  "cfg-if",
@@ -435,21 +435,21 @@ dependencies = [
 
 [[package]]
 name = "hdf5-metno-derive"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5071e6eb3474ce3c38c2e6e01061c4224e49be8314b11ea8cad97a70efaa000a"
+checksum = "2368b6d71ab96708b91912af3a93f7b8be9b1ecfca082f2c0868ce327a1fe926"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]
 name = "hdf5-metno-sys"
-version = "0.12.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5588d150d10fc4ef9407c5b9f01735e3de0d71367b730b940cbd5be08f3e1d82"
+checksum = "ff52250062cf9ecd180ae4eccbb5e00b1f89ee44cb48046d1339c99f5fb6c169"
 dependencies = [
  "libc",
  "libloading",
