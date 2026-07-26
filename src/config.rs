@@ -61,8 +61,34 @@ pub enum SpecificInputConfig {
     GE(GEConfig),
     Canon(CanonConfig),
     Mesy(MesyConfig),
+    #[cfg(feature = "jumiom")]
+    Jumiom(JumiomConfig),
     #[cfg(test)]
     Test(TestInputConfig),
+}
+
+/// Acquisition mode for the Jumiom PSD (selects both the hardware mode set
+/// up via `jumpsd_set_*_mode` and the raw word-stream decoding). `Tof2` is
+/// intentionally not supported (see `src/input/jumiom_decode.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(not(any(test, feature = "jumiom")), allow(dead_code))]
+pub enum JumiomMode {
+    Tof1,
+    Raw,
+    Ramp,
+}
+
+#[cfg(feature = "jumiom")]
+#[derive(Debug, Deserialize)]
+pub struct JumiomConfig {
+    /// Device number, i.e. `/dev/jumpsd_d<device>`.
+    pub device: i32,
+    pub mode: JumiomMode,
+    /// If true, keep Neutron events even when the hardware gate bit is unset
+    /// (matches the legacy `ignoregate` toggle).
+    #[serde(default)]
+    pub use_gate: bool,
 }
 
 /// Config for a synthetic input backend used only in pipeline tests: it

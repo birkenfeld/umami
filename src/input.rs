@@ -4,6 +4,9 @@
 mod ge;
 mod canon;
 mod mesy;
+mod jumiom_decode;
+#[cfg(feature = "jumiom")]
+mod jumiom;
 #[cfg(test)]
 mod test;
 
@@ -83,6 +86,8 @@ pub fn start(config: SpecificInputConfig, confdir: &Path, common: InputCommon) -
         SpecificInputConfig::GE(cfg) => ge::GeInput::start(cfg, confdir, common)?,
         SpecificInputConfig::Canon(cfg) => canon::CanonInput::start(cfg, confdir, common)?,
         SpecificInputConfig::Mesy(cfg) => mesy::MesyInput::start(cfg, confdir, common)?,
+        #[cfg(feature = "jumiom")]
+        SpecificInputConfig::Jumiom(cfg) => jumiom::JumiomInput::start(cfg, confdir, common)?,
         #[cfg(test)]
         SpecificInputConfig::Test(cfg) => test::TestInput::start(cfg, common)?,
     }

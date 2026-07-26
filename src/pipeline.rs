@@ -256,6 +256,8 @@ mod tests {
             SpecificInputConfig::GE(cfg) => &cfg.source,
             SpecificInputConfig::Canon(cfg) => &cfg.source,
             SpecificInputConfig::Mesy(cfg) => &cfg.local,
+            #[cfg(feature = "jumiom")]
+            SpecificInputConfig::Jumiom(_) => return None,
             SpecificInputConfig::Test(_) => return None,
         };
         match source {

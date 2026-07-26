@@ -32,6 +32,10 @@ cargo build --features trace
 - **HDF5 library** must be installed (`hdf5-metno` crate links it); the
   `hdf5` output is a default-on feature, disable with `--no-default-features`
   if you don't need it and don't have the library
+- **libjumpsd.so** (from `DriverJumiom`) is required for the `jumiom` input
+  feature (off by default, `--features jumiom`); if it isn't on a standard
+  linker search path, point `JUMPSD_LIB_DIR` at its directory (or the .so
+  file itself)
 - **jemalloc** linked at compile time (global allocator in `src/bin/umami.rs`)
 - Rust edition 2024, MSRV currently 1.88
 
