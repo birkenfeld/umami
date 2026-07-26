@@ -181,7 +181,7 @@ impl Event {
     pub fn with_abs_time_and_offset(mut self, time: EventTime, off: EventTime) -> Self {
         self.time = time;
         self.rel_time = time + off;
-        self.flags |= EventFlags::HasRelTime;
+        self.flags.set(EventFlags::HasRelTime);
         self
     }
 
@@ -192,7 +192,7 @@ impl Event {
 
     pub fn with_rel_time(mut self, rel_time: EventTime) -> Self {
         self.rel_time = rel_time;
-        self.flags |= EventFlags::HasRelTime;
+        self.flags.set(EventFlags::HasRelTime);
         self
     }
 
