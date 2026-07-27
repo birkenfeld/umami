@@ -194,6 +194,7 @@ pub trait Input: Send + HasParams {
                         map.insert(format!("{name}.{param}"), info);
                     }
                     Err(e) => {
+                        lprintln!(ERROR, [name] "Error getting input params: {e:#}");
                         let _ = rep.send(CommandReply::new_mod_error(
                             name, format!("Failed to get input params: {e:#}")));
                         return;
@@ -204,6 +205,7 @@ pub trait Input: Send + HasParams {
                         map.insert(format!("{}.{param}", common.recipe_name), info);
                     }
                     Err(e) => {
+                        lprintln!(ERROR, [name] "Error getting recipe params: {e:#}");
                         let _ = rep.send(CommandReply::new_mod_error(
                             name, format!("Failed to get recipe params: {e:#}")));
                         return;
@@ -226,6 +228,7 @@ pub trait Input: Send + HasParams {
                 if !own_params.is_empty()
                     && let Err(e) = self.update_params(name, own_params)
                 {
+                    lprintln!(ERROR, [name] "Error setting input params: {e:#}");
                     let _ = rep.send(CommandReply::new_mod_error(
                         name, format!("Failed to set input params: {e:#}")));
                     return;
@@ -233,6 +236,7 @@ pub trait Input: Send + HasParams {
                 if !recipe_params.is_empty()
                     && let Err(e) = common.recipe.update_params(common.recipe_name, recipe_params)
                 {
+                    lprintln!(ERROR, [name] "Error setting recipe params: {e:#}");
                     let _ = rep.send(CommandReply::new_mod_error(
                         name, format!("Failed to set recipe params: {e:#}")));
                     return;
