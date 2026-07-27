@@ -43,7 +43,11 @@ class ParamsTable(QtWidgets.QTableWidget):
                 checkbox = QtWidgets.QCheckBox()
                 checkbox.setChecked(value)
                 checkbox.toggled.connect(lambda checked, k=key: self._send(k, checked))
-                self.setCellWidget(row, 1, checkbox)
+                cell = QtWidgets.QWidget()
+                cell_layout = QtWidgets.QHBoxLayout(cell)
+                cell_layout.setContentsMargins(6, 0, 0, 0)
+                cell_layout.addWidget(checkbox)
+                self.setCellWidget(row, 1, cell)
             else:
                 if isinstance(value, list):
                     text = json.dumps(value)
