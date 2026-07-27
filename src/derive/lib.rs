@@ -27,6 +27,7 @@ struct Param {
     datatype: Option<String>,
     help: Option<String>,
     has_setter: Option<bool>,
+    readonly: Option<bool>,
 }
 
 #[proc_macro_derive(HasParams, attributes(param))]
@@ -57,6 +58,16 @@ pub fn derive_has_params(input: proc_macro::TokenStream) -> proc_macro::TokenStr
                                             this is a programming bug")})?,
                 }).context("Serializing parameter value")?);
         });
+
+        if param.readonly.unwrap_or(false) {
+            setters.push(quip! {
+                if params.contains_key(#name) {
+                    Err(anyhow::anyhow!(
+                        #{format!("Parameter {name} is read-only")}))?;
+                }
+            });
+            return;
+        }
 
         let msg = format!("Value {{:?}} is invalid for parameter {name}, \
                            needs to be: {typ}");

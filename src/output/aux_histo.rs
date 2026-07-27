@@ -114,7 +114,7 @@ pub struct AuxHistoOutput {
     name: ModuleId,
     expr_aliases: Arc<AliasTable>,
     #[param(help = "Expression aliases available to filter/axis expressions, read-only",
-            datatype = "array of alias definitions")]
+            datatype = "array of alias definitions", readonly = true)]
     available_aliases: Vec<crate::expr::ExprAlias>,
     #[param(help = "Global on/off switch")]
     enabled: bool,
@@ -303,6 +303,18 @@ mod tests {
         assert_eq!(params["available_aliases"]["value"][0]["name"], "adc0");
         assert_eq!(params["available_aliases"]["value"][0]["expr"], "raw_0[0..12:signed]");
         assert_eq!(params["available_aliases"]["value"][0]["help"], "test alias");
+    }
+
+    #[test]
+    fn test_setting_available_aliases_is_rejected() {
+        let ipc = unique_ipc();
+        let common = test_common(&ipc, "aux");
+        let mut output = AuxHistoOutput::from_config(&common, toml::Table::new()).unwrap();
+
+        let mut params = ParamMap::new();
+        params.insert("available_aliases".into(), serde_json::json!([]));
+        let err = output.update_params(ModuleId::new("aux".into()), params).unwrap_err();
+        assert!(format!("{err:#}").contains("read-only"));
     }
 
     #[test]
