@@ -1,5 +1,10 @@
-"""Bundled Material Symbols icons used throughout the GUI, plus dark/light
-theme detection."""
+# Part of the Unified Mechanism for Acquisition of Measured Intensity
+# (UMAMI), see README and LICENSE files for more info.
+
+"""Bundled Material Symbols icons used throughout the GUI.
+
+Also includes dark/light theme detection.
+"""
 
 from pathlib import Path
 
@@ -14,7 +19,8 @@ def is_dark_mode():
     scheme = QtGui.QGuiApplication.styleHints().colorScheme()
     if scheme != QtCore.Qt.ColorScheme.Unknown:
         return scheme == QtCore.Qt.ColorScheme.Dark
-    window_color = QtWidgets.QApplication.palette().color(QtGui.QPalette.ColorRole.Window)
+    window_color = QtWidgets.QApplication.palette().color(
+        QtGui.QPalette.ColorRole.Window)
     return window_color.lightness() < 128
 
 
@@ -39,14 +45,15 @@ def load_icon(name, color=None):
 
 
 def icon_button(name, text='', tint=True):
-    """A QPushButton with one of the bundled icons.
+    """Create a QPushButton with one of the bundled icons.
 
     By default the icon is tinted to match the current palette's button-text
     color, so it stays visible against both light- and dark-mode button faces.
     """
     color = None
     if tint:
-        color = QtWidgets.QApplication.palette().color(QtGui.QPalette.ColorRole.ButtonText)
+        color = QtWidgets.QApplication.palette().color(
+            QtGui.QPalette.ColorRole.ButtonText)
     btn = QtWidgets.QPushButton(load_icon(name, color=color), text)
     btn.setIconSize(ICON_SIZE)
     return btn

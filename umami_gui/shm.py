@@ -1,3 +1,6 @@
+# Part of the Unified Mechanism for Acquisition of Measured Intensity
+# (UMAMI), see README and LICENSE files for more info.
+
 """Read-only access to a UMAMI shared-memory histogram segment.
 
 Shared-memory segment layout:
@@ -20,10 +23,10 @@ import cffi
 import numpy as np
 
 ffi = cffi.FFI()
-ffi.cdef("""
+ffi.cdef('''
 int shm_open(const char *name, int flags, unsigned int mode);
 int shm_unlink(const char *name);
-""")
+''')
 
 # run_id(128) + global_state(u32) + nx,ny,nt,ni(u16 x4) + reserved(u32) padding
 HEADER_SIZE = 128 + 4 * 4
@@ -42,8 +45,8 @@ class ShmHistogram:
         lib = ffi.dlopen('rt')
         fd = lib.shm_open(shm_name.encode(), os.O_RDONLY, 0o666)
         if fd < 0:
-            raise RuntimeError(f'Could not open shared memory {shm_name!r}: '
-                                f'{os.strerror(-fd)}')
+            msg = f'Could not open shared memory {shm_name!r}: {os.strerror(-fd)}'
+            raise RuntimeError(msg)
         self.fd = fd
         header_map = mmap.mmap(fd, HEADER_SIZE, prot=mmap.PROT_READ)
         header = np.frombuffer(header_map, '<u2', count=4, offset=132)

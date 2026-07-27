@@ -1,3 +1,6 @@
+# Part of the Unified Mechanism for Acquisition of Measured Intensity
+# (UMAMI), see README and LICENSE files for more info.
+
 """Live histogram viewer and debugging tool for UMAMI shared-memory output.
 
 Reads a 3-D histogram (x * y * t) from a POSIX shared-memory segment (see

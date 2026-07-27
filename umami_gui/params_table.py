@@ -1,3 +1,6 @@
+# Part of the Unified Mechanism for Acquisition of Measured Intensity
+# (UMAMI), see README and LICENSE files for more info.
+
 """Live recipe/output parameter table, editable in place."""
 
 import json
@@ -6,8 +9,10 @@ from pyqtgraph.Qt import QtCore, QtWidgets
 
 
 class ParamsTable(QtWidgets.QTableWidget):
-    """Shows current recipe/output parameters from get_params; editing a
-    cell pushes the change live via set_params."""
+    """Shows current recipe/output parameters from get_params.
+
+    Editing a cell pushes the change live via set_params.
+    """
 
     def __init__(self, client):
         super().__init__(0, 2)

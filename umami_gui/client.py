@@ -1,3 +1,6 @@
+# Part of the Unified Mechanism for Acquisition of Measured Intensity
+# (UMAMI), see README and LICENSE files for more info.
+
 """Command-socket client for talking to a running UMAMI pipeline."""
 
 import json
@@ -8,8 +11,11 @@ SOCKET_TIMEOUT = 0.5
 
 
 class UmamiClient:
-    """Talks to the UMAMI command socket. Never raises to callers; every
-    failure is logged and the call returns None instead."""
+    """Talks to the UMAMI command socket.
+
+    Never raises to callers; every failure is logged and the call returns
+    None instead.
+    """
 
     def __init__(self, ipc_name, log):
         self.ipc_name = ipc_name

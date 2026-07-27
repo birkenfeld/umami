@@ -1,3 +1,6 @@
+# Part of the Unified Mechanism for Acquisition of Measured Intensity
+# (UMAMI), see README and LICENSE files for more info.
+
 """Top-level UMAMI histogram viewer window."""
 
 import sys
@@ -22,10 +25,13 @@ STATE_POLL_MS = 1000
 
 
 class MainWindow(QtWidgets.QWidget):
-    """Top-level UMAMI histogram viewer: control buttons, the live 2-D
-    histogram image, per-input status, and a docked recipe/output params
-    table. Owns the shm mapping and command-socket client, and drives all
-    periodic polling (image refresh, connection/state heartbeat)."""
+    """Top-level UMAMI histogram viewer.
+
+    Has control buttons, the live 2-D histogram image, per-input status, and a
+    docked recipe/output params table. Owns the shm mapping and command-socket
+    client, and drives all periodic polling (image refresh, connection/state
+    heartbeat).
+    """
 
     def __init__(self, shm_name):
         super().__init__()
@@ -127,7 +133,8 @@ class MainWindow(QtWidgets.QWidget):
     def open_t_projection_window(self):
         if self.t_proj_window is None:
             self.t_proj_window = pg.PlotWidget(
-                title='TOF spectrum', axisItems={'bottom': RotatedAxisItem(orientation='bottom')})
+                title='TOF spectrum',
+                axisItems={'bottom': RotatedAxisItem(orientation='bottom')})
             self.t_proj_window.setWindowTitle('UMAMI TOF spectrum')
             self.t_proj_window.setLabel('bottom', 't bin')
             self.t_proj_window.setLabel('left', 'counts')
@@ -198,7 +205,8 @@ class MainWindow(QtWidgets.QWidget):
                 lo, hi = np.log10(lo + 0.1), np.log10(hi + 0.1)
             self.img.setImage(display, autoLevels=False, levels=(lo, hi))
         if self.proj_curve is not None and self.proj_window.isVisible():
-            self.proj_curve.setData(self.proj_x_edges, buf.sum(axis=0), stepMode='center')
+            self.proj_curve.setData(self.proj_x_edges, buf.sum(axis=0),
+                                    stepMode='center')
         if self.t_proj_curve is not None and self.t_proj_window.isVisible():
             if self.t_bin_edges_ns is not None:
                 n = len(self.t_bin_edges_ns)
@@ -220,9 +228,12 @@ class MainWindow(QtWidgets.QWidget):
         self.prev['time'] = now
 
     def reopen_histogram(self):
-        """Re-attach to the shm segment from scratch -- after a reconnect,
-        umami may have restarted with different histogram dimensions, and
-        the old mapping would otherwise keep showing stale, frozen data."""
+        """Re-attach to the shm segment from scratch.
+
+        After a reconnect, umami may have restarted with different histogram
+        dimensions, and the old mapping would otherwise keep showing stale,
+        frozen data.
+        """
         try:
             new_histo = ShmHistogram(self.shm_name)
         except RuntimeError as e:
@@ -255,8 +266,11 @@ class MainWindow(QtWidgets.QWidget):
             self.mode_combo.blockSignals(False)
 
     def reinit_after_reconnect(self):
-        """The pipeline may have (re)started with a different config across
-        a disconnect -- re-pull everything instead of trusting stale state."""
+        """Re-pull everything instead of trusting stale state.
+
+        The pipeline may have (re)started with a different config across
+        a disconnect.
+        """
         self.log_panel.info('Reconnected -- reinitializing (config may have changed)')
         self.reopen_histogram()
         self.aux_histo_window.invalidate_all()
@@ -299,7 +313,7 @@ class MainWindow(QtWidgets.QWidget):
                             QtWidgets.QSizePolicy.Policy.Fixed)
 
         btn = icon_button('reset', 'Reset')
-        btn.clicked.connect(lambda: self.client.reset())
+        btn.clicked.connect(self.client.reset)
         frame.layout().addWidget(btn)
 
         frame.layout().addWidget(QtWidgets.QLabel('Run ID:'))
@@ -311,7 +325,7 @@ class MainWindow(QtWidgets.QWidget):
 
         btn = icon_button('clear', 'Clear', tint=False)
         btn.setStyleSheet('background-color: rgb(190, 190, 190); color: black;')
-        btn.clicked.connect(lambda: self.client.clear())
+        btn.clicked.connect(self.client.clear)
         frame.layout().addWidget(btn)
 
         btn = icon_button('start', 'Start', tint=False)
@@ -321,7 +335,7 @@ class MainWindow(QtWidgets.QWidget):
 
         btn = icon_button('stop', 'Stop', tint=False)
         btn.setStyleSheet('background-color: rgb(255, 150, 150); color: black;')
-        btn.clicked.connect(lambda: self.client.stop())
+        btn.clicked.connect(self.client.stop)
         frame.layout().addWidget(btn)
 
         frame.layout().addSpacing(20)
@@ -345,7 +359,8 @@ class MainWindow(QtWidgets.QWidget):
         self.buttons_frame = frame
 
     def on_start_clicked(self):
-        self.client.start(self.run_id_field.text() or time.strftime('%Y-%m-%d_%H:%M:%S'))
+        self.client.start(self.run_id_field.text() or
+                          time.strftime('%Y-%m-%d_%H:%M:%S'))
 
     def show_aux_histo_window(self):
         self.aux_histo_window.show()
@@ -376,7 +391,8 @@ class MainWindow(QtWidgets.QWidget):
         frame.layout().addSpacing(20)
         frame.layout().addWidget(QtWidgets.QLabel('Colormap:'))
         colormap_combo = QtWidgets.QComboBox()
-        colormap_combo.addItems(['viridis', 'inferno', 'plasma', 'magma', 'turbo', 'grey'])
+        colormap_combo.addItems(['viridis', 'inferno', 'plasma', 'magma',
+                                 'turbo', 'grey'])
         colormap_combo.currentTextChanged.connect(
             lambda name: self.img.setColorMap(pg.colormap.get(name)))
         frame.layout().addWidget(colormap_combo)
@@ -425,8 +441,11 @@ class MainWindow(QtWidgets.QWidget):
         view_pos = self.plot.vb.mapSceneToView(scene_pos)
         x, y = int(np.floor(view_pos.x())), int(np.floor(view_pos.y()))
         if (self.last_buf is not None
-                and 0 <= y < self.last_buf.shape[0] and 0 <= x < self.last_buf.shape[1]):
-            self.cursor_label.setText(f'x={x}  y={y}  counts={int(self.last_buf[y, x])}')
+            and 0 <= y < self.last_buf.shape[0]
+            and 0 <= x < self.last_buf.shape[1]
+        ):
+            self.cursor_label.setText(
+                f'x={x}  y={y}  counts={int(self.last_buf[y, x])}')
         else:
             self.cursor_label.setText('')
 
@@ -445,7 +464,8 @@ class MainWindow(QtWidgets.QWidget):
         self.raw_dump_path.setPlaceholderText('/path/to/raw/dump/dir')
         frame.layout().addWidget(self.raw_dump_path)
         self.raw_dump_check.toggled.connect(
-            lambda checked: self.client.set_raw_dump(checked, self.raw_dump_path.text()))
+            lambda checked: self.client.set_raw_dump(checked,
+                                                     self.raw_dump_path.text()))
 
         browse_btn = QtWidgets.QPushButton('...')
         browse_btn.setMaximumWidth(30)

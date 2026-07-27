@@ -1,3 +1,6 @@
+# Part of the Unified Mechanism for Acquisition of Measured Intensity
+# (UMAMI), see README and LICENSE files for more info.
+
 """Entry point for the umami-gui console script."""
 
 import signal
@@ -25,7 +28,7 @@ def main():
     # Qt's event loop otherwise blocks Python's own SIGINT handling; the
     # periodic image_timer below keeps ticking into Python so this fires
     # promptly instead of only between mouse/keyboard events
-    signal.signal(signal.SIGINT, lambda *args: app.quit())
+    signal.signal(signal.SIGINT, lambda *_args: app.quit())
 
     window = MainWindow(shm_name)
     window.show()

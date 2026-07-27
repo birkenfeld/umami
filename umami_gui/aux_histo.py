@@ -1,6 +1,11 @@
-"""Auxiliary/diagnostic histogram support: a form-based add/edit dialog and
-the window that discovers a running `aux_histo` output and live-plots its
-histograms."""
+# Part of the Unified Mechanism for Acquisition of Measured Intensity
+# (UMAMI), see README and LICENSE files for more info.
+
+"""Auxiliary/diagnostic histogram support.
+
+A form-based add/edit dialog and the window that discovers a running
+`aux_histo` output and live-plots its histograms.
+"""
 
 import numpy as np
 import pyqtgraph as pg
@@ -11,7 +16,7 @@ from .shm import ShmHistogram
 
 # Kept in sync by hand with the grammar/field table documented in
 # src/expr.rs -- there is no machine-readable source for this on the wire.
-EXPR_SYNTAX_HELP = """\
+EXPR_SYNTAX_HELP = '''\
 Fields: time, rel_time, raw_0, raw_1, channel, ampl, x, y, t, i, \
 flags, evtype, auxnum, gateup
 
@@ -27,18 +32,22 @@ Bit-slice: expr[offset..end] (unsigned) or expr[offset..end:signed] \
 
 A filter's result is treated as a boolean (0 = drop, nonzero = keep); \
 an axis expression's result is binned into [min, max) -- values outside \
-that range are silently dropped, not clamped."""
+that range are silently dropped, not clamped.'''
 
 
 class HistoDefDialog(QtWidgets.QDialog):
-    """Add/edit one auxiliary histogram definition (name/filter/x/y-axis)
-    through a form, with an inline expression-syntax reference, instead of
-    hand-writing the equivalent JSON."""
+    """Add/edit one auxiliary histogram definition (name/filter/x/y-axis).
+
+    Uses a form, with an inline expression-syntax reference, instead of
+    hand-writing the equivalent JSON.
+    """
 
     @staticmethod
     def _make_range_row(bins_default, min_default, max_default):
-        """One line combining an axis's Bins/Min/Max fields, for space
-        economy -- returns (row_widget, bins_spinbox, min_edit, max_edit)."""
+        """One line combining an axis's Bins/Min/Max fields, for space economy.
+
+        Returns (row_widget, bins_spinbox, min_edit, max_edit).
+        """
         row = QtWidgets.QWidget()
         row_layout = QtWidgets.QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
@@ -66,7 +75,8 @@ class HistoDefDialog(QtWidgets.QDialog):
         self.name_edit = QtWidgets.QLineEdit(spec.get('name', ''))
         form.addRow('Name:', self.name_edit)
         self.filter_edit = QtWidgets.QLineEdit(spec.get('filter') or '')
-        self.filter_edit.setPlaceholderText('e.g. evtype == neutron  (empty = always true)')
+        self.filter_edit.setPlaceholderText(
+            'e.g. evtype == neutron  (empty = always true)')
         form.addRow('Filter:', self.filter_edit)
 
         form.addRow(QtWidgets.QLabel('<b>X axis</b>'))
@@ -83,7 +93,8 @@ class HistoDefDialog(QtWidgets.QDialog):
         self.y_expr = QtWidgets.QLineEdit((y or {}).get('expr', ''))
         form.addRow('  Expr:', self.y_expr)
         y_row, self.y_bins, self.y_min, self.y_max = self._make_range_row(
-            (y or {}).get('bins', 256), (y or {}).get('min', 0), (y or {}).get('max', 256))
+            (y or {}).get('bins', 256), (y or {}).get('min', 0),
+            (y or {}).get('max', 256))
         form.addRow('  Range:', y_row)
 
         def sync_y_enabled(checked):
@@ -114,10 +125,11 @@ class HistoDefDialog(QtWidgets.QDialog):
         try:
             return int(field.text().strip())
         except ValueError:
-            QtWidgets.QMessageBox.warning(self, 'Invalid', f'{label} must be an integer.')
+            QtWidgets.QMessageBox.warning(
+                self, 'Invalid', f'{label} must be an integer.')
             return None
 
-    def _validate_and_accept(self):
+    def _validate_and_accept(self):   # noqa: PLR0911
         if not self.name_edit.text().strip():
             QtWidgets.QMessageBox.warning(self, 'Invalid', 'Name is required.')
             return
@@ -128,17 +140,21 @@ class HistoDefDialog(QtWidgets.QDialog):
         if x_min is None or x_max is None:
             return
         if x_max <= x_min:
-            QtWidgets.QMessageBox.warning(self, 'Invalid', 'X max must be greater than X min.')
+            QtWidgets.QMessageBox.warning(
+                self, 'Invalid', 'X max must be greater than X min.')
             return
         if self.y_check.isChecked():
             if not self.y_expr.text().strip():
-                QtWidgets.QMessageBox.warning(self, 'Invalid', 'Y expression is required.')
+                QtWidgets.QMessageBox.warning(
+                    self, 'Invalid', 'Y expression is required.')
                 return
-            y_min, y_max = self._int(self.y_min, 'Y min'), self._int(self.y_max, 'Y max')
+            y_min, y_max = (self._int(self.y_min, 'Y min'),
+                            self._int(self.y_max, 'Y max'))
             if y_min is None or y_max is None:
                 return
             if y_max <= y_min:
-                QtWidgets.QMessageBox.warning(self, 'Invalid', 'Y max must be greater than Y min.')
+                QtWidgets.QMessageBox.warning(
+                    self, 'Invalid', 'Y max must be greater than Y min.')
                 return
         # Note: this is a client-side sanity check only -- the authoritative
         # validation (expression syntax, etc.) happens server-side and any
@@ -165,8 +181,9 @@ class HistoDefDialog(QtWidgets.QDialog):
 
 
 class AuxHistoWindow(QtWidgets.QWidget):
-    """Separate window for user-defined auxiliary/diagnostic histograms
-    (the `aux_histo` output type): discovers the first active one via
+    """Separate window for user-defined auxiliary/diagnostic histograms.
+
+    Handles the `aux_histo` output type: discovers the first active one via
     get_params (the first "<module>.histos" key found -- only one such
     output is supported here, matching the backend's own one-output
     convenience assumption), lets the user add/edit/delete definitions
@@ -236,21 +253,23 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._update_plots)
 
-    def showEvent(self, event):
+    def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
         self.refresh()
         self._timer.start(self.REFRESH_MS)
 
-    def hideEvent(self, event):
+    def hideEvent(self, event):  # noqa: N802
         super().hideEvent(event)
         self._timer.stop()
 
     def refresh(self):
-        """Re-pull histogram definitions from get_params -- using the first
-        "<module>.histos" key found -- and rebuild the table/plot grid to
-        match (adding new ones, dropping removed ones). Safe to call often
-        -- e.g. piggybacked on the main window's own params refresh --
-        since it no-ops on a failed/empty get_params."""
+        """Re-pull histogram definitions and rebuild the table/plot grid.
+
+        Uses the first "<module>.histos" key found from get_params, adding
+        new histograms and dropping removed ones. Safe to call often -- e.g.
+        piggybacked on the main window's own params refresh -- since it
+        no-ops on a failed/empty get_params.
+        """
         params = self.client.get_params()
         if params is None:
             return
@@ -269,13 +288,15 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self.plot_area.removeItem(plot_item)
 
     def invalidate_all(self):
-        """Force every cached shm segment to be reopened on the next
-        refresh. Needed both after the umami process itself restarts
-        (same-named segments recreated from scratch, which name-based
-        diffing in _rebuild() has no way to notice on its own) and after
-        any add/edit/delete (the whole histos list is replaced server-side,
+        """Force every cached shm segment to be reopened on the next refresh.
+
+        Needed both after the umami process itself restarts (same-named
+        segments recreated from scratch, which name-based diffing in
+        _rebuild() has no way to notice on its own) and after any
+        add/edit/delete (the whole histos list is replaced server-side,
         recreating every segment even for entries whose definition didn't
-        change)."""
+        change).
+        """
         for name in list(self._shms):
             self._forget(name)
 
@@ -290,7 +311,8 @@ class AuxHistoWindow(QtWidgets.QWidget):
             self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(spec['x']['expr']))
             self.table.setItem(row, 2,
                 QtWidgets.QTableWidgetItem(spec['y']['expr'] if spec.get('y') else ''))
-            self.table.setItem(row, 3, QtWidgets.QTableWidgetItem(spec.get('filter') or ''))
+            self.table.setItem(
+                row, 3, QtWidgets.QTableWidgetItem(spec.get('filter') or ''))
             btn_widget = QtWidgets.QWidget()
             btn_layout = QtWidgets.QHBoxLayout(btn_widget)
             btn_layout.setContentsMargins(5, 0, 5, 0)
@@ -321,7 +343,8 @@ class AuxHistoWindow(QtWidgets.QWidget):
                 continue
             self._shms[name] = shm
             is_2d = shm.ny > 1
-            plot_item = self.plot_area.addPlot(row=i // col_count, col=i % col_count, title=name)
+            plot_item = self.plot_area.addPlot(
+                row=i // col_count, col=i % col_count, title=name)
             if is_2d:
                 img = pg.ImageItem(border='w', axisOrder='row-major')
                 # shift by half a pixel so integer axis ticks land on pixel
@@ -335,7 +358,8 @@ class AuxHistoWindow(QtWidgets.QWidget):
                 img.setColorMap(pg.colormap.get('viridis'))
                 self._plots[name] = (plot_item, img, True)
             else:
-                curve = plot_item.plot(stepMode='center', fillLevel=0, brush=(0, 0, 255, 80))
+                curve = plot_item.plot(
+                    stepMode='center', fillLevel=0, brush=(0, 0, 255, 80))
                 self._plots[name] = (plot_item, curve, False)
 
     def _update_plots(self):
@@ -365,12 +389,13 @@ class AuxHistoWindow(QtWidgets.QWidget):
     def _add_histogram(self):
         if self._module is None:
             QtWidgets.QMessageBox.warning(
-                self, 'No output', 'No active aux_histo output found -- configure one first.')
+                self, 'No output',
+                'No active aux_histo output found -- configure one first.')
             return
         dialog = HistoDefDialog(self)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
-        new_specs = self._histos + [dialog.spec()]
+        new_specs = [*self._histos, dialog.spec()]
         self.client.set_params({f'{self._module}.histos': new_specs})
         self.invalidate_all()
         self.refresh()
@@ -379,7 +404,8 @@ class AuxHistoWindow(QtWidgets.QWidget):
         dialog = HistoDefDialog(self, spec)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
-        new_specs = [dialog.spec() if h['name'] == spec['name'] else h for h in self._histos]
+        new_specs = [dialog.spec() if h['name'] == spec['name'] else h
+                     for h in self._histos]
         self.client.set_params({f'{self._module}.histos': new_specs})
         self.invalidate_all()
         self.refresh()
@@ -387,7 +413,8 @@ class AuxHistoWindow(QtWidgets.QWidget):
     def _delete_histogram(self, name):
         reply = QtWidgets.QMessageBox.question(
             self, 'Delete', f'Delete histogram {name!r}?',
-            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No)
+            QtWidgets.QMessageBox.StandardButton.Yes |
+            QtWidgets.QMessageBox.StandardButton.No)
         if reply != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         new_specs = [h for h in self._histos if h['name'] != name]

@@ -1,3 +1,6 @@
+# Part of the Unified Mechanism for Acquisition of Measured Intensity
+# (UMAMI), see README and LICENSE files for more info.
+
 """Scrolling, timestamped log widget for commands, replies, and errors."""
 
 import time
@@ -9,7 +12,9 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 class LogPanel(QtWidgets.QPlainTextEdit):
     """Scrolling, timestamped log of commands, replies, and errors."""
 
-    COLORS: ClassVar = {'warning': QtGui.QColor('darkorange'), 'error': QtGui.QColor('red')}
+    # TODO dark mode
+    COLORS: ClassVar = {'warning': QtGui.QColor('darkorange'),
+                        'error': QtGui.QColor('red')}
     error_logged = QtCore.pyqtSignal()
 
     def __init__(self):

@@ -1,3 +1,6 @@
+# Part of the Unified Mechanism for Acquisition of Measured Intensity
+# (UMAMI), see README and LICENSE files for more info.
+
 """Custom pyqtgraph plot items shared across umami-gui windows."""
 
 import pyqtgraph as pg
@@ -5,14 +8,16 @@ from pyqtgraph.Qt import QtCore
 
 
 class RotatedAxisItem(pg.AxisItem):
-    """An AxisItem that draws its tick labels at an angle, for long labels
-    (e.g. time-bin ranges) that would otherwise overlap."""
+    """An AxisItem that draws its tick labels at an angle.
+
+    For long labels (e.g. time-bin ranges) that would otherwise overlap.
+    """
 
     def __init__(self, *args, angle=-40, **kwargs):
         super().__init__(*args, **kwargs)
         self.tick_angle = angle
 
-    def drawPicture(self, p, axisSpec, tickSpecs, textSpecs):
+    def drawPicture(self, p, axisSpec, tickSpecs, textSpecs):  # noqa: N802,N803
         p.setRenderHint(p.RenderHint.Antialiasing, False)
         p.setRenderHint(p.RenderHint.TextAntialiasing, True)
 

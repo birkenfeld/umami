@@ -23,12 +23,19 @@ dev = [
 ]
 
 [tool.setuptools]
-# explicit, not auto-discovered -- the Rust crate's own src/ directory at
-# the repo root would otherwise confuse setuptools' auto-discovery into
-# mistaking it for a second (invalid) Python src-layout
+# explicit, not auto-discovered (Rust src/ is not a package)
 packages = ["umami_gui", "umami_gui.icons"]
 
 [tool.setuptools.package-data]
-# bundled SVG icons -- not .py files, so setuptools won't include them
-# in the wheel unless listed explicitly here
 umami_gui = ["icons/*.svg"]
+
+[tool.ruff]
+exclude = ["umami_det.py"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["ANN", "D1", "D203", "D213", "EM1", "FBT", "G004",
+          "PERF203", "PLR2004", "TD", "TRY400"]
+flake8-copyright.notice-rgx = "(?i)see README and LICENSE"
+flake8-quotes.inline-quotes = "single"
+flake8-quotes.multiline-quotes = "single"

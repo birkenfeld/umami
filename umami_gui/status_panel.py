@@ -1,3 +1,6 @@
+# Part of the Unified Mechanism for Acquisition of Measured Intensity
+# (UMAMI), see README and LICENSE files for more info.
+
 """Connection/mode/per-input state indicator panel."""
 
 from typing import ClassVar
@@ -15,21 +18,21 @@ class StatusPanel(QtWidgets.QFrame):
     # plain named colors read fine on a light background but are too dark/
     # muddy (or, for the default-text fallback, nearly invisible) on a dark
     # one -- pick brighter/lighter equivalents per theme instead
-    STATE_COLORS_LIGHT: ClassVar = {'idle': 'gray', 'running': 'green', 'ended': 'blue'}
-    STATE_COLORS_DARK: ClassVar = {'idle': '#aaaaaa', 'running': '#66bb6a', 'ended': '#64b5f6'}
-    ERROR_COLOR_LIGHT = 'red'
-    ERROR_COLOR_DARK = '#ef5350'
-    DEFAULT_TEXT_LIGHT = '#333333'
-    DEFAULT_TEXT_DARK = '#cccccc'
+    STATE_COLORS: ClassVar = [
+        {'idle': 'gray', 'running': 'green', 'ended': 'blue'},
+        {'idle': '#aaaaaa', 'running': '#66bb6a', 'ended': '#64b5f6'},
+    ]
+    ERROR_COLOR = ('red', '#ef5350')
+    DEFAULT_TEXT = ('#333333', '#cccccc')
     INPUT_ROWS = 3
     INPUT_FONT_SIZE = 8
 
     def __init__(self):
         super().__init__()
         dark = is_dark_mode()
-        self.state_colors = self.STATE_COLORS_DARK if dark else self.STATE_COLORS_LIGHT
-        self.error_color = self.ERROR_COLOR_DARK if dark else self.ERROR_COLOR_LIGHT
-        self.default_text_color = self.DEFAULT_TEXT_DARK if dark else self.DEFAULT_TEXT_LIGHT
+        self.state_colors = self.STATE_COLORS[dark]
+        self.error_color = self.ERROR_COLOR[dark]
+        self.default_text_color = self.DEFAULT_TEXT[dark]
         self.setLayout(QtWidgets.QHBoxLayout())
         self.layout().setContentsMargins(8, 2, 8, 2)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
@@ -74,9 +77,11 @@ class StatusPanel(QtWidgets.QFrame):
         self.conn_label.setStyleSheet(f'color: {color}; font-weight: bold;')
 
     def reset_inputs(self):
-        """Drop known inputs so they're rebuilt from scratch on the next
-        update_state -- used after a reconnect, since the input set may
-        have changed along with the rest of the config."""
+        """Drop known inputs so they're rebuilt from scratch on the next update_state.
+
+        Used after a reconnect, since the input set may have changed along
+        with the rest of the config.
+        """
         for label in self._input_labels.values():
             self.inputs_layout.removeWidget(label)
             label.deleteLater()
