@@ -4,7 +4,7 @@ from typing import ClassVar
 
 from pyqtgraph.Qt import QtCore, QtWidgets
 
-from .icons import load_icon
+from .icons import is_dark_mode, load_icon
 
 CONN_ICON_SIZE = QtCore.QSize(16, 16)
 
@@ -12,13 +12,24 @@ CONN_ICON_SIZE = QtCore.QSize(16, 16)
 class StatusPanel(QtWidgets.QFrame):
     """Connection indicator, current mode, and per-input state at a glance."""
 
-    STATE_COLORS: ClassVar = {'idle': 'gray', 'running': 'green', 'ended': 'blue'}
-    ERROR_COLOR = 'red'
+    # plain named colors read fine on a light background but are too dark/
+    # muddy (or, for the default-text fallback, nearly invisible) on a dark
+    # one -- pick brighter/lighter equivalents per theme instead
+    STATE_COLORS_LIGHT: ClassVar = {'idle': 'gray', 'running': 'green', 'ended': 'blue'}
+    STATE_COLORS_DARK: ClassVar = {'idle': '#aaaaaa', 'running': '#66bb6a', 'ended': '#64b5f6'}
+    ERROR_COLOR_LIGHT = 'red'
+    ERROR_COLOR_DARK = '#ef5350'
+    DEFAULT_TEXT_LIGHT = '#333333'
+    DEFAULT_TEXT_DARK = '#cccccc'
     INPUT_ROWS = 3
     INPUT_FONT_SIZE = 8
 
     def __init__(self):
         super().__init__()
+        dark = is_dark_mode()
+        self.state_colors = self.STATE_COLORS_DARK if dark else self.STATE_COLORS_LIGHT
+        self.error_color = self.ERROR_COLOR_DARK if dark else self.ERROR_COLOR_LIGHT
+        self.default_text_color = self.DEFAULT_TEXT_DARK if dark else self.DEFAULT_TEXT_LIGHT
         self.setLayout(QtWidgets.QHBoxLayout())
         self.layout().setContentsMargins(8, 2, 8, 2)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
@@ -56,15 +67,11 @@ class StatusPanel(QtWidgets.QFrame):
         self.set_connected(False)
 
     def set_connected(self, connected):
-        icon = load_icon('connected' if connected else 'disconnected')
+        color = self.state_colors['running'] if connected else self.error_color
+        icon = load_icon('connected' if connected else 'disconnected', color=color)
         self.conn_icon.setPixmap(icon.pixmap(CONN_ICON_SIZE))
-        if connected:
-            self.conn_label.setText('connected')
-            self.conn_label.setStyleSheet(f'color: {self.STATE_COLORS["running"]}; '
-                                          'font-weight: bold;')
-        else:
-            self.conn_label.setText('disconnected')
-            self.conn_label.setStyleSheet(f'color: {self.ERROR_COLOR}; font-weight: bold;')
+        self.conn_label.setText('connected' if connected else 'disconnected')
+        self.conn_label.setStyleSheet(f'color: {color}; font-weight: bold;')
 
     def reset_inputs(self):
         """Drop known inputs so they're rebuilt from scratch on the next
@@ -92,9 +99,10 @@ class StatusPanel(QtWidgets.QFrame):
             label = self._input_labels[name]
             if isinstance(st, dict) and 'error' in st:
                 label.setText(f'{name}: error')
-                label.setStyleSheet(f'color: {self.ERROR_COLOR};')
+                label.setStyleSheet(f'color: {self.error_color};')
                 label.setToolTip(st['error'])
             else:
                 label.setText(f'{name}: {st}')
-                label.setStyleSheet(f'color: {self.STATE_COLORS.get(st, "#333")};')
+                color = self.state_colors.get(st, self.default_text_color)
+                label.setStyleSheet(f'color: {color};')
                 label.setToolTip('')

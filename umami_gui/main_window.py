@@ -309,17 +309,17 @@ class MainWindow(QtWidgets.QWidget):
         self.run_id_field.setMaximumWidth(160)
         frame.layout().addWidget(self.run_id_field)
 
-        btn = icon_button('clear', 'Clear')
+        btn = icon_button('clear', 'Clear', tint=False)
         btn.setStyleSheet('background-color: rgb(190, 190, 190); color: black;')
         btn.clicked.connect(lambda: self.client.clear())
         frame.layout().addWidget(btn)
 
-        btn = icon_button('start', 'Start')
+        btn = icon_button('start', 'Start', tint=False)
         btn.setStyleSheet('background-color: rgb(140, 205, 140); color: black;')
         btn.clicked.connect(self.on_start_clicked)
         frame.layout().addWidget(btn)
 
-        btn = icon_button('stop', 'Stop')
+        btn = icon_button('stop', 'Stop', tint=False)
         btn.setStyleSheet('background-color: rgb(255, 150, 150); color: black;')
         btn.clicked.connect(lambda: self.client.stop())
         frame.layout().addWidget(btn)
