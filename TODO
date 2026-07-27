@@ -3,5 +3,3 @@
 - Output fanout instead of queue?
 - Input parameters runtime settable?
 - More custom aliases (raw -> y pre calib etc)
-- Jumiom: tables
-- Aux histo not as output
