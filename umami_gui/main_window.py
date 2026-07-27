@@ -19,6 +19,7 @@ from .axis_items import RotatedAxisItem, ZoomViewBox
 from .client import UmamiClient
 from .icons import icon_button, load_icon
 from .log_panel import LogPanel
+from .logo_widget import LogoBuildupWidget
 from .params_table import ParamsTable
 from .shm import ShmHistogram
 from .status_panel import StatusPanel
@@ -37,9 +38,9 @@ COLORMAPS = {
     'grey': 'CET-L1',
 }
 
-# height/width of icons/logo.svg's viewBox (300 x 372.76794) -- used to size
-# the About dialog's logo without distorting it
-LOGO_ASPECT = 372.76794 / 300
+# height/width of icons/wordmark.svg's viewBox (199.328 x 44.863891) -- used
+# to size the About dialog's wordmark without distorting it
+WORDMARK_ASPECT = 44.863891 / 199.328
 
 # kept in sync by hand with Cargo.toml's [package.authors]
 AUTHORS = [
@@ -398,12 +399,22 @@ class MainWindow(QtWidgets.QWidget):
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle('About UMAMI GUI')
 
+        # the pixel grid plays the count-buildup animation; the wordmark
+        # below it is its own separate SVG (icons/wordmark.svg), not part
+        # of the grid we draw ourselves
         logo_width = 160
-        logo_height = round(logo_width * LOGO_ASPECT)
-        logo_pixmap = load_icon('logo').pixmap(logo_width, logo_height)
-        logo = QtWidgets.QLabel()
-        logo.setPixmap(logo_pixmap)
-        logo.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        wordmark_height = round(logo_width * WORDMARK_ASPECT)
+
+        grid = LogoBuildupWidget(logo_width)
+        wordmark = QtWidgets.QLabel()
+        wordmark.setPixmap(load_icon('wordmark').pixmap(logo_width, wordmark_height))
+        wordmark.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        logo_layout = QtWidgets.QVBoxLayout()
+        logo_layout.setContentsMargins(0, 0, 0, 0)
+        logo_layout.setSpacing(12)
+        logo_layout.addWidget(grid, alignment=QtCore.Qt.AlignmentFlag.AlignCenter)
+        logo_layout.addWidget(wordmark)
 
         authors_html = '<br>'.join(html.escape(author) for author in AUTHORS)
         text = QtWidgets.QLabel(
@@ -419,7 +430,7 @@ class MainWindow(QtWidgets.QWidget):
         buttons.accepted.connect(dialog.accept)
 
         layout = QtWidgets.QVBoxLayout(dialog)
-        layout.addWidget(logo)
+        layout.addLayout(logo_layout)
         layout.addWidget(text)
         layout.addWidget(buttons)
         dialog.exec()
