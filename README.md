@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="umami_logo_pixel_concept.svg" alt="UMAMI logo" width="220">
+  <img src="umami_gui/icons/logo.svg" alt="UMAMI logo" width="220">
 </p>
 
 # Unified Mechanism for Acquisition of Measured Intensity (UMAMI)
