@@ -13,13 +13,14 @@
 //! when off, `handle_events` skips all filter/axis evaluation entirely.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use crate::command::ModuleId;
 use crate::config::HistoConfig;
 use crate::error::UResult;
 use crate::event::{Event, EventHisto};
-use crate::expr::Expr;
+use crate::expr::{AliasTable, Expr};
 use crate::params::HasParams;
 use crate::shm::{ShmBox, ShmInterface};
 use super::{Output, OutputCommon};
@@ -67,12 +68,12 @@ struct CompiledAxis {
     max: i64,
 }
 
-fn compile_axis(axis: &AxisSpec, histo_name: &str) -> UResult<CompiledAxis> {
+fn compile_axis(axis: &AxisSpec, histo_name: &str, aliases: &AliasTable) -> UResult<CompiledAxis> {
     if axis.bins == 0 || axis.max < axis.min {
         return Err(anyhow!(
             "Invalid axis range for histogram {histo_name:?} (need bins > 0, max >= min)").into());
     }
-    let expr = Expr::parse(&axis.expr)
+    let expr = Expr::parse_with_aliases(&axis.expr, aliases)
         .with_context(|| format!("Parsing expression for histogram {histo_name:?}"))?;
     Ok(CompiledAxis { expr, bins: axis.bins, min: axis.min, max: axis.max })
 }
@@ -111,6 +112,10 @@ fn bin_index(v: i64, min: i64, max: i64, bins: u16) -> Option<u16> {
 pub struct AuxHistoOutput {
     ipc_name: String,
     name: ModuleId,
+    expr_aliases: Arc<AliasTable>,
+    #[param(help = "Expression aliases available to filter/axis expressions, read-only",
+            datatype = "array of alias definitions")]
+    available_aliases: Vec<crate::expr::ExprAlias>,
     #[param(help = "Global on/off switch")]
     enabled: bool,
     #[param(help = "List of auxiliary histogram definitions",
@@ -134,12 +139,14 @@ impl AuxHistoOutput {
                 return Err(anyhow!("Duplicate histogram name {:?}", spec.name).into());
             }
             let filter = match &spec.filter {
-                Some(f) => Expr::parse(f)
+                Some(f) => Expr::parse_with_aliases(f, &self.expr_aliases)
                     .with_context(|| format!("Parsing filter for histogram {:?}", spec.name))?,
                 None => Expr::parse("1").expect("constant '1' always parses"),
             };
-            let x = compile_axis(&spec.x, &spec.name)?;
-            let y = spec.y.as_ref().map(|y| compile_axis(y, &spec.name)).transpose()?;
+            let x = compile_axis(&spec.x, &spec.name, &self.expr_aliases)?;
+            let y = spec.y.as_ref()
+                .map(|y| compile_axis(y, &spec.name, &self.expr_aliases))
+                .transpose()?;
             let shm_name = self.shm_name(&spec.name);
             let histo_config = HistoConfig {
                 nx: x.bins as usize,
@@ -180,6 +187,8 @@ impl Output for AuxHistoOutput {
         let mut output = AuxHistoOutput {
             ipc_name: common.ipc_name.clone(),
             name: common.name,
+            available_aliases: common.expr_aliases.values().cloned().collect(),
+            expr_aliases: common.expr_aliases.clone(),
             enabled: config.enabled,
             histos: Vec::new(),
             compiled: Vec::new(),
@@ -246,7 +255,54 @@ mod tests {
 
     fn test_common(ipc_name: &str, out_name: &str) -> OutputCommon {
         let (_send, recv) = crate::channel::unbounded();
-        OutputCommon::new(ModuleId::new(out_name.into()), ipc_name.into(), recv, None)
+        OutputCommon::new(ModuleId::new(out_name.into()), ipc_name.into(), recv, None,
+                          Arc::new(AliasTable::new()))
+    }
+
+    fn test_common_with_aliases(ipc_name: &str, out_name: &str, aliases: AliasTable) -> OutputCommon {
+        let (_send, recv) = crate::channel::unbounded();
+        OutputCommon::new(ModuleId::new(out_name.into()), ipc_name.into(), recv, None,
+                          Arc::new(aliases))
+    }
+
+    #[test]
+    fn test_histogram_expr_using_alias() {
+        let ipc = unique_ipc();
+        let mut aliases = AliasTable::new();
+        aliases.insert("adc0".into(),
+            crate::expr::ExprAlias::new("adc0", "raw_0[0..12:signed]", "test alias"));
+        let common = test_common_with_aliases(&ipc, "aux", aliases);
+        let cfg: toml::Table = toml::from_str(r#"
+            [[histos]]
+            name = "adc0hist"
+            x = { expr = "adc0", bins = 4, min = -8, max = 7 }
+        "#).unwrap();
+        let mut output = AuxHistoOutput::from_config(&common, cfg).unwrap();
+        let _guard = ShmGuard::for_name(format!("{ipc}_aux_adc0hist"));
+
+        let mut ev = test_utils::neutron(0, 0);
+        ev.raw = (2, 0); // adc0 = raw_0[0..12:signed] = 2 -> bin (2-(-8))*4/16 = 2
+        output.handle_events(&[ev]).unwrap();
+
+        let shm = ShmInterface::open(&format!("{ipc}_aux_adc0hist")).unwrap();
+        let data = shm.histo_data();
+        assert_eq!(data[2], 1);
+        assert_eq!(data.iter().sum::<u32>(), 1);
+    }
+
+    #[test]
+    fn test_available_aliases_reported_in_params() {
+        let ipc = unique_ipc();
+        let mut aliases = AliasTable::new();
+        aliases.insert("adc0".into(),
+            crate::expr::ExprAlias::new("adc0", "raw_0[0..12:signed]", "test alias"));
+        let common = test_common_with_aliases(&ipc, "aux", aliases);
+        let output = AuxHistoOutput::from_config(&common, toml::Table::new()).unwrap();
+
+        let params = output.get_params().unwrap();
+        assert_eq!(params["available_aliases"]["value"][0]["name"], "adc0");
+        assert_eq!(params["available_aliases"]["value"][0]["expr"], "raw_0[0..12:signed]");
+        assert_eq!(params["available_aliases"]["value"][0]["help"], "test alias");
     }
 
     #[test]

@@ -28,11 +28,27 @@ Operators (usual precedence): + - * / & << >> == != < <= > >= && || !
 Numbers: decimal (100), hex (0xFF), binary (0b1010)
 
 Bit-slice: expr[offset..end] (unsigned) or expr[offset..end:signed] \
-(sign-extended), e.g. raw_0[0..12:signed]
+(sign-extended), e.g. raw_0[0..12:signed] for the first 12 bits as a \
+signed integer
 
 A filter's result is treated as a boolean (0 = drop, nonzero = keep); \
-an axis expression's result is binned into [min, max) -- values outside \
+an axis expression's result is binned into [min, max] -- values outside \
 that range are silently dropped, not clamped.'''
+
+
+def help_text(aliases):
+    """Format the help text including `available_aliases` param for display.
+
+    Takes a list of {name, expr, help} dicts and renders them as an
+    appendix to EXPR_SYNTAX_HELP.
+    """
+    if not aliases:
+        return EXPR_SYNTAX_HELP
+    lines = ['', '', 'Aliases (contributed by recipes or the config file):']
+    for alias in sorted(aliases, key=lambda a: a['name']):
+        help_text = f' -- {alias["help"]}' if alias.get('help') else ''
+        lines.append(f'  {alias["name"]} = {alias["expr"]}{help_text}')
+    return EXPR_SYNTAX_HELP + '\n'.join(lines)
 
 
 class HistoDefDialog(QtWidgets.QDialog):
@@ -64,7 +80,7 @@ class HistoDefDialog(QtWidgets.QDialog):
         row_layout.addWidget(max_edit)
         return row, bins, min_edit, max_edit
 
-    def __init__(self, parent=None, spec=None):
+    def __init__(self, parent=None, spec=None, aliases=None):
         super().__init__(parent)
         self.setWindowTitle('Histogram Definition')
         spec = spec or {}
@@ -103,12 +119,14 @@ class HistoDefDialog(QtWidgets.QDialog):
         self.y_check.toggled.connect(sync_y_enabled)
         sync_y_enabled(self.y_check.isChecked())
 
-        help_label = QtWidgets.QLabel(EXPR_SYNTAX_HELP)
+        help_title = QtWidgets.QLabel('<b>Expression syntax</b>')
+        help_label = QtWidgets.QLabel(help_text(aliases))
         help_label.setWordWrap(True)
         help_label.setStyleSheet('color: #555; font-size: 9pt;')
-        help_box = QtWidgets.QGroupBox('Expression syntax')
-        help_box.setLayout(QtWidgets.QVBoxLayout())
-        help_box.layout().addWidget(help_label)
+        help_scroll = QtWidgets.QScrollArea()
+        help_scroll.setWidget(help_label)
+        help_scroll.setWidgetResizable(True)
+        help_scroll.setMaximumHeight(250)
 
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok |
@@ -118,7 +136,8 @@ class HistoDefDialog(QtWidgets.QDialog):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(form)
-        layout.addWidget(help_box)
+        layout.addWidget(help_title)
+        layout.addWidget(help_scroll)
         layout.addWidget(buttons)
 
     def _int(self, field, label):
@@ -205,6 +224,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
 
         self._module = None  # name of the first aux_histo output found
         self._histos = []    # its histogram specs, as last seen from get_params
+        self._aliases = []   # its available_aliases, as last seen from get_params
         self._shms = {}      # histo_name -> ShmHistogram
         self._plots = {}     # histo_name -> (PlotItem, ImageItem|PlotDataItem, is_2d)
 
@@ -283,6 +303,11 @@ class AuxHistoWindow(QtWidgets.QWidget):
                 self._module = key[:-len('.histos')]
                 self._histos = info['value']
                 break
+        if self._module is not None:
+            aliases_info = params.get(f'{self._module}.available_aliases')
+            self._aliases = (aliases_info or {}).get('value') or []
+        else:
+            self._aliases = []
         self._rebuild()
 
     def _forget(self, name):
@@ -402,7 +427,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
                 self, 'No output',
                 'No active aux_histo output found -- configure one first.')
             return
-        dialog = HistoDefDialog(self)
+        dialog = HistoDefDialog(self, aliases=self._aliases)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         new_specs = [*self._histos, dialog.spec()]
@@ -411,7 +436,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self.refresh()
 
     def _edit_histogram(self, spec):
-        dialog = HistoDefDialog(self, spec)
+        dialog = HistoDefDialog(self, spec, aliases=self._aliases)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         new_specs = [dialog.spec() if h['name'] == spec['name'] else h

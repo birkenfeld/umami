@@ -6,6 +6,7 @@ use serde::Deserialize;
 use crate::config::RecipeConfig;
 use crate::error::UResult;
 use crate::event::{Event, EventType};
+use crate::expr::ExprAlias;
 use crate::params::HasParams;
 use super::Recipe;
 
@@ -37,6 +38,14 @@ impl Recipe for Mpsd {
             }
         }
         events
+    }
+
+    fn expr_aliases(&self) -> Vec<ExprAlias> {
+        vec![
+            ExprAlias::new("mesy_slot", "channel[0..4]", "MCPD slot in module"),
+            ExprAlias::new("mesy_mod", "channel[4..7]", "MCPD module"),
+            ExprAlias::new("mesy_mcpd", "channel[7..15]", "MCPD id"),
+        ]
     }
 }
 
@@ -87,6 +96,23 @@ mod tests {
             let out = recipe.process(vec![ev]);
             assert_eq!(out[0].histo.x, expected_x, "channel={channel:#x}");
         }
+    }
+
+    #[test]
+    fn test_mpsd_expr_aliases_match_channel_bit_layout() {
+        let recipe = Mpsd::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let mut table = crate::expr::AliasTable::new();
+        for a in recipe.expr_aliases() {
+            table.insert(a.name.clone(), a);
+        }
+        // channel = mcpd[7..15] | mod[4..7] | slot[0..4]
+        let (mcpd, module, slot) = (5u32, 3u32, 9u32);
+        let channel = (mcpd << 7) | (module << 4) | slot;
+        let ev = test_utils::neutron(100, channel);
+        let eval = |name| crate::expr::Expr::parse_with_aliases(name, &table).unwrap().eval(&ev);
+        assert_eq!(eval("mesy_slot"), slot as i64);
+        assert_eq!(eval("mesy_mod"), module as i64);
+        assert_eq!(eval("mesy_mcpd"), mcpd as i64);
     }
 
     #[test]

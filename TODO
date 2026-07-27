@@ -1,5 +1,7 @@
 - How to deal with systems that only provide relative timestamps?
 - Parse recipe TOML config from HasParams too?
 - Output fanout instead of queue?
-- Expr lang: inject additional identifiers?
 - Input parameters runtime settable?
+- More custom aliases (raw -> y pre calib etc)
+- Jumiom: tables
+- Save aux histo

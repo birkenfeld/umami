@@ -27,8 +27,15 @@
 //! Integer literals: decimal (`100`), hex (`0xFF`), or binary (`0b1010`).
 //!
 //! Bit-slice: `<expr>[offset..end]` (unsigned) or `[offset..end:signed]`
-//! (sign-extended), e.g. `raw_0[0..12:signed]`.
+//! (sign-extended), e.g. `raw_0[0..12:signed]` extracts the low 12 bits of
+//! `raw_0` as a signed integer.
+//!
+//! An identifier that isn't a known field or named constant may be resolved
+//! against a caller-supplied alias table (name -> expression text), e.g. an
+//! input recipe contributing `adc0` for `raw_0[0..12:signed]`; see
+//! [`Expr::parse_with_aliases`].
 
+use std::collections::BTreeMap;
 use anyhow::{anyhow, bail, Context};
 use crate::event::{Event, EventFlags, EventType};
 
@@ -127,6 +134,30 @@ fn named_constant(ident: &str) -> Option<i64> {
     })
 }
 
+/// A named expression alias contributed by a recipe or the config file
+/// (e.g. `adc0` -> `raw_0[0..12:signed]`), with a short description for
+/// user-facing help text.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExprAlias {
+    pub name: String,
+    pub expr: String,
+    pub help: String,
+}
+
+impl ExprAlias {
+    pub fn new(name: &str, expr: &str, help: &str) -> Self {
+        ExprAlias { name: name.into(), expr: expr.into(), help: help.into() }
+    }
+}
+
+pub type AliasTable = BTreeMap<String, ExprAlias>;
+
+/// True if `name` is an intrinsic field or named constant, which a custom
+/// alias must not shadow.
+pub fn is_reserved_name(name: &str) -> bool {
+    Field::resolve(name).is_some() || named_constant(name).is_some()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BinOp {
     Add, Sub, Mul, Div, BitAnd, Shl, Shr,
@@ -196,10 +227,28 @@ pub struct Expr {
     root: Node,
 }
 
+/// Nested alias expansion is capped at this depth to catch an accidental
+/// cycle (e.g. two aliases defined in terms of each other).
+const MAX_ALIAS_DEPTH: u32 = 8;
+
 impl Expr {
     pub fn parse(src: &str) -> anyhow::Result<Self> {
+        Self::parse_with_aliases(src, &AliasTable::new())
+    }
+
+    /// Like [`Expr::parse`], but resolves any identifier that isn't a known
+    /// field or named constant against `aliases` before giving up. Aliases
+    /// may reference other aliases.
+    pub fn parse_with_aliases(src: &str, aliases: &AliasTable) -> anyhow::Result<Self> {
+        Self::parse_inner(src, aliases, 0)
+    }
+
+    fn parse_inner(src: &str, aliases: &AliasTable, depth: u32) -> anyhow::Result<Self> {
+        if depth > MAX_ALIAS_DEPTH {
+            bail!("Alias expansion nested too deeply (possible cycle) while parsing {src:?}");
+        }
         let toks = tokenize(src).with_context(|| format!("Tokenizing expression {src:?}"))?;
-        let mut p = Parser { toks: &toks, pos: 0 };
+        let mut p = Parser { toks: &toks, pos: 0, aliases, depth };
         let root = p.parse_or().with_context(|| format!("Parsing expression {src:?}"))?;
         if p.pos != p.toks.len() {
             bail!("Unexpected trailing input in expression {src:?} at token {}", p.pos);
@@ -301,6 +350,8 @@ fn tokenize(src: &str) -> anyhow::Result<Vec<Tok>> {
 struct Parser<'a> {
     toks: &'a [Tok],
     pos: usize,
+    aliases: &'a AliasTable,
+    depth: u32,
 }
 
 impl Parser<'_> {
@@ -446,10 +497,15 @@ impl Parser<'_> {
         match self.bump() {
             Some(Tok::Int(v)) => Ok(Node::Lit(*v)),
             Some(Tok::Ident(id)) => {
-                if let Some(f) = Field::resolve(id) {
+                let id = id.clone();
+                if let Some(f) = Field::resolve(&id) {
                     Ok(Node::Field(f))
-                } else if let Some(c) = named_constant(id) {
+                } else if let Some(c) = named_constant(&id) {
                     Ok(Node::Lit(c))
+                } else if let Some(alias) = self.aliases.get(&id) {
+                    Expr::parse_inner(&alias.expr, self.aliases, self.depth + 1)
+                        .map(|e| e.root)
+                        .with_context(|| format!("Expanding alias {id:?}"))
                 } else {
                     Err(anyhow!("Unknown identifier {id:?}"))
                 }
@@ -583,5 +639,56 @@ mod tests {
         assert!(Expr::parse("(1 + 2").is_err()); // unbalanced parens
         assert!(Expr::parse("1 +").is_err()); // trailing operator
         assert!(Expr::parse("1 2").is_err()); // trailing tokens
+    }
+
+    fn alias(name: &str, expr: &str) -> ExprAlias {
+        ExprAlias::new(name, expr, "")
+    }
+
+    #[test]
+    fn test_alias_expansion() {
+        let enc = |v: i32| -> u32 { (v as u32) & 0xFFF };
+        let word = (enc(-1) << 16) | enc(100);
+        let ev = ev_with(|e| e.raw = (word, 0));
+        let mut aliases = AliasTable::new();
+        aliases.insert("adc0".into(), alias("adc0", "raw_0[0..12:signed]"));
+        aliases.insert("adc1".into(), alias("adc1", "raw_0[16..28:signed]"));
+        assert_eq!(Expr::parse_with_aliases("adc0", &aliases).unwrap().eval(&ev), 100);
+        assert_eq!(Expr::parse_with_aliases("adc1", &aliases).unwrap().eval(&ev), -1);
+        // aliases compose with the rest of the grammar
+        assert_eq!(Expr::parse_with_aliases("adc0 + 1", &aliases).unwrap().eval(&ev), 101);
+    }
+
+    #[test]
+    fn test_alias_referencing_alias() {
+        let mut ev = test_utils::neutron(0, 0);
+        ev.channel = crate::event::ChannelId(20);
+        let mut aliases = AliasTable::new();
+        aliases.insert("half".into(), alias("half", "channel / 2"));
+        aliases.insert("quarter".into(), alias("quarter", "half / 2"));
+        assert_eq!(Expr::parse_with_aliases("quarter", &aliases).unwrap().eval(&ev), 5);
+    }
+
+    #[test]
+    fn test_alias_cycle_is_rejected() {
+        let mut aliases = AliasTable::new();
+        aliases.insert("a".into(), alias("a", "b"));
+        aliases.insert("b".into(), alias("b", "a"));
+        assert!(Expr::parse_with_aliases("a", &aliases).is_err());
+    }
+
+    #[test]
+    fn test_unknown_identifier_with_empty_alias_table_is_still_an_error() {
+        assert!(Expr::parse_with_aliases("bogus", &AliasTable::new()).is_err());
+    }
+
+    #[test]
+    fn test_is_reserved_name() {
+        for name in ["time", "raw_0", "x", "evtype", "neutron", "gateup"] {
+            assert!(is_reserved_name(name), "{name:?} should be reserved");
+        }
+        for name in ["adc0", "half", "my_alias"] {
+            assert!(!is_reserved_name(name), "{name:?} should not be reserved");
+        }
     }
 }

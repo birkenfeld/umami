@@ -168,19 +168,64 @@ pub struct HistoConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
+    /// Input modules, by name.
     pub inputs: BTreeMap<String, InputConfig>,
+    /// Recipes for processing input events, by name.  Each input module
+    /// specifies exactly one recipe to use for its events - usually it
+    /// is the same for all inputs of a certain type.
     pub input_recipes: BTreeMap<String, RecipeConfig>,
-    pub outputs: Option<BTreeMap<String, OutputConfig>>,
+    /// Processing modes, by name.  Each processing mode is a recipe
+    /// that is applied after events are read and sorted.
     pub process_modes: ProcessModesConfig,
+    /// Histogram configuration (size, max events per bin, etc.).
     pub histogram: HistoConfig,
+    /// Output modules, by name.
+    pub outputs: Option<BTreeMap<String, OutputConfig>>,
+    /// IPC name - shared memory segment and Unix socket name.
     #[serde(default = "default_ipc_name")]
     pub ipc_name: String,
+    /// Optional name of the detector config, cosmetic only.
     pub name: Option<String>,
+    /// Optional path to a directory where raw event dumps are written.
     pub raw_dir: Option<PathBuf>,
+    /// Debug mode: print extra info to stdout.
     #[serde(default)]
     pub debug: bool,
+    /// User-defined expression aliases for aux histograms.
+    #[serde(default)]
+    pub expr_aliases: BTreeMap<String, ExprAliasConfig>,
+    /// Path to the config file, filled in by `load_config()`.
     #[serde(skip)]
     pub filename: PathBuf,
+}
+
+/// Deserialized from either a plain string (the expression, no help text) or a
+/// table with an optional `help`.
+#[derive(Debug, Clone)]
+pub struct ExprAliasConfig {
+    pub expr: String,
+    pub help: String,
+}
+
+impl<'de> Deserialize<'de> for ExprAliasConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where D: serde::Deserializer<'de>
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged, deny_unknown_fields)]
+        enum Repr {
+            Short(String),
+            Full {
+                expr: String,
+                #[serde(default)]
+                help: String,
+            },
+        }
+        Ok(match Repr::deserialize(deserializer)? {
+            Repr::Short(expr) => ExprAliasConfig { expr, help: String::new() },
+            Repr::Full { expr, help } => ExprAliasConfig { expr, help },
+        })
+    }
 }
 
 fn deserialize_ip<'de, D>(deserializer: D) -> Result<String, D::Error>

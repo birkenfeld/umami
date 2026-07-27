@@ -220,7 +220,8 @@ mod tests {
 
     fn make_common(name: &str) -> (OutputCommon, channel::Sender<PipeItem>) {
         let (send, recv) = crate::channel::unbounded();
-        let common = OutputCommon::new(ModuleId::new(name.into()), "umami".into(), recv, None);
+        let common = OutputCommon::new(ModuleId::new(name.into()), "umami".into(), recv, None,
+                                       std::sync::Arc::new(crate::expr::AliasTable::new()));
         (common, send)
     }
 

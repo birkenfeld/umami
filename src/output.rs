@@ -1,6 +1,7 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
+use std::sync::Arc;
 use anyhow::{anyhow, Context};
 use crate::lprintln;
 use crate::channel::{Receiver, Sender};
@@ -8,6 +9,7 @@ use crate::command::{CommandReply, ModuleId};
 use crate::config::OutputConfig;
 use crate::error::UResult;
 use crate::event::Event;
+use crate::expr::AliasTable;
 use crate::params::HasParams;
 use crate::pipeline::PipeItem;
 
@@ -24,6 +26,7 @@ pub struct OutputCommon {
     ipc_name: String,
     input: Receiver<PipeItem>,
     output: Option<Sender<PipeItem>>,
+    expr_aliases: Arc<AliasTable>,
 }
 
 impl OutputCommon {
@@ -32,8 +35,9 @@ impl OutputCommon {
         ipc_name: String,
         input: Receiver<PipeItem>,
         output: Option<Sender<PipeItem>>,
+        expr_aliases: Arc<AliasTable>,
     ) -> Self {
-        Self { name, ipc_name, input, output }
+        Self { name, ipc_name, input, output, expr_aliases }
     }
 }
 

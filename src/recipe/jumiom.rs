@@ -7,6 +7,7 @@ use serde::Deserialize;
 use crate::config::RecipeConfig;
 use crate::error::UResult;
 use crate::event::{Event, EventType};
+use crate::expr::ExprAlias;
 use crate::params::HasParams;
 use super::Recipe;
 
@@ -170,6 +171,15 @@ impl Recipe for Position {
         }
         events
     }
+
+    fn expr_aliases(&self) -> Vec<ExprAlias> {
+        vec![
+            ExprAlias::new("adc0", "raw_0[0..12:signed]", "Jumiom ADC0 (signed 12-bit)"),
+            ExprAlias::new("adc1", "raw_0[16..28:signed]", "Jumiom ADC1 (signed 12-bit)"),
+            ExprAlias::new("adc2", "raw_1[0..12:signed]", "Jumiom ADC2 (signed 12-bit)"),
+            ExprAlias::new("adc3", "raw_1[16..28:signed]", "Jumiom ADC3 (signed 12-bit)"),
+        ]
+    }
 }
 
 #[cfg(test)]
@@ -186,6 +196,25 @@ mod tests {
         let word2 = (enc(adc[1]) << 16) | enc(adc[0]);
         let word3 = (enc(adc[3]) << 16) | enc(adc[2]);
         Event::new(EventType::Neutron).with_channel(channel).with_raw(word2, word3)
+    }
+
+    #[test]
+    fn test_expr_aliases_match_unpack_adc_layout() {
+        let r = recipe(toml::Table::new());
+        let aliases = r.expr_aliases();
+        let names: Vec<_> = aliases.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["adc0", "adc1", "adc2", "adc3"]);
+
+        let mut table = crate::expr::AliasTable::new();
+        for a in &aliases {
+            table.insert(a.name.clone(), a.clone());
+        }
+        let adc = [100, -50, 2000, -2000];
+        let ev = neutron_with_raw(0, adc);
+        for (i, name) in ["adc0", "adc1", "adc2", "adc3"].iter().enumerate() {
+            let got = crate::expr::Expr::parse_with_aliases(name, &table).unwrap().eval(&ev);
+            assert_eq!(got, adc[i] as i64, "{name} mismatch");
+        }
     }
 
     #[test]

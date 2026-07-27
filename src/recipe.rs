@@ -12,6 +12,7 @@ use anyhow::{anyhow, Context};
 use crate::config::RecipeConfig;
 use crate::error::UResult;
 use crate::event::Event;
+use crate::expr::ExprAlias;
 use crate::params::HasParams;
 
 /// A "recipe" is an instruction of how to "cook" raw events into events with logical
@@ -24,9 +25,15 @@ pub trait Recipe : Send + HasParams {
     /// Called at the start of every run, for every configured recipe, not
     /// just the active one.
     fn start_of_run(&mut self) {}
+
+    /// Named aux-histo expression aliases this recipe contributes.
+    fn expr_aliases(&self) -> Vec<ExprAlias> {
+        Vec::new()
+    }
 }
 
 
+/// A null recipe - does nothing to the events.
 #[derive(HasParams)]
 pub struct NoRecipe {}
 
@@ -41,6 +48,7 @@ impl Recipe for NoRecipe {
 }
 
 
+/// Create a recipe from the given config map and recipe name.
 pub fn from_config(map: &BTreeMap<String, RecipeConfig>, name: &str)
                    -> UResult<Box<dyn Recipe>> {
     let this = map.get(name).cloned()

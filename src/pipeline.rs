@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 use anyhow::{anyhow, Context};
 use crate::output::OutputCommon;
 use crate::{channel, ldebug, lprintln, output};
@@ -11,9 +12,22 @@ use crate::command::{Command, CommandReply, ModuleId};
 use crate::config::{Config, OutputConfig};
 use crate::error::UResult;
 use crate::event::Event;
+use crate::expr::{AliasTable, ExprAlias};
 use crate::input::{InputCommon, InputState};
 use crate::params::ParamMap;
 use crate::shm::{ShmInterface, MAX_INPUTS};
+
+/// Inserts `alias` into `table`, rejecting a name that shadows an intrinsic
+/// `src/expr.rs` field or named constant. Two aliases of the same name from
+/// different sources are allowed to overwrite each other.
+fn register_alias(table: &mut AliasTable, alias: ExprAlias) -> UResult<()> {
+    if crate::expr::is_reserved_name(&alias.name) {
+        Err(anyhow!(
+            "Expression alias {:?} clashes with a built-in field/constant name", alias.name))?;
+    }
+    table.insert(alias.name.clone(), alias);
+    Ok(())
+}
 
 // Determined using profile_event_channel_occupancy.
 pub(crate) const EV_CHANNEL_SIZE: usize = 2048;
@@ -71,6 +85,7 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
     let mut init_errors = false;
     let mut pipe_recvs = vec![];
     let mut command_sends = BTreeMap::new();
+    let mut expr_aliases = AliasTable::new();
     let confdir = config.filename.parent().unwrap_or_else(|| Path::new("."));
 
     for (input_name, input_config) in config.inputs {
@@ -85,9 +100,13 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
             send
         };
         let (command_send, command_recv) = channel::bounded(1);
+        let input_recipe = recipe::from_config(&config.input_recipes, &input_config.recipe)?;
+        for alias in input_recipe.expr_aliases() {
+            register_alias(&mut expr_aliases, alias)?;
+        }
         let common = InputCommon::new(
             input_name, postproc_send.clone(), event_send, command_recv,
-            recipe::from_config(&config.input_recipes, &input_config.recipe)?,
+            input_recipe,
             ModuleId::new(input_config.recipe.clone()),
         );
         command_sends.insert(input_name, command_send);
@@ -111,6 +130,28 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
         postproc_send,
     ).context("Creating command handler")?;
 
+    // build the postprocessor's recipes and collect expression aliases
+    let mut post_recipes = BTreeMap::new();
+    for name in config.process_modes.recipes.keys() {
+        let recipe_name = ModuleId::new(name.into());
+        let post_recipe = recipe::from_config(&config.process_modes.recipes, &recipe_name)?;
+        for alias in post_recipe.expr_aliases() {
+            register_alias(&mut expr_aliases, alias)?;
+        }
+        post_recipes.insert(recipe_name, post_recipe);
+    }
+    let default_name = ModuleId::new(config.process_modes.default);
+    if !post_recipes.contains_key(&default_name) {
+        Err(anyhow!("No default mode configured"))?;
+    }
+
+    // config-file aliases are applied last, so they can override any
+    // recipe-contributed alias of the same name
+    for (name, alias) in config.expr_aliases {
+        register_alias(&mut expr_aliases, ExprAlias::new(&name, &alias.expr, &alias.help))?;
+    }
+    let expr_aliases = Arc::new(expr_aliases);
+
     // handle outputs - we need to have at least a null output to consume from the postproc
     let mut outputs = config.outputs.unwrap_or_default();
     if outputs.is_empty() {
@@ -129,7 +170,8 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
         let common = OutputCommon::new(out_name,
                                        config.ipc_name.clone(),
                                        output_recvs.pop().expect("one per output"),
-                                       output_sends.pop());
+                                       output_sends.pop(),
+                                       expr_aliases.clone());
         if let Err(e) = output::start(out_config, common) {
             init_errors = true;
             lprintln!(ERROR, "Failed to initialize output {out_name}: {e:#}");
@@ -137,20 +179,6 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
     }
     if init_errors {
         Err(anyhow!("Some outputs failed to initialize"))?;
-    }
-
-    // create the postprocessor
-    let mut post_recipes = BTreeMap::new();
-    for name in config.process_modes.recipes.keys() {
-        let recipe_name = ModuleId::new(name.into());
-        post_recipes.insert(
-            recipe_name,
-            recipe::from_config(&config.process_modes.recipes, &recipe_name)?,
-        );
-    }
-    let default_name = ModuleId::new(config.process_modes.default);
-    if !post_recipes.contains_key(&default_name) {
-        Err(anyhow!("No default mode configured"))?;
     }
 
     let shm_area = ShmInterface::create(&config.ipc_name, &config.histogram)?;
@@ -219,6 +247,22 @@ mod tests {
     use crate::config::{SourceConfig, SpecificInputConfig};
 
     static SHM_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn test_register_alias_rejects_reserved_name() {
+        let mut table = AliasTable::new();
+        let err = register_alias(&mut table, ExprAlias::new("channel", "1", "")).unwrap_err();
+        assert!(err.to_string().contains("clashes"));
+        assert!(table.is_empty(), "rejected alias must not be inserted");
+    }
+
+    #[test]
+    fn test_register_alias_allows_override() {
+        let mut table = AliasTable::new();
+        register_alias(&mut table, ExprAlias::new("adc0", "raw_0[0..12:signed]", "")).unwrap();
+        register_alias(&mut table, ExprAlias::new("adc0", "raw_0[0..8:signed]", "")).unwrap();
+        assert_eq!(table["adc0"].expr, "raw_0[0..8:signed]");
+    }
 
     /// Base URL of the file server hosting test data that is too large to
     /// keep in the repository (see .gitignore for test/data).

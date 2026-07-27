@@ -342,7 +342,8 @@ class MainWindow(QtWidgets.QWidget):
         frame.layout().addWidget(QtWidgets.QLabel('Mode:'))
         frame.layout().addWidget(self.mode_combo)
 
-        aux_histo_btn = QtWidgets.QPushButton('Aux Histograms')
+        frame.layout().addSpacing(20)
+        aux_histo_btn = icon_button('histo', 'Aux Histograms')
         aux_histo_btn.clicked.connect(self.show_aux_histo_window)
         frame.layout().addWidget(aux_histo_btn)
 
@@ -474,11 +475,11 @@ class MainWindow(QtWidgets.QWidget):
 
         frame.layout().addSpacing(20)
 
-        btn = QtWidgets.QPushButton('Show Diffractogram')
+        btn = QtWidgets.QPushButton('Diffractogram')
         btn.clicked.connect(self.open_projection_window)
         frame.layout().addWidget(btn)
 
-        btn = QtWidgets.QPushButton('Show TOF Spectrum')
+        btn = QtWidgets.QPushButton('TOF Spectrum')
         btn.clicked.connect(self.open_t_projection_window)
         frame.layout().addWidget(btn)
 
@@ -562,7 +563,7 @@ class MainWindow(QtWidgets.QWidget):
                                     QtWidgets.QSizePolicy.Policy.Expanding)
 
         self.layout().addWidget(self.buttons_frame)
-        self.layout().addWidget(self.display_frame)
         self.layout().addWidget(self.dump_frame)
+        self.layout().addWidget(self.display_frame)
         self.layout().addWidget(self.status_panel)
         self.layout().addWidget(main_splitter)
