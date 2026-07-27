@@ -33,8 +33,16 @@ def load_icon(name, color=None):
     icon = QtGui.QIcon(str(_ICONS_DIR / f'{name}.svg'))
     if color is None:
         return icon
-    pixmap = icon.pixmap(ICON_SIZE)
+    # tinting bakes the vector icon down to a plain QPixmap -- render it at
+    # the screen's actual device-pixel-ratio (and tag it as such), or it
+    # comes out a fixed 16x16 physical pixels and looks tiny on HiDPI
+    dpr = QtWidgets.QApplication.primaryScreen().devicePixelRatio()
+    physical_size = QtCore.QSize(round(ICON_SIZE.width() * dpr),
+                                  round(ICON_SIZE.height() * dpr))
+    pixmap = icon.pixmap(physical_size)
+    pixmap.setDevicePixelRatio(dpr)
     tinted = QtGui.QPixmap(pixmap.size())
+    tinted.setDevicePixelRatio(dpr)
     tinted.fill(QtCore.Qt.GlobalColor.transparent)
     painter = QtGui.QPainter(tinted)
     painter.drawPixmap(0, 0, pixmap)

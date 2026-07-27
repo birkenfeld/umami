@@ -15,9 +15,6 @@ CONN_ICON_SIZE = QtCore.QSize(16, 16)
 class StatusPanel(QtWidgets.QFrame):
     """Connection indicator, current mode, and per-input state at a glance."""
 
-    # plain named colors read fine on a light background but are too dark/
-    # muddy (or, for the default-text fallback, nearly invisible) on a dark
-    # one -- pick brighter/lighter equivalents per theme instead
     STATE_COLORS: ClassVar = [
         {'idle': 'gray', 'running': 'green', 'ended': 'blue'},
         {'idle': '#aaaaaa', 'running': '#66bb6a', 'ended': '#64b5f6'},

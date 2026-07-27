@@ -8,17 +8,21 @@ from typing import ClassVar
 
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
+from .icons import is_dark_mode
+
 
 class LogPanel(QtWidgets.QPlainTextEdit):
     """Scrolling, timestamped log of commands, replies, and errors."""
 
-    # TODO dark mode
-    COLORS: ClassVar = {'warning': QtGui.QColor('darkorange'),
-                        'error': QtGui.QColor('red')}
+    COLORS: ClassVar = [
+        {'warning': QtGui.QColor('darkorange'), 'error': QtGui.QColor('red')},
+        {'warning': QtGui.QColor('darkorange'), 'error': QtGui.QColor('#ef5350')},
+    ]
     error_logged = QtCore.pyqtSignal()
 
     def __init__(self):
         super().__init__()
+        self.colors = self.COLORS[is_dark_mode()]
         self.setReadOnly(True)
         self.setMaximumBlockCount(2000)
         self.setFont(QtGui.QFont('monospace'))
@@ -29,8 +33,8 @@ class LogPanel(QtWidgets.QPlainTextEdit):
         cursor = self.textCursor()
         cursor.movePosition(QtGui.QTextCursor.MoveOperation.End)
         fmt = QtGui.QTextCharFormat()
-        if level in self.COLORS:
-            fmt.setForeground(self.COLORS[level])
+        if level in self.colors:
+            fmt.setForeground(self.colors[level])
         cursor.setCharFormat(fmt)
         cursor.insertText(f'[{time.strftime("%H:%M:%S")}] {level.upper():7} {text}\n')
         self.setTextCursor(cursor)
