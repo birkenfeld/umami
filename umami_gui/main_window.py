@@ -5,6 +5,7 @@
 
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
@@ -528,6 +529,8 @@ class MainWindow(QtWidgets.QWidget):
         if not paths:
             return
         path = paths[0]
+        if not Path(path).suffix:
+            path += '.txt'
         if all_check is not None and all_check.isChecked():
             self.client.save_histo(path, self.histo.nt)
         else:
@@ -538,8 +541,11 @@ class MainWindow(QtWidgets.QWidget):
     def save_plot_image_dialog(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self, 'Save Plot Image', '', 'PNG files (*.png);;All files (*)')
-        if path:
-            exporters.ImageExporter(self.plot).export(path)
+        if not path:
+            return
+        if not Path(path).suffix:
+            path += '.png'
+        exporters.ImageExporter(self.plot).export(path)
 
     # ---- params panel ----
 

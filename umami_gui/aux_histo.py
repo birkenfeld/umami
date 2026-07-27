@@ -7,6 +7,8 @@ A form-based add/edit dialog and the window that discovers a running
 `aux_histo` output and live-plots its histograms.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets
@@ -245,6 +247,9 @@ class AuxHistoWindow(QtWidgets.QWidget):
         refresh_btn = icon_button('refresh', 'Refresh')
         refresh_btn.clicked.connect(self.refresh)
         btn_col.addWidget(refresh_btn)
+        save_btn = icon_button('save', 'Save')
+        save_btn.clicked.connect(self._save_histogram)
+        btn_col.addWidget(save_btn)
         btn_col.addStretch()
 
         table_row = QtWidgets.QHBoxLayout()
@@ -421,6 +426,58 @@ class AuxHistoWindow(QtWidgets.QWidget):
     def _on_row_double_clicked(self, row, _column):
         if 0 <= row < len(self._histos):
             self._edit_histogram(self._histos[row])
+
+    def _save_histogram(self):
+        if not self._histos:
+            QtWidgets.QMessageBox.warning(
+                self, 'No histograms', 'No histograms to save.')
+            return
+        menu = QtWidgets.QMenu(self)
+        for spec in self._histos:
+            name = spec['name']
+            menu.addAction(
+                name, lambda _=False, n=name: self._save_histogram_to_file(n))
+        button = self.sender()
+        menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+
+    @staticmethod
+    def _bin_values(axis):
+        """Each bin's lower edge, in the axis expression's own units.
+
+        Inverts the binning done server-side: `bin = (v - min) * bins /
+        (max - min + 1)`, where `max` is inclusive. E.g. bins=8, min=0,
+        max=7 (one bin per representable integer) gives 0, 1, ..., 7.
+        """
+        bins, lo, hi = axis['bins'], axis['min'], axis['max']
+        width = (hi - lo + 1) / bins
+        return lo + np.arange(bins) * width
+
+    def _save_histogram_to_file(self, name):
+        shm = self._shms.get(name)
+        if shm is None:
+            QtWidgets.QMessageBox.warning(
+                self, 'Not available', f'Histogram {name!r} is not currently open.')
+            return
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, f'Save Histogram {name!r}', '', 'Text files (*.txt);;All files (*)')
+        if not path:
+            return
+        if not Path(path).suffix:
+            path += '.txt'
+        _, _, is_2d = self._plots[name]
+        spec = next(h for h in self._histos if h['name'] == name)
+        if is_2d:
+            x = self._bin_values(spec['x'])
+            y = self._bin_values(spec['y'])
+            header = ('x: ' + ' '.join(f'{v:g}' for v in x) + '\n'
+                      'y: ' + ' '.join(f'{v:g}' for v in y))
+            np.savetxt(path, shm.read_plane(0), fmt='%d', header=header)
+        else:
+            x = self._bin_values(spec['x'])
+            counts = shm.read_plane(0)[0]
+            np.savetxt(path, np.column_stack([x, counts]), fmt=['%g', '%d'],
+                       header='x y', comments='')
+        self.log.info(f'Saved aux histogram {name!r} to {path}')
 
     def _add_histogram(self):
         if self._module is None:
