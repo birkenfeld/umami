@@ -256,8 +256,10 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         state = self._send_cmd('get_state')['inputs']
         if any(st == 'running' for st in state.values()):
             return BUSY, 'counting'
-        elif any(st == 'error' for st in state.values()):
-            return FAULT, 'input error'
+        errors = [st['error'] for st in state.values()
+                  if isinstance(st, dict) and 'error' in st]
+        if errors:
+            return FAULT, '; '.join(errors)
         return ON, ''
 
     def _send_cmd(self, cmd, **kwargs):
@@ -274,7 +276,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         if reply['result'] == 'error':
             raise InvalidOperation(
                 f'UMAMI error: {reply.get("message", "unknown error")} from '
-                f'{reply.get("module", "unknown module")}')
+                f'{reply.get("module") or "unknown module"}')
         elif reply['result'] == 'data':
             return reply['value']
 

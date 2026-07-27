@@ -2,4 +2,4 @@
 - Output fanout instead of queue?
 - More custom aliases (raw -> y pre calib etc)
 - Proper docs (README)
-- Consistency of Tango code
+- Test input errors with real hw
