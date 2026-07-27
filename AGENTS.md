@@ -102,7 +102,7 @@ Runtime config is TOML. Example configs in `test/*.conf`.
 
 ## Python GUI
 
-`umami-gui` is a standalone, executable PyQtGraph script that talks to the
+`umami-gui` is a PyQtGraph-based package (`umami_gui/`) that talks to the
 same command socket and shared-memory histogram as `umami-ctl`, for
 interactive debugging: live histogram + projection plot, per-input state,
 mode switching, live param view/edit, raw-dump/save-histo controls, and a
@@ -112,24 +112,48 @@ Dependencies (`cffi`, `numpy`, `pyqtgraph`, `pyqt6`) are managed via
 `pyproject.toml` + `uv`:
 ```sh
 uv sync                             # create/update .venv with pinned deps
-uv run ./umami-gui [ipc_name]       # run it
-uv run ruff check umami-gui         # lint (dev dependency group)
+uv run umami-gui [ipc_name]         # run it
+uv run ruff check umami_gui         # lint (dev dependency group)
 uv build                            # build an installable wheel
 ```
 Prefer `uv run ruff` over an ambient system `ruff` — versions/default rule
 sets can differ and surface different findings.
 
 `uv build` produces a wheel that installs `umami-gui` straight into the
-target environment's `bin/` directory (via setuptools' `script-files`
-mechanism — see `[tool.setuptools]` in `pyproject.toml`), so
+target environment's `bin/` directory (a standard PEP 621 `[project.scripts]`
+console-script entry point — see `pyproject.toml`), so
 `pip install umami_gui-*.whl` gives you a working `umami-gui` command with
-no separate packaging step.
+no separate packaging step. The package version is derived from the git tag
+(`git describe`) via `setuptools_scm` (see `[tool.setuptools_scm]` in
+`pyproject.toml` and the fallback logic in `umami_gui/__init__.py`).
 
 - `umami_det.py` is a second, Tango/Entangle-based client against the same
   wire protocol — useful as a reference for command usage patterns.
 - To exercise the GUI live (e.g. after a change), start a real `umami`
   process against one of the `test/*.conf` configs and drive it under Xvfb:
   `Xvfb :99 -screen 0 1280x900x24 &`, then
-  `DISPLAY=:99 uv run ./umami-gui <ipc_name>`. Screenshot with ImageMagick's
+  `DISPLAY=:99 uv run umami-gui <ipc_name>`. Screenshot with ImageMagick's
   `import -window root out.png`; drive clicks with `xdotool mousemove --sync
   X Y click 1`.
+
+## Documentation
+
+User-facing docs are `README.md` (short overview/quickstart) plus
+`docs/configuration.md`, `docs/outputs.md`, `docs/cli.md` (full reference).
+Keep them in sync with the code you're changing:
+
+- Adding/renaming/removing an input type, recipe type, or output type ->
+  update the relevant table in `docs/configuration.md` or `docs/outputs.md`.
+- Adding/renaming/removing a config field (global, or per-input/recipe/
+  output) -> update the same file, including whether it's required,
+  optional (with default), or runtime-settable via `set-params`.
+- Adding/renaming/removing a `umami-ctl` subcommand, or a CLI flag on
+  `umami`/`umami-ctl` -> update `docs/cli.md`'s command table.
+- Changing the expression language (`src/expr.rs`) -> update the grammar/
+  field list in `docs/outputs.md`.
+
+When in doubt about current behavior, verify against the actual source
+(`src/config.rs`'s structs, the type-dispatch `match` in `output.rs`/
+`recipe.rs`, or `umami-ctl --help`) rather than assuming an existing doc is
+still accurate — this file and the docs it describes have drifted from the
+code before.
