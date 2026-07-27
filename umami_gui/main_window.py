@@ -12,7 +12,7 @@ from pyqtgraph import exporters
 from pyqtgraph.Qt import QtCore, QtWidgets
 
 from .aux_histo import AuxHistoWindow
-from .axis_items import RotatedAxisItem
+from .axis_items import RotatedAxisItem, ZoomViewBox
 from .client import UmamiClient
 from .icons import icon_button
 from .log_panel import LogPanel
@@ -109,7 +109,7 @@ class MainWindow(QtWidgets.QWidget):
 
     def _build_main_plot(self):
         self.graphics = pg.GraphicsLayoutWidget()
-        self.plot = self.graphics.addPlot()
+        self.plot = self.graphics.addPlot(viewBox=ZoomViewBox())
         self.plot.setTitle('starting...')
         self.img = pg.ImageItem(border='w', axisOrder='row-major')
         # shift by half a pixel so integer axis ticks land on pixel centers
@@ -131,7 +131,8 @@ class MainWindow(QtWidgets.QWidget):
 
     def open_projection_window(self):
         if self.proj_window is None:
-            self.proj_window = pg.PlotWidget(title='Diffractogram')
+            self.proj_window = pg.PlotWidget(
+                title='Diffractogram', viewBox=ZoomViewBox())
             self.proj_window.setWindowTitle('UMAMI diffractogram')
             self.proj_window.setLabel('bottom', 'x channel')
             self.proj_window.setLabel('left', 'counts')
@@ -144,7 +145,7 @@ class MainWindow(QtWidgets.QWidget):
     def open_t_projection_window(self):
         if self.t_proj_window is None:
             self.t_proj_window = pg.PlotWidget(
-                title='TOF spectrum',
+                title='TOF spectrum', viewBox=ZoomViewBox(),
                 axisItems={'bottom': RotatedAxisItem(orientation='bottom')})
             self.t_proj_window.setWindowTitle('UMAMI TOF spectrum')
             self.t_proj_window.setLabel('bottom', 't bin')

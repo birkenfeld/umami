@@ -11,6 +11,7 @@ import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets
 
+from .axis_items import ZoomViewBox
 from .icons import icon_button
 from .shm import ShmHistogram
 
@@ -377,7 +378,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
                 row_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
                 self._row_splitters.append(row_splitter)
                 self.plot_area.addWidget(row_splitter)
-            plot_widget = pg.PlotWidget(title=name)
+            plot_widget = pg.PlotWidget(title=name, viewBox=ZoomViewBox())
             self._row_splitters[row].addWidget(plot_widget)
             plot_item = plot_widget.getPlotItem()
             if is_2d:

@@ -42,3 +42,36 @@ class RotatedAxisItem(pg.AxisItem):
             local_rect = QtCore.QRectF(-rect.width(), 0, rect.width(), rect.height())
             p.drawText(local_rect, int(flags), text)
             p.restore()
+
+
+class ZoomViewBox(pg.ViewBox):
+    """A ViewBox with right-button drag-to-zoom instead of drag-to-scale.
+
+    Left-button drag still pans (the default). Right-button drag draws a
+    zoom rectangle (reusing ViewBox's own RectMode internals); a plain
+    right-click (no drag) resets the view to fit all data instead of
+    opening the context menu.
+    """
+
+    def mouseDragEvent(self, ev, axis=None):  # noqa: N802
+        if ev.button() != QtCore.Qt.MouseButton.RightButton:
+            super().mouseDragEvent(ev, axis=axis)
+            return
+        ev.accept()
+        if ev.isFinish():
+            self.rbScaleBox.hide()
+            ax = QtCore.QRectF(pg.Point(ev.buttonDownPos(ev.button())),
+                               pg.Point(ev.pos()))
+            ax = self.childGroup.mapRectFromParent(ax)
+            self.showAxRect(ax)
+            self.axHistoryPointer += 1
+            self.axHistory = [*self.axHistory[:self.axHistoryPointer], ax]
+        else:
+            self.updateScaleBox(ev.buttonDownPos(), ev.pos())
+
+    def mouseClickEvent(self, ev):  # noqa: N802
+        if ev.button() != QtCore.Qt.MouseButton.RightButton:
+            super().mouseClickEvent(ev)
+            return
+        ev.accept()
+        self.autoRange()
