@@ -233,7 +233,10 @@ class AuxHistoWindow(QtWidgets.QWidget):
         table_container = QtWidgets.QWidget()
         table_container.setLayout(table_row)
 
-        self.plot_area = pg.GraphicsLayoutWidget()
+        # a splitter of row-splitters: every plot starts out evenly sized,
+        # and the user can still drag to rebalance
+        self.plot_area = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self._row_splitters = []
         scroll = QtWidgets.QScrollArea()
         scroll.setWidget(self.plot_area)
         scroll.setWidgetResizable(True)
@@ -284,8 +287,9 @@ class AuxHistoWindow(QtWidgets.QWidget):
 
     def _forget(self, name):
         self._shms.pop(name).close()
-        plot_item, _, _ = self._plots.pop(name)
-        self.plot_area.removeItem(plot_item)
+        plot_widget, _, _ = self._plots.pop(name)
+        plot_widget.setParent(None)
+        plot_widget.deleteLater()
 
     def invalidate_all(self):
         """Force every cached shm segment to be reopened on the next refresh.
@@ -343,8 +347,14 @@ class AuxHistoWindow(QtWidgets.QWidget):
                 continue
             self._shms[name] = shm
             is_2d = shm.ny > 1
-            plot_item = self.plot_area.addPlot(
-                row=i // col_count, col=i % col_count, title=name)
+            row = i // col_count
+            while row >= len(self._row_splitters):
+                row_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+                self._row_splitters.append(row_splitter)
+                self.plot_area.addWidget(row_splitter)
+            plot_widget = pg.PlotWidget(title=name)
+            self._row_splitters[row].addWidget(plot_widget)
+            plot_item = plot_widget.getPlotItem()
             if is_2d:
                 img = pg.ImageItem(border='w', axisOrder='row-major')
                 # shift by half a pixel so integer axis ticks land on pixel
@@ -356,11 +366,11 @@ class AuxHistoWindow(QtWidgets.QWidget):
                 img.setPos(-0.5, -0.5)
                 plot_item.addItem(img)
                 img.setColorMap(pg.colormap.get('viridis'))
-                self._plots[name] = (plot_item, img, True)
+                self._plots[name] = (plot_widget, img, True)
             else:
                 curve = plot_item.plot(
                     stepMode='center', fillLevel=0, brush=(0, 0, 255, 80))
-                self._plots[name] = (plot_item, curve, False)
+                self._plots[name] = (plot_widget, curve, False)
 
     def _update_plots(self):
         for name, shm in list(self._shms.items()):
