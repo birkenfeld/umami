@@ -13,13 +13,17 @@ use crate::config::{CanonConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::event::{Event, EventTime, EventType};
 use crate::input::{ReplayFile, DumpHandler};
+use crate::params::HasParams;
 use super::{Source, Input, InputCommon};
 
+#[derive(HasParams)]
 pub struct CanonInput<S> {
     source: S,
     name: ModuleId,
     dump: DumpHandler,
     is_gate: bool,
+    #[param(name = "channel_offset", datatype = "integer",
+            help = "Added to the decoded PSD channel to form the final pixel id")]
     channel_ofs: u32,
     time_ofs: EventTime,
     buffer: Vec<u8>,
@@ -354,5 +358,53 @@ impl fmt::Display for CanonEvent {
                 write!(f, "D32 S={:10} SS={:5} US={:4}",
                        self.s32(), self.ss32(), self.us32()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::params::ParamMap;
+
+    struct NoSource;
+
+    impl Source for NoSource {
+        type Config = ();
+        fn from_config(_: &(), _: &Path) -> UResult<Self> { Ok(NoSource) }
+        fn description(&self) -> String { "none".into() }
+        fn read_exact(&mut self, _buf: &mut [u8]) -> io::Result<()> { unreachable!() }
+        fn reset(&mut self) -> UResult<()> { unreachable!() }
+    }
+
+    impl CanonSource for NoSource {
+        fn request_events(&mut self, _buffer: &mut [u8]) -> UResult<usize> { unreachable!() }
+    }
+
+    fn make_input() -> CanonInput<NoSource> {
+        CanonInput {
+            source: NoSource,
+            name: ModuleId::new("canon".into()),
+            dump: Default::default(),
+            is_gate: false,
+            channel_ofs: 100,
+            time_ofs: EventTime::zero(),
+            buffer: vec![0; EVENT_SIZE * MAX_EVENTS],
+        }
+    }
+
+    #[test]
+    fn test_get_params_reports_channel_offset() {
+        let input = make_input();
+        let params = input.get_params().unwrap();
+        assert_eq!(params["channel_offset"]["value"], 100);
+    }
+
+    #[test]
+    fn test_update_params_updates_channel_offset() {
+        let mut input = make_input();
+        let mut set = ParamMap::new();
+        set.insert("channel_offset".into(), serde_json::json!(500));
+        input.update_params(ModuleId::new("canon".into()), set).unwrap();
+        assert_eq!(input.channel_ofs, 500);
     }
 }

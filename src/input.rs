@@ -23,7 +23,7 @@ use crate::command::{Command, CommandReply, ModuleId};
 use crate::config::SpecificInputConfig;
 use crate::error::{UError, UResult};
 use crate::event::Event;
-use crate::params::ParamMap;
+use crate::params::{HasParams, ParamMap};
 use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
 use crate::util::resolve;
@@ -93,7 +93,7 @@ pub fn start(config: SpecificInputConfig, confdir: &Path, common: InputCommon) -
     Ok(())
 }
 
-pub trait Input: Send {
+pub trait Input: Send + HasParams {
     fn description(&self) -> String;
     fn handle(&mut self, cmd: Command) -> UResult<CommandReply>;
     fn start(&mut self, run_id: String) -> UResult<()>;
@@ -186,36 +186,58 @@ pub trait Input: Send {
                 }
                 _ => CommandReply::Ok
             }
-            // allow retrieving/changing input recipe params
-            Command::GetParams => match common.recipe.get_params() {
-                Ok(params) => {
-                    let mut map = ParamMap::new();
-                    for (param, info) in params {
+            // allow retrieving/changing both this input's own params and its recipe's
+            Command::GetParams => {
+                let mut map = ParamMap::new();
+                match self.get_params() {
+                    Ok(params) => for (param, info) in params {
+                        map.insert(format!("{name}.{param}"), info);
+                    }
+                    Err(e) => {
+                        let _ = rep.send(CommandReply::new_mod_error(
+                            name, format!("Failed to get input params: {e:#}")));
+                        return;
+                    }
+                }
+                match common.recipe.get_params() {
+                    Ok(params) => for (param, info) in params {
                         map.insert(format!("{}.{param}", common.recipe_name), info);
                     }
-                    CommandReply::Data { value: map.into() }
+                    Err(e) => {
+                        let _ = rep.send(CommandReply::new_mod_error(
+                            name, format!("Failed to get recipe params: {e:#}")));
+                        return;
+                    }
                 }
-                Err(e) => CommandReply::new_mod_error(
-                    name, format!("Failed to get recipe params: {e:#}")),
+                CommandReply::Data { value: map.into() }
             }
             Command::SetParams { params } => {
-                let prefix = format!("{}.", common.recipe_name);
+                let input_prefix = format!("{name}.");
+                let recipe_prefix = format!("{}.", common.recipe_name);
                 let mut own_params = ParamMap::new();
+                let mut recipe_params = ParamMap::new();
                 for (key, value) in params {
-                    if let Some(param) = key.strip_prefix(&prefix) {
+                    if let Some(param) = key.strip_prefix(&input_prefix) {
                         own_params.insert(param.into(), value);
+                    } else if let Some(param) = key.strip_prefix(&recipe_prefix) {
+                        recipe_params.insert(param.into(), value);
                     }
                 }
-                if own_params.is_empty() {
-                    // no params addressed to this input's recipe
-                    CommandReply::Ok
-                } else {
-                    match common.recipe.update_params(common.recipe_name, own_params) {
-                        Ok(()) => CommandReply::Ok,
-                        Err(e) => CommandReply::new_mod_error(
-                            name, format!("Failed to set recipe params: {e:#}")),
-                    }
+                if !own_params.is_empty()
+                    && let Err(e) = self.update_params(name, own_params)
+                {
+                    let _ = rep.send(CommandReply::new_mod_error(
+                        name, format!("Failed to set input params: {e:#}")));
+                    return;
                 }
+                if !recipe_params.is_empty()
+                    && let Err(e) = common.recipe.update_params(common.recipe_name, recipe_params)
+                {
+                    let _ = rep.send(CommandReply::new_mod_error(
+                        name, format!("Failed to set recipe params: {e:#}")));
+                    return;
+                }
+                CommandReply::Ok
             }
             _ => match self.handle(cmd) {
                 Ok(reply) => reply,

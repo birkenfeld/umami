@@ -11,7 +11,7 @@ use num_enum::FromPrimitive;
 use zerocopy::{FromBytes, Immutable, IntoBytes, Unaligned};
 use zerocopy::byteorder::little_endian::U16;
 use crate::{ldebug, lprintln};
-use crate::config::{MesyConfig, MesyModuleConfig, SourceConfig};
+use crate::config::{MesyCellConfig, MesyConfig, MesyModuleConfig, SourceConfig};
 use crate::error::UResult;
 use crate::util::resolve;
 
@@ -36,7 +36,7 @@ pub enum Cmd {
 }
 
 #[repr(u16)]
-#[derive(Clone, Copy, Debug, FromPrimitive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, FromPrimitive)]
 pub enum ModType {
     None = 0,
     Mpsd8Old = 1,
@@ -121,41 +121,59 @@ pub trait MesyCommandHandler: Send + 'static {
 
         for i in 0..8 {
             if let Some(cfg) = config.cells.get(&i) {
-                lprintln!(INFO, "Setting up cell {i} with source {}, compare {}",
-                          cfg.source, cfg.compare);
-                let _res: [U16; 3] = self.do_command(
-                    Cmd::SetCell,
-                    [U16::new(i as _), U16::new(cfg.source), U16::new(cfg.compare)],
-                )?;
+                self.set_up_cell(i, cfg)?;
             }
         }
 
         // TODO: transmission mode (for MCPD and modules)
 
         for (i, modtype) in modules.iter().enumerate() {
-            match modtype {
-                ModType::None => continue,
-                ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P => {
-                    if let Some(cfg) = config.modules.get(&i) {
-                        if let MesyModuleConfig::Mpsd { threshold, gain } = cfg {
-                            self.set_up_mpsd(i, *threshold, *gain)?;
-                        } else {
-                            lprintln!(WARN, "Module {i} is not an MPSD, not configuring");
-                        }
-                    } else {
-                        lprintln!(WARN, "MPSD {i} has no assigned config, not configuring");
-                    }
-                },
-                ModType::Mwpchr => {
-                    lprintln!(INFO, "Module {i} is a MWPCHR, no configuration necessary");
-                }
-                _ => {
-                    lprintln!(WARN, "Module {i} has unsupported type {:?}, not configuring",
-                              modules[i]);
-                }
+            if *modtype != ModType::None {
+                self.set_up_module(i, *modtype, config.modules.get(&i))?;
             }
         }
         Ok(())
+    }
+
+    /// Push one cell's trigger source/compare wiring to hardware. Also used
+    /// to apply a live `SetParams` update to a running input.
+    fn set_up_cell(&mut self, idx: usize, cfg: &MesyCellConfig) -> UResult<()> {
+        lprintln!(INFO, "Setting up cell {idx} with source {}, compare {}",
+                  cfg.source, cfg.compare);
+        let _res: [U16; 3] = self.do_command(
+            Cmd::SetCell,
+            [U16::new(idx as _), U16::new(cfg.source), U16::new(cfg.compare)],
+        )?;
+        Ok(())
+    }
+
+    /// Push one module's threshold/gain to hardware, if `modtype` is a
+    /// configurable MPSD-class module. Also used to apply a live
+    /// `SetParams` update to a running input.
+    fn set_up_module(&mut self, idx: usize, modtype: ModType,
+                     cfg: Option<&MesyModuleConfig>) -> UResult<()> {
+        match modtype {
+            ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P => match cfg {
+                Some(MesyModuleConfig::Mpsd { threshold, gain }) =>
+                    self.set_up_mpsd(idx, *threshold, *gain),
+                Some(_) => {
+                    lprintln!(WARN, "Module {idx} is not an MPSD, not configuring");
+                    Ok(())
+                }
+                None => {
+                    lprintln!(WARN, "MPSD {idx} has no assigned config, not configuring");
+                    Ok(())
+                }
+            },
+            ModType::Mwpchr => {
+                lprintln!(INFO, "Module {idx} is a MWPCHR, no configuration necessary");
+                Ok(())
+            }
+            other => {
+                lprintln!(WARN, "Module {idx} has unsupported type {other:?}, not configuring");
+                Ok(())
+            }
+        }
     }
 
     fn set_up_mpsd(&mut self, num: usize, threshold: u16, gain: u16) -> UResult<()> {

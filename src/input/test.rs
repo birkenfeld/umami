@@ -8,8 +8,10 @@ use crate::command::{Command, CommandReply, ModuleId};
 use crate::config::TestInputConfig;
 use crate::error::{UError, UResult};
 use crate::event::{Event, EventHisto, EventType};
+use crate::params::HasParams;
 use super::{Input, InputCommon};
 
+#[derive(HasParams)]
 pub struct TestInput {
     name: ModuleId,
     // one Neutron event per (x, y) cell in 0..nx x 0..ny, re-issued on every run

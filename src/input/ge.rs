@@ -11,6 +11,7 @@ use crate::config::{GEConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::input::{ReplayFile, DumpHandler};
 use crate::event::{Event, EventTime, EventFlags, EventType};
+use crate::params::HasParams;
 use super::{Source, Input, InputCommon};
 
 const PACKET_NORMAL:     u32 = 0x1000;
@@ -20,6 +21,7 @@ const PACKET_DIAG_FAKE:  u32 = 0x3100;
 const PACKET_HEARTBT:    u32 = 0x5000;
 const MAX_PACKET_SIZE: usize = 65536;
 
+#[derive(HasParams)]
 pub struct GeInput<S> {
     source: S,
     name: ModuleId,

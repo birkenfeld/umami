@@ -3,16 +3,18 @@
 
 mod cmd;
 
+use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 use anyhow::Context;
 use byteorder::{ByteOrder, BE, LE};
 use crate::lprintln;
 use crate::command::{Command, CommandReply, ModuleId};
-use crate::config::{MesyConfig, SourceConfig};
+use crate::config::{MesyCellConfig, MesyConfig, MesyModuleConfig, SourceConfig};
 use crate::error::{UError, UResult};
 use crate::event::{Event, EventType, EventTime};
 use crate::input::{ReplayFile, DumpHandler};
+use crate::params::HasParams;
 use super::{Source, Input, InputCommon, UdpReader};
 
 const TIME_BASE: i64 = 100; // ns
@@ -25,7 +27,11 @@ const END_MARKER: &[u8] = b"\xff\xff\xaa\xaa\x55\x55\x00\x00";
 const FILE_START: &[u8] = b"mesytec ";
 const FULL_HEADER: &[u8] = b"mesytec psd listmode data\nheader length: 2 lines \n";
 
-pub struct MesyInput<S, C> {
+#[derive(HasParams)]
+pub struct MesyInput<S, C>
+where
+    C: cmd::MesyCommandHandler,
+{
     source: S,
     command_handler: C,
     dump: DumpHandler,
@@ -33,6 +39,13 @@ pub struct MesyInput<S, C> {
     name: ModuleId,
     #[allow(unused)]
     is_master: bool,
+    mod_types: [cmd::ModType; 8],
+    #[param(has_setter = true, datatype = "map of cell index to (source, compare)",
+            help = "Per-cell trigger source/compare wiring, pushed live via SetCell")]
+    cells: BTreeMap<usize, MesyCellConfig>,
+    #[param(has_setter = true, datatype = "map of module index to (type, threshold, gain)",
+            help = "Per-MPSD threshold/gain, pushed live via SetGainMpsd/SetThreshold")]
+    modules: BTreeMap<usize, MesyModuleConfig>,
     // run-time
     buf_serial: Option<u16>,
     no_event_buffers: usize,
@@ -57,18 +70,42 @@ impl MesyInput<(), ()> {
 
 impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
     fn start_with_source(source: S, mut commands: C, config: MesyConfig, common: InputCommon) -> UResult<()> {
-        let modules = commands.scan()?;
-        commands.set_up(&modules, &config)?;
+        let mod_types = commands.scan()?;
+        commands.set_up(&mod_types, &config)?;
         let input = Self {
             source,
             command_handler: commands,
             dump: Default::default(),
             name: common.name,
             is_master: config.is_master,
+            mod_types,
+            cells: config.cells,
+            modules: config.modules,
             buf_serial: None,
             no_event_buffers: 0,
         };
         input.start_main_loop(common)?;
+        Ok(())
+    }
+}
+
+// Bounded only on C (not S), matching the struct's own `where` clause, so
+// these are also callable from the HasParams impl the derive generates.
+impl<S, C: cmd::MesyCommandHandler> MesyInput<S, C> {
+    fn set_cells(&mut self, cells: BTreeMap<usize, MesyCellConfig>) -> UResult<()> {
+        for (&idx, cfg) in &cells {
+            self.command_handler.set_up_cell(idx, cfg)?;
+        }
+        self.cells = cells;
+        Ok(())
+    }
+
+    fn set_modules(&mut self, modules: BTreeMap<usize, MesyModuleConfig>) -> UResult<()> {
+        for (&idx, cfg) in &modules {
+            let modtype = self.mod_types.get(idx).copied().unwrap_or(cmd::ModType::None);
+            self.command_handler.set_up_module(idx, modtype, Some(cfg))?;
+        }
+        self.modules = modules;
         Ok(())
     }
 }
@@ -312,4 +349,78 @@ impl MesySource for ReplayFile {
 
 fn parse_int(s: &[u8]) -> Option<u64> {
     str::from_utf8(s).ok()?.trim().parse::<u64>().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::params::ParamMap;
+
+    struct NoSource;
+
+    impl Source for NoSource {
+        type Config = ();
+        fn from_config(_: &(), _: &Path) -> UResult<Self> { Ok(NoSource) }
+        fn description(&self) -> String { "none".into() }
+        fn read_exact(&mut self, _buf: &mut [u8]) -> io::Result<()> { unreachable!() }
+        fn reset(&mut self) -> UResult<()> { unreachable!() }
+    }
+
+    impl MesySource for NoSource {
+        type E = LE;
+        fn get_packet(&mut self, _buffer: &mut [u8]) -> io::Result<usize> { unreachable!() }
+    }
+
+    fn make_input() -> MesyInput<NoSource, ()> {
+        MesyInput {
+            source: NoSource,
+            command_handler: (),
+            dump: Default::default(),
+            name: ModuleId::new("mesy".into()),
+            is_master: false,
+            mod_types: [cmd::ModType::Mpsd8; 8],
+            cells: BTreeMap::new(),
+            modules: BTreeMap::new(),
+            buf_serial: None,
+            no_event_buffers: 0,
+        }
+    }
+
+    #[test]
+    fn test_get_params_reports_empty_cells_and_modules() {
+        let input = make_input();
+        let params = input.get_params().unwrap();
+        assert!(params["cells"]["value"].as_object().unwrap().is_empty());
+        assert!(params["modules"]["value"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_update_params_updates_cells_and_modules() {
+        let mut input = make_input();
+        let mut set = ParamMap::new();
+        set.insert("modules".into(), serde_json::json!({
+            "3": {"type": "mpsd", "threshold": 42, "gain": 7},
+        }));
+        set.insert("cells".into(), serde_json::json!({
+            "1": {"source": 2, "compare": 5},
+        }));
+        input.update_params(ModuleId::new("mesy".into()), set).unwrap();
+
+        assert!(matches!(input.modules[&3], MesyModuleConfig::Mpsd { threshold: 42, gain: 7 }));
+        assert_eq!(input.cells[&1].source, 2);
+        assert_eq!(input.cells[&1].compare, 5);
+    }
+
+    #[test]
+    fn test_update_params_wrong_module_type_is_only_a_warning() {
+        let mut input = make_input();
+        input.mod_types[2] = cmd::ModType::Mwpchr;
+        let mut set = ParamMap::new();
+        set.insert("modules".into(), serde_json::json!({
+            "2": {"type": "mpsd", "threshold": 1, "gain": 1},
+        }));
+        // does not error even though module 2 isn't an MPSD
+        input.update_params(ModuleId::new("mesy".into()), set).unwrap();
+        assert!(matches!(input.modules[&2], MesyModuleConfig::Mpsd { .. }));
+    }
 }

@@ -5,8 +5,7 @@
 //! `libjumpsd.so`. We reuse its `wrapped_jumpsd_dma()` ring-buffer DMA
 //! acquisition loop as-is and only provide the two callbacks it expects
 //! (`jumpsd_fillhisto`, `jumpsd_setup_callback`), decoding into [`Event`]s
-//! via [`decode::JumiomDecoder`] instead of the legacy shared-memory
-//! histogram.
+//! via [`decode::JumiomDecoder`].
 //!
 //! `wrapped_jumpsd_dma`'s callbacks carry no device-id/context parameter, so
 //! only one Jumiom input can be active per umami process; this is enforced
@@ -28,6 +27,7 @@ use crate::error::{UError, UResult};
 use crate::event::Event;
 use crate::lprintln;
 use crate::input::{DumpHandler, Input, InputCommon};
+use crate::params::HasParams;
 
 unsafe extern "C" {
     fn wrapped_jumpsd_dma(dev: c_int) -> c_int;
@@ -120,10 +120,16 @@ extern "C" fn jumpsd_fillhisto(data: *mut c_char, len: c_int) {
     }
 }
 
+#[derive(HasParams)]
 pub struct JumiomInput {
     name: ModuleId,
     device: i32,
+    #[param(has_setter = true, datatype = "tof1|raw|ramp",
+            help = "Acquisition mode; applied to hardware and decoding at the next Start")]
     mode: JumiomMode,
+    #[param(has_setter = true, datatype = "JumiomCalibration or null",
+            help = "Hardware calibration values, applied to the device at the next Start")]
+    calibration: Option<JumiomCalibration>,
     receiver: Receiver<Vec<Event>>,
     thread: Option<JoinHandle<()>>,
 }
@@ -149,10 +155,27 @@ impl JumiomInput {
             name: common.name,
             device: config.device,
             mode: config.mode,
+            calibration: config.calibration,
             receiver,
             thread: None,
         };
         input.start_main_loop(common)?;
+        Ok(())
+    }
+
+    fn set_mode(&mut self, mode: JumiomMode) -> UResult<()> {
+        self.mode = mode;
+        if let Some(shared) = SHARED.lock().unwrap().as_mut() {
+            shared.mode = mode;
+        }
+        Ok(())
+    }
+
+    fn set_calibration(&mut self, calibration: Option<JumiomCalibration>) -> UResult<()> {
+        self.calibration = calibration;
+        if let Some(shared) = SHARED.lock().unwrap().as_mut() {
+            shared.calibration = calibration;
+        }
         Ok(())
     }
 }
@@ -230,5 +253,53 @@ impl Input for JumiomInput {
             events.append(&mut chunk);
         }
         Ok(events)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::params::ParamMap;
+
+    fn make_input() -> JumiomInput {
+        let (_sender, receiver) = crate::channel::unbounded::<Vec<Event>>();
+        JumiomInput {
+            name: ModuleId::new("jumiom".into()),
+            device: 0,
+            mode: JumiomMode::Raw,
+            calibration: None,
+            receiver,
+            thread: None,
+        }
+    }
+
+    #[test]
+    fn test_get_params_reports_mode_and_calibration() {
+        let input = make_input();
+        let params = input.get_params().unwrap();
+        assert_eq!(params["mode"]["value"], "raw");
+        assert!(params["calibration"]["value"].is_null());
+    }
+
+    #[test]
+    fn test_update_params_stages_mode_and_calibration_for_next_start() {
+        let mut input = make_input();
+        let mut set = ParamMap::new();
+        set.insert("mode".into(), serde_json::json!("tof1"));
+        set.insert("calibration".into(), serde_json::json!({
+            "thresholds": [1, 2, 3],
+            "poti": [4, 5, 6, 7],
+            "dac1": [0, 0, 0, 0],
+            "dac2": [0, 0, 0, 0],
+            "pileup": 8,
+            "monitor_delay": 9,
+            "chopper_delay": 10,
+        }));
+        // no hardware is touched here; the new values only take effect via
+        // jumpsd_setup_callback, next time this input's Start is handled
+        input.update_params(ModuleId::new("jumiom".into()), set).unwrap();
+
+        assert_eq!(input.mode, JumiomMode::Tof1);
+        assert_eq!(input.calibration.unwrap().pileup, 8);
     }
 }

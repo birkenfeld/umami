@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use anyhow::Context;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use crate::error::UResult;
 
 #[derive(Debug, Deserialize)]
@@ -39,14 +39,14 @@ pub struct MesyConfig {
     pub modules: BTreeMap<usize, MesyModuleConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MesyCellConfig {
     // TODO values are more restricted
     pub source: u16,
     pub compare: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum MesyModuleConfig {
     // TODO better types
@@ -71,7 +71,7 @@ pub enum SpecificInputConfig {
 /// up via `jumpsd_set_*_mode` and the raw word-stream decoding). `Tof2` is
 /// intentionally not supported (see `src/input/jumiom/decode.rs`).
 #[cfg(feature = "jumiom")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum JumiomMode {
     Tof1,
@@ -98,7 +98,7 @@ pub struct JumiomConfig {
 /// (see `src/input/jumiom.rs`). Grouped to match how they're set together in
 /// the field's `entangle` config (`jumiom_det.ImageChannel`).
 #[cfg(feature = "jumiom")]
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct JumiomCalibration {
     /// Upper/lower/gate ADC thresholds (`jumpsd_write_threshold` levels 0..2).
     pub thresholds: [i32; 3],
