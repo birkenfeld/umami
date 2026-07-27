@@ -9,7 +9,7 @@ import sys
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtWidgets
 
-from .icons import is_dark_mode
+from .icons import is_dark_mode, load_icon
 from .main_window import MainWindow
 
 
@@ -17,6 +17,13 @@ def main():
     shm_name = sys.argv[1] if len(sys.argv) > 1 else 'umami'
 
     app = QtWidgets.QApplication(['umami-histogram'])
+    # named so QSettings() (used to persist window/UI state) finds its
+    # config file without every call site having to repeat these strings
+    app.setOrganizationName('mlz')
+    app.setApplicationName('umami')
+    # the wordmark-free crop of the logo, used by every window (titlebar,
+    # taskbar/alt-tab) unless a window sets its own
+    app.setWindowIcon(load_icon('logo_mark'))
     # dark-mode detection needs a QApplication (for its palette fallback),
     # so this must run after construction but before any plots are built
     if is_dark_mode():

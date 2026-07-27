@@ -28,3 +28,15 @@ language, each backed by its own shared-memory segment named
 Usage: umami-gui [ipc_name]  (defaults to "umami"; this name is used for
 both the shared-memory segment and the command socket.)
 """
+
+import importlib.metadata
+
+try:
+    __version__ = importlib.metadata.version(__package__)
+except importlib.metadata.PackageNotFoundError:
+    try:
+        from setuptools_scm import get_version  # pylint: disable=import-error
+        __version__ = get_version(root='..', relative_to=__file__)
+        del get_version
+    except Exception:  # noqa: BLE001
+        __version__ = 'unknown'

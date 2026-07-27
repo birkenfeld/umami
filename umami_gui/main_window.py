@@ -3,6 +3,7 @@
 
 """Top-level UMAMI histogram viewer window."""
 
+import html
 import sys
 import time
 from pathlib import Path
@@ -10,12 +11,13 @@ from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph import exporters
-from pyqtgraph.Qt import QtCore, QtWidgets
+from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
+from . import __version__
 from .aux_histo import AuxHistoWindow
 from .axis_items import RotatedAxisItem, ZoomViewBox
 from .client import UmamiClient
-from .icons import icon_button
+from .icons import icon_button, load_icon
 from .log_panel import LogPanel
 from .params_table import ParamsTable
 from .shm import ShmHistogram
@@ -34,6 +36,17 @@ COLORMAPS = {
     'turbo': 'turbo',
     'grey': 'CET-L1',
 }
+
+# height/width of icons/logo.svg's viewBox (300 x 372.76794) -- used to size
+# the About dialog's logo without distorting it
+LOGO_ASPECT = 372.76794 / 300
+
+# kept in sync by hand with Cargo.toml's [package.authors]
+AUTHORS = [
+    'Georg Brandl <g.brandl@fz-juelich.de>',
+    'Alexander Zaft <a.zaft@fz-juelich.de>',
+    'Enrico Faulhaber <enrico.faulhaber@frm2.tum.de>',
+]
 
 
 class MainWindow(QtWidgets.QWidget):
@@ -76,6 +89,7 @@ class MainWindow(QtWidgets.QWidget):
         self.last_t = None
         self.last_buf = None
         self.was_connected = False
+        self.settings = QtCore.QSettings()
 
         self._build_main_plot()
         self._build_projection_state()
@@ -85,6 +99,8 @@ class MainWindow(QtWidgets.QWidget):
         self._build_dump_controls()
         self._build_params_panel()
         self._assemble()
+        self._load_settings()
+        QtWidgets.QApplication.instance().aboutToQuit.connect(self._save_settings)
 
         self.image_timer = QtCore.QTimer()
         self.image_timer.timeout.connect(self.update_buffer)
@@ -364,13 +380,49 @@ class MainWindow(QtWidgets.QWidget):
 
         self.log_toggle = icon_button('show_log', 'Show Log')
         self.log_toggle.setCheckable(True)
+        self.log_toggle.setShortcut(QtGui.QKeySequence('Ctrl+L'))
         frame.layout().addWidget(self.log_toggle)
 
+        about_btn = QtWidgets.QPushButton('About')
+        about_btn.clicked.connect(self.show_about)
+        frame.layout().addWidget(about_btn)
+
         btn = icon_button('quit', 'Quit')
+        btn.setShortcut(QtGui.QKeySequence('Ctrl+Q'))
         btn.clicked.connect(QtWidgets.QApplication.instance().quit)
         frame.layout().addWidget(btn)
 
         self.buttons_frame = frame
+
+    def show_about(self):
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle('About UMAMI GUI')
+
+        logo_width = 160
+        logo_height = round(logo_width * LOGO_ASPECT)
+        logo_pixmap = load_icon('logo').pixmap(logo_width, logo_height)
+        logo = QtWidgets.QLabel()
+        logo.setPixmap(logo_pixmap)
+        logo.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        authors_html = '<br>'.join(html.escape(author) for author in AUTHORS)
+        text = QtWidgets.QLabel(
+            f'{__version__}<br><br>'
+            'Live histogram viewer and control panel for the UMAMI '
+            'data-acquisition backend.<br><br>'
+            f'<b>Authors</b><br>{authors_html}')
+        text.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        text.setWordWrap(True)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(dialog.accept)
+
+        layout = QtWidgets.QVBoxLayout(dialog)
+        layout.addWidget(logo)
+        layout.addWidget(text)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def on_start_clicked(self):
         self.client.start(self.run_id_field.text() or
@@ -404,11 +456,11 @@ class MainWindow(QtWidgets.QWidget):
 
         frame.layout().addSpacing(20)
         frame.layout().addWidget(QtWidgets.QLabel('Colormap:'))
-        colormap_combo = QtWidgets.QComboBox()
-        colormap_combo.addItems(list(COLORMAPS))
-        colormap_combo.currentTextChanged.connect(
+        self.colormap_combo = QtWidgets.QComboBox()
+        self.colormap_combo.addItems(list(COLORMAPS))
+        self.colormap_combo.currentTextChanged.connect(
             lambda name: self.img.setColorMap(pg.colormap.get(COLORMAPS[name])))
-        frame.layout().addWidget(colormap_combo)
+        frame.layout().addWidget(self.colormap_combo)
 
         frame.layout().addSpacing(20)
         self.auto_levels_check = QtWidgets.QCheckBox('Auto levels')
@@ -567,20 +619,57 @@ class MainWindow(QtWidgets.QWidget):
         self.log_toggle.toggled.connect(self.log_panel.setVisible)
         self.log_panel.error_logged.connect(lambda: self.log_toggle.setChecked(True))
 
-        left_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        left_splitter.addWidget(self.graphics)
-        left_splitter.addWidget(self.log_panel)
-        left_splitter.setSizes([600, 200])
+        self.left_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.left_splitter.addWidget(self.graphics)
+        self.left_splitter.addWidget(self.log_panel)
+        self.left_splitter.setSizes([600, 200])
 
-        main_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-        main_splitter.addWidget(left_splitter)
-        main_splitter.addWidget(self.params_panel)
-        main_splitter.setSizes([800, 300])
-        main_splitter.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
-                                    QtWidgets.QSizePolicy.Policy.Expanding)
+        self.main_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        self.main_splitter.addWidget(self.left_splitter)
+        self.main_splitter.addWidget(self.params_panel)
+        self.main_splitter.setSizes([800, 300])
+        self.main_splitter.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                                         QtWidgets.QSizePolicy.Policy.Expanding)
 
         self.layout().addWidget(self.buttons_frame)
         self.layout().addWidget(self.dump_frame)
         self.layout().addWidget(self.display_frame)
         self.layout().addWidget(self.status_panel)
-        self.layout().addWidget(main_splitter)
+        self.layout().addWidget(self.main_splitter)
+
+    # ---- persisted UI state ----
+
+    def _load_settings(self):
+        geometry = self.settings.value('geometry')
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        main_state = self.settings.value('main_splitter')
+        if main_state is not None:
+            self.main_splitter.restoreState(main_state)
+        left_state = self.settings.value('left_splitter')
+        if left_state is not None:
+            self.left_splitter.restoreState(left_state)
+        self.log_toggle.setChecked(
+            self.settings.value('log_visible', False, type=bool))
+        colormap = self.settings.value('colormap')
+        if colormap in COLORMAPS:
+            self.colormap_combo.setCurrentText(colormap)
+        self.log_scale_check.setChecked(
+            self.settings.value('log_scale', True, type=bool))
+        self.auto_levels_check.setChecked(
+            self.settings.value('auto_levels', True, type=bool))
+        # only the path is restored, not whether dumping was enabled -- silently
+        # resuming a raw dump to a possibly stale path on startup would surprise
+        raw_dump_path = self.settings.value('raw_dump_path')
+        if raw_dump_path is not None:
+            self.raw_dump_path.setText(raw_dump_path)
+
+    def _save_settings(self):
+        self.settings.setValue('geometry', self.saveGeometry())
+        self.settings.setValue('main_splitter', self.main_splitter.saveState())
+        self.settings.setValue('left_splitter', self.left_splitter.saveState())
+        self.settings.setValue('log_visible', self.log_toggle.isChecked())
+        self.settings.setValue('colormap', self.colormap_combo.currentText())
+        self.settings.setValue('log_scale', self.log_scale_check.isChecked())
+        self.settings.setValue('auto_levels', self.auto_levels_check.isChecked())
+        self.settings.setValue('raw_dump_path', self.raw_dump_path.text())

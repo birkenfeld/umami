@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=61", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "umami-gui"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Live histogram viewer and debugging tool for UMAMI shared-memory output"
 requires-python = ">=3.10"
 dependencies = [
@@ -20,6 +20,7 @@ umami-gui = "umami_gui.app:main"
 [dependency-groups]
 dev = [
     "ruff>=0.6",
+    "setuptools_scm>=8",
 ]
 
 [tool.setuptools]
@@ -28,6 +29,8 @@ packages = ["umami_gui", "umami_gui.icons"]
 
 [tool.setuptools.package-data]
 umami_gui = ["icons/*.svg"]
+
+[tool.setuptools_scm]
 
 [tool.ruff]
 exclude = ["umami_det.py"]
