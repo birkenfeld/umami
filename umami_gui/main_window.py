@@ -23,6 +23,17 @@ from .status_panel import StatusPanel
 IMAGE_REFRESH_MS = 250
 STATE_POLL_MS = 1000
 
+# display name -> pyqtgraph colormap name; pyqtgraph has no plain 'grey'/'gray'
+# map, so this points at CET-L1, its linear (grayscale) perceptual map
+COLORMAPS = {
+    'viridis': 'viridis',
+    'inferno': 'inferno',
+    'plasma': 'plasma',
+    'magma': 'magma',
+    'turbo': 'turbo',
+    'grey': 'CET-L1',
+}
+
 
 class MainWindow(QtWidgets.QWidget):
     """Top-level UMAMI histogram viewer.
@@ -376,7 +387,7 @@ class MainWindow(QtWidgets.QWidget):
         frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
                             QtWidgets.QSizePolicy.Policy.Fixed)
 
-        frame.layout().addWidget(QtWidgets.QLabel('t:'))
+        frame.layout().addWidget(QtWidgets.QLabel('Show t slice:'))
         self.t_spin = QtWidgets.QSpinBox()
         self.t_spin.setRange(0, max(self.histo.nt - 1, 0))
         self.t_spin.valueChanged.connect(lambda _: self.update_buffer())
@@ -392,10 +403,9 @@ class MainWindow(QtWidgets.QWidget):
         frame.layout().addSpacing(20)
         frame.layout().addWidget(QtWidgets.QLabel('Colormap:'))
         colormap_combo = QtWidgets.QComboBox()
-        colormap_combo.addItems(['viridis', 'inferno', 'plasma', 'magma',
-                                 'turbo', 'grey'])
+        colormap_combo.addItems(list(COLORMAPS))
         colormap_combo.currentTextChanged.connect(
-            lambda name: self.img.setColorMap(pg.colormap.get(name)))
+            lambda name: self.img.setColorMap(pg.colormap.get(COLORMAPS[name])))
         frame.layout().addWidget(colormap_combo)
 
         frame.layout().addSpacing(20)
