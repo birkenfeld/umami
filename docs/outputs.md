@@ -28,19 +28,20 @@ arrivals, and can print a rolling inter-arrival-time histogram.
   of timestamp order
 * `print_every` (optional, default never): print a running summary every N
   events
-* `ts_histogram` (optional, default false): track and print inter-arrival
-  timing statistics
+* `ts_histogram` (optional, default false): track and print (to stdout)
+  relative-time histogram for each run, good to determine initial spread of
+  timestamp values
 
 ## `type = "hdf5"` (requires building with `--features hdf5`)
 
-Writes events to an HDF5 file.
+Writes events to an HDF5 file with NeXus conventions.
 
 * `dir` (required): directory to write files to
 * `filename` (optional, default `<run id>.h5`): filename within `dir`
 
 ## `type = "file"`
 
-Writes raw events to a plain file.
+Writes raw events to a plain file in the rkyv binary format.
 
 * `dir` (required): directory to write files to
 * `filename` (optional, default derived from the run ID): filename within
@@ -72,8 +73,7 @@ x = { expr = "raw_0[0..12:signed]", bins = 4096, min = -2048, max = 2047 }
 * `enabled` (optional, default true): global on/off switch; runtime-settable
 * `histos` (optional, default empty): list of histogram definitions,
   runtime-settable via `set-params` -- setting a new list unlinks all
-  current shm segments and recreates fresh ones from the new definitions,
-  so any accumulated data is lost on update, same as switching modes
+  current shm segments and recreates fresh ones from the new definitions
 * `available_aliases` (read-only): the current alias table (from recipes
   and `expr_aliases`), reported so a client can show what's available
 
@@ -107,7 +107,7 @@ primary := int | ident | "(" expr ")"
 ```
 
 Fields: `time`, `rel_time` (nanoseconds), `raw_0`, `raw_1` (the event's raw
-data halves), `channel`, `ampl`, `x`, `y`, `t`, `i` (the event's computed
+data fields), `channel`, `ampl`, `x`, `y`, `t`, `i` (the event's computed
 histogram coordinates), `flags`, `evtype`, `auxnum`, `gateup`.
 
 Named constants (for `evtype` comparisons): `neutron`, `monitor`, `edge`,

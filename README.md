@@ -19,11 +19,10 @@ several components (many in separate threads) that act as a data pipeline:
   and locations
 * Sorters: merge events from all inputs into a single data stream, sorted by
   absolute timestamp
-* Postprocess recipes: run transformations only possible looking at the sorted
+* Postprocess modes: run transformations only possible looking at the sorted
   data stream, e.g. assigning a relative timestamp to events
 * Histogram: automatic histogramming of events in 2- or 3-dimensional arrays
-* Outputs: save the processed event stream in desired formats (event files,
-  HDF5, user-defined diagnostic histograms, ...)
+* Outputs: save or aggregate the processed event stream in desired formats
 
 ## Building
 
@@ -40,9 +39,11 @@ This produces two executables:
 * `umami`: starts and runs the acquisition pipeline
 * `umami-ctl`: sends control commands to a running `umami` instance
 
-`umami-gui`, a PyQtGraph-based live viewer and control panel, lives in
-`umami_gui/`; install it with `pip install ./` (or run it in place with
-`python -m umami_gui`).
+Several features are defined for optional components.
+
+`umami-gui`, a PyQtGraph-based live viewer and control panel, does not need to
+be built; install it as a Python package with `uv` or run it in-place with
+`python -m umami_gui [ipc_name]`.
 
 ## Quickstart
 

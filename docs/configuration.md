@@ -4,26 +4,27 @@ UMAMI is configured from a single TOML file. At the top level:
 
 | Key | Required | Meaning |
 |---|---|---|
+| `name` | no | display name for this instance |
 | `inputs` | yes | detector input modules, keyed by a user-chosen name |
 | `input_recipes` | yes | named event-processing recipes, referenced by inputs |
-| `process_modes` | yes | named postprocessing recipes; `default` must exist |
+| `process_modes` | yes | named postprocessing recipes and the `default` mode |
 | `histogram` | yes | shared-memory histogram dimensions |
 | `outputs` | no | output modules, keyed by a user-chosen name -- see [outputs.md](outputs.md) |
 | `ipc_name` | no | IPC name shared by `umami` and `umami-ctl` (default `"umami"`) |
-| `name` | no | display name for this instance, shown in `umami-gui`'s window title and the `state` command |
 | `raw_dir` | no | if set, raw event dumping to this directory starts automatically (see [cli.md](cli.md)) |
 | `debug` | no | boolean, enables debug logging (also `--debug` on the command line) |
 | `expr_aliases` | no | named expression aliases available to all `aux_histo` outputs -- see [outputs.md](outputs.md) |
 
 ## Inputs
 
-Each entry in `[inputs]` defines one detector input module. Every input needs:
+`[inputs]` is a map from input name to a map that defines one detector input
+module. Every input needs:
 
 * `recipe`: name of a recipe from `[input_recipes]` applied to that input's events
 * `type`: input backend type (see below)
 
-Inputs are addressed by their TOML key everywhere (raw dump filenames,
-parameter names, status reporting) -- there is no separate numeric ID.
+Inputs are addressed by their name everywhere (raw dump filenames, parameter
+names, status reporting).
 
 ### `type = "ge"`
 
@@ -47,8 +48,8 @@ Canon detector input.
 Mesytec MCPD input.
 
 * `local` (required): local file path (replay) or local `"host:port"` for
-  incoming data
-* `remote` (required): remote MCPD control/data address
+  incoming data UDP socket (command socket is on port + 1)
+* `remote` (required): remote MCPD command socket address
 * `is_master` (required): whether this MCPD instance is the master
 * `mcpd_id` (required): MCPD numeric ID
 * `cells` (required): map of cell index -> `{ source, compare }`
@@ -65,17 +66,16 @@ Each module entry:
 
 ### `type = "jumiom"` (requires building with `--features jumiom`)
 
-Live Jumiom PSD input, driving DriverJumiom's `libjumpsd.so`.
+Jumiom PSD input, using `libjumpsd.so`.
 
 * `device` (required): device number, i.e. `/dev/jumpsd_d<device>`
-* `mode` (required): `"tof1"`, `"raw"`, or `"ramp"` -- runtime-settable, but
-  only applied to the hardware at the next `start` (not live)
-* `calibration` (optional): hardware calibration block, runtime-settable
-  with the same at-next-`start` semantics as `mode`:
+* `mode` (required): `"tof1"`, `"raw"`, or `"ramp"` -- runtime-settable
+  before acquisition
+* `calibration` (optional): hardware calibration block:
   * `thresholds`: 3 ADC threshold levels
-  * `poti`: 4 gain potentiometer settings (one per ADC channel)
-  * `dac1`, `dac2`: 4 DAC offsets each (single-ended / differential)
   * `pileup`: pileup rejection count
+  * `poti`: 4 gain potentiometer settings
+  * `dac1`, `dac2`: 4 DAC offsets each
   * `monitor_delay`, `chopper_delay` (optional, default `0`): timer reset
     delays in microseconds
 
@@ -84,10 +84,10 @@ treats it as a network endpoint; otherwise it's opened as a replay file.
 
 ## Input recipes and processing modes
 
-`[input_recipes]` is a named pool of recipe configurations referenced by
-inputs via their `recipe` key. `[process_modes]` configures postprocessing
-recipes selected at runtime (`default` is mandatory and active at startup);
-example:
+`[input_recipes]` is a pool of named recipe configurations referenced by inputs
+via their `recipe` setting. `[process_modes]` configures recipes used as
+postprocess modes selected at runtime (`default` sets which is active at
+startup); example:
 
 ```toml
 [process_modes]
@@ -120,6 +120,6 @@ Recipes with runtime-changeable parameters can be inspected/changed live via
 * `ny`: Y dimension
 * `max_nt`: time dimension depth
 * `max_ni`: reserved for a future 4th dimension; not yet used by the
-  histogramming code, but required in the config (no default)
+  histogramming code
 
 Storage is allocated as `nx * ny * max_nt` bins of `u32`.

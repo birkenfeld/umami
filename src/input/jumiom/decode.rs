@@ -8,9 +8,7 @@
 //! (`Tof2` is not supported). No position calculation happens here: a
 //! Tof1 Neutron event's raw FPGA X/Y is encoded into `Event.channel` (X in
 //! the low byte, Y in the next byte), decoded into `histo.x`/`histo.y` by
-//! the `jumiom` recipe (`src/recipe/jumiom.rs`) instead — this is where any
-//! future ADC-ratio/distortion-correction position mode or per-pixel
-//! limit-table filtering would live too.
+//! the `jumiom` recipe (`src/recipe/jumiom.rs`) instead.
 //!
 //! Gate filtering isn't done here either: Tof1 has no separate gate-signal
 //! word, just a bit riding along on every Neutron event, so a `Gate` event

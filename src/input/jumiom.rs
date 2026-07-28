@@ -1,11 +1,10 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-//! Live Jumiom PSD input, driven through DriverJumiom's already-built
-//! `libjumpsd.so`. We reuse its `wrapped_jumpsd_dma()` ring-buffer DMA
-//! acquisition loop as-is and only provide the two callbacks it expects
-//! (`jumpsd_fillhisto`, `jumpsd_setup_callback`), decoding into [`Event`]s
-//! via [`decode::JumiomDecoder`].
+//! Jumiom PSD input, driven through `libjumpsd.so`.  We reuse its
+//! `wrapped_jumpsd_dma()` acquisition loop as-is and provide the two callbacks
+//! it expects (`jumpsd_fillhisto`, `jumpsd_setup_callback`), decoding into
+//! [`Event`]s via [`decode::JumiomDecoder`].
 //!
 //! `wrapped_jumpsd_dma`'s callbacks carry no device-id/context parameter, so
 //! only one Jumiom input can be active per umami process; this is enforced

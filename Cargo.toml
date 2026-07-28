@@ -46,6 +46,6 @@ default = ["hdf5"]
 trace = []
 profile = []
 hdf5 = ["dep:hdf5"]
-# Live Jumiom PSD acquisition: links against DriverJumiom's installed
-# libjumpsd.so (see build.rs), requires the driver/hardware to be useful.
+# Jumiom PSD acquisition: links against libjumpsd.so (see build.rs), requires
+# the driver to be useful.
 jumiom = []
