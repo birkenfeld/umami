@@ -45,16 +45,21 @@ class RotatedAxisItem(pg.AxisItem):
 
 
 class ZoomViewBox(pg.ViewBox):
-    """A ViewBox with right-button drag-to-zoom instead of drag-to-scale.
+    """A ViewBox with left-button drag-to-zoom and right-button drag-to-pan.
 
-    Left-button drag still pans (the default). Right-button drag draws a
-    zoom rectangle (reusing ViewBox's own RectMode internals); a plain
-    right-click (no drag) resets the view to fit all data instead of
-    opening the context menu.
+    The reverse of pyqtgraph's own default (left-button pans, right-button
+    drag-to-scale). Right-click still opens the normal context menu (not
+    overridden); a middle-click resets the view to fit all data instead.
     """
 
     def mouseDragEvent(self, ev, axis=None):  # noqa: N802
-        if ev.button() != QtCore.Qt.MouseButton.RightButton:
+        if ev.button() == QtCore.Qt.MouseButton.RightButton:
+            ev.accept()
+            p1 = self.mapToView(ev.lastPos())
+            p2 = self.mapToView(ev.pos())
+            self.translateBy(x=p1.x() - p2.x(), y=p1.y() - p2.y())
+            return
+        if ev.button() != QtCore.Qt.MouseButton.LeftButton:
             super().mouseDragEvent(ev, axis=axis)
             return
         ev.accept()
@@ -70,7 +75,7 @@ class ZoomViewBox(pg.ViewBox):
             self.updateScaleBox(ev.buttonDownPos(), ev.pos())
 
     def mouseClickEvent(self, ev):  # noqa: N802
-        if ev.button() != QtCore.Qt.MouseButton.RightButton:
+        if ev.button() != QtCore.Qt.MouseButton.MiddleButton:
             super().mouseClickEvent(ev)
             return
         ev.accept()
