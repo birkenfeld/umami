@@ -6,10 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "umami-gui"
 dynamic = ["version"]
 description = "Live histogram viewer and debugging tool for UMAMI shared-memory output"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
-    "cffi>=1.16",
-    "numpy>=1.26",
+    "cffi>=1.14",
+    "numpy>=1.23",
     "pyqtgraph>=0.13",
     "pyqt6>=6.6",
 ]

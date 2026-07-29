@@ -14,7 +14,6 @@ shape emerging from the noise.
 
 import random
 import time
-from itertools import pairwise
 
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
@@ -47,7 +46,7 @@ MIN_RAMP_MS, MAX_RAMP_MS = 500, 900
 
 
 def thermal_rgb(t):
-    for (t0, c0), (t1, c1) in pairwise(THERMAL_STOPS):
+    for (t0, c0), (t1, c1) in zip(THERMAL_STOPS, THERMAL_STOPS[1:]):
         if t0 <= t <= t1:
             f = (t - t0) / (t1 - t0)
             return tuple(round(c0[i] + (c1[i] - c0[i]) * f) for i in range(3))
