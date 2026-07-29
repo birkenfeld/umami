@@ -465,15 +465,31 @@ class AuxHistoWindow(QtWidgets.QWidget):
         width = (hi - lo + 1) / bins
         return lo + np.arange(bins) * width
 
+    @staticmethod
+    def _bin_width(axis):
+        return (axis['max'] - axis['min'] + 1) / axis['bins']
+
     @classmethod
     def _bin_edges(cls, axis):
-        """Real-value edges of every bin (bins+1 points), for step-mode plots."""
-        return np.append(cls._bin_values(axis), axis['max'] + 1)
+        """Real-value edges of every bin (bins+1 points), for step-mode plots.
 
-    @staticmethod
-    def _axis_extent(axis):
-        """(low, span) of an axis's full real-value range, for setRect()."""
-        return axis['min'], axis['max'] - axis['min'] + 1
+        Shifted back by half a bin width so the value a bin represents sits
+        at the center of its rendered bar -- e.g. bin 0 of bins=8, min=0,
+        max=7 renders as a bar centered on 0, spanning [-0.5, 0.5], matching
+        the old bin-index convention (there, an implicit width of 1) rather
+        than a plain edge-aligned histogram.
+        """
+        edges = np.append(cls._bin_values(axis), axis['max'] + 1)
+        return edges - cls._bin_width(axis) / 2
+
+    @classmethod
+    def _axis_extent(cls, axis):
+        """(low, span) of an axis's real-value range, for setRect().
+
+        Also shifted by half a bin width, for the same reason as
+        `_bin_edges` -- see there.
+        """
+        return axis['min'] - cls._bin_width(axis) / 2, axis['max'] - axis['min'] + 1
 
     def _save_histogram_to_file(self, name):
         shm = self._shms.get(name)
