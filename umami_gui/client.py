@@ -3,11 +3,14 @@
 
 """Command-socket client for talking to a running UMAMI pipeline."""
 
+import itertools
 import json
 import os
 import socket
 
 SOCKET_TIMEOUT = 0.5
+
+_bind_counter = itertools.count()
 
 
 class UmamiClient:
@@ -22,13 +25,22 @@ class UmamiClient:
         self.log = log
         self.connected = False
         self._busy = False
+        self.sock = None
+        self._new_socket()
+
+    def _new_socket(self):
+        # Bind to a fresh local address every time, recovers from a timeout.
+        if self.sock is not None:
+            self.sock.close()
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.sock.settimeout(SOCKET_TIMEOUT)
-        self.sock.bind('\0plot-' + ipc_name + '-' + str(os.getpid()))
+        self.sock.bind('\0plot-' + self.ipc_name + '-' + str(os.getpid()) +
+                        '-' + str(next(_bind_counter)))
 
     def _ensure_connected(self):
         if self.connected:
             return True
+        self._new_socket()
         try:
             self.sock.connect('\0' + self.ipc_name)
         except OSError as e:

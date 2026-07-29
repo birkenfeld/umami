@@ -21,6 +21,7 @@
 #
 # *****************************************************************************
 
+import itertools
 import json
 import os
 import socket
@@ -49,6 +50,8 @@ MODE_NAMES = {
     1: 'tof',
     2: 'ext_rt',
 }
+
+_bind_counter = itertools.count()
 
 
 class ImageChannel(FdLogMixin, base.ImageChannel):
@@ -107,26 +110,23 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         self._max_nt = config['histogram']['max_nt']
 
         # start the UMAMI subprocess
-        ipc_name = 'umami-tango-' + self._worker_name.replace('/', '-')
+        self._ipc_name = 'umami-tango-' + self._worker_name.replace('/', '-')
         self.init_fd_log('umami')
         self._proc = subprocess.Popen(
-            [self.umami, '--ipc', ipc_name, self.config],
+            [self.umami, '--ipc', self._ipc_name, self.config],
             cwd=os.path.dirname(self.config),
             close_fds=True,
             stderr=self.get_log_fd(),
         )
 
         # connect to UMAMI via a Unix socket and set up the initial state
-        self._cmd = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        self._cmd.settimeout(2)
-        # we need to bind to a name to receive replies
-        self._cmd.bind('\0req-' + ipc_name)
+        self._new_socket()
 
         # wait for UMAMI to initialize
         while True:
             time.sleep(0.1)
             try:
-                self._cmd.connect('\0' + ipc_name)
+                self._cmd.connect('\0' + self._ipc_name)
                 self.hw_version = self._send_cmd('ping')
                 break
             except (ConnectionRefusedError, CommunicationFailure):
@@ -136,7 +136,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         # set up histo readout via shared memory
         array_len = self._nx * self._ny * self._max_nt
         shm_size = SHM_HEAD_LEN + array_len * EL_SIZE
-        self._shm = SharedMemory(ipc_name, shm_size)
+        self._shm = SharedMemory(self._ipc_name, shm_size)
         self._data = self._shm.get_array('u4', array_len, SHM_HEAD_LEN)
 
         # enable raw data dumping
@@ -262,16 +262,41 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
             return FAULT, '; '.join(errors)
         return ON, ''
 
+    def _new_socket(self):
+        # bind to a fresh local address every time, recovers from timeout
+        self._cmd = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self._cmd.settimeout(2)
+        self._cmd.bind('\0req-' + self._ipc_name + '-' + str(next(_bind_counter)))
+
+    def _disconnect(self):
+        if self._cmd is not None:
+            try:
+                self._cmd.close()
+            except OSError:
+                pass
+            self._cmd = None
+
+    def _reconnect(self):
+        try:
+            self._new_socket()
+            self._cmd.connect('\0' + self._ipc_name)
+        except OSError:
+            self._disconnect()
+            raise
+
     def _send_cmd(self, cmd, **kwargs):
         # send command to UMAMI via a Unix socket
         cmd = {'command': cmd}
         cmd.update(kwargs)
         msg = json.dumps(cmd).encode()
         try:
+            if self._cmd is None:
+                self._reconnect()
             self._cmd.sendall(msg)
             ret = self._cmd.recv(2048)
             reply = json.loads(ret.decode())
         except Exception as e:
+            self._disconnect()
             raise CommunicationFailure(f'Error communicating with UMAMI: {e}')
         if reply['result'] == 'error':
             raise InvalidOperation(
@@ -282,9 +307,12 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
 
     def Command(self, cmd):
         try:
+            if self._cmd is None:
+                self._reconnect()
             self._cmd.sendall(cmd.encode())
             return self._cmd.recv(2048).decode()
         except Exception as e:
+            self._disconnect()
             raise CommunicationFailure(f'Error communicating with UMAMI: {e}')
 
     def Clear(self):
