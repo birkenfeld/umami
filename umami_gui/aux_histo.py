@@ -321,7 +321,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
 
     def _forget(self, name):
         self._shms.pop(name).close()
-        plot_widget, _, _ = self._plots.pop(name)
+        plot_widget, _, _, _ = self._plots.pop(name)
         plot_widget.setParent(None)
         plot_widget.deleteLater()
         self._plot_specs.pop(name, None)
@@ -394,40 +394,44 @@ class AuxHistoWindow(QtWidgets.QWidget):
             plot_widget = pg.PlotWidget(title=name, viewBox=ZoomViewBox())
             self._row_splitters[row].addWidget(plot_widget)
             plot_item = plot_widget.getPlotItem()
+            plot_item.setLabel('bottom', spec['x']['expr'])
             if is_2d:
+                plot_item.setLabel('left', spec['y']['expr'])
                 img = pg.ImageItem(border='w', axisOrder='row-major')
-                # shift by half a pixel so integer axis ticks land on pixel
-                # centers (pixel i spans [i-0.5, i+0.5]) instead of edges --
-                # a plain translation via setPos(), not setRect(), since
-                # setRect() derives its scale from the image's current
-                # dimensions and computes the wrong scale before any image
-                # has been assigned yet
-                img.setPos(-0.5, -0.5)
                 plot_item.addItem(img)
                 img.setColorMap(pg.colormap.get('viridis'))
-                self._plots[name] = (plot_widget, img, True)
+                # real axis values (not bin index) -- setRect() must come
+                # after this histo's first setImage() in _update_plots(),
+                # since it derives its scale from the image's current
+                # dimensions, which are unset (None, falling back to 1)
+                # before any image has been assigned
+                x_lo, x_span = self._axis_extent(spec['x'])
+                y_lo, y_span = self._axis_extent(spec['y'])
+                extent = QtCore.QRectF(x_lo, y_lo, x_span, y_span)
+                self._plots[name] = (plot_widget, img, True, extent)
             else:
                 curve = plot_item.plot(
                     stepMode='center', fillLevel=0, brush=(0, 0, 255, 80))
-                self._plots[name] = (plot_widget, curve, False)
+                edges = self._bin_edges(spec['x'])
+                self._plots[name] = (plot_widget, curve, False, edges)
 
     def _update_plots(self):
         for name, shm in list(self._shms.items()):
             if name not in self._plots:
                 continue
-            _, item, is_2d = self._plots[name]
+            _, item, is_2d, extent = self._plots[name]
             try:
                 if is_2d:
                     buf = shm.read_plane(0)
                     item.setImage(np.log10(buf.astype(float) + 0.1), autoLevels=True)
+                    item.setRect(extent)
                 else:
                     # pyqtgraph keeps this array reference alive indefinitely
                     # (until the next setData) -- must be a copy, not a raw
                     # view into the mmap, or closing this shm later fails
                     # with "cannot close exported pointers exist"
                     buf = shm.read_plane(0)[0].copy()
-                    edges = np.arange(shm.nx + 1) - 0.5
-                    item.setData(edges, buf, stepMode='center')
+                    item.setData(extent, buf, stepMode='center')
             except OSError as e:
                 self.log.warning(f'Error reading aux histogram {name!r}: {e}')
 
@@ -460,6 +464,16 @@ class AuxHistoWindow(QtWidgets.QWidget):
         width = (hi - lo + 1) / bins
         return lo + np.arange(bins) * width
 
+    @classmethod
+    def _bin_edges(cls, axis):
+        """Real-value edges of every bin (bins+1 points), for step-mode plots."""
+        return np.append(cls._bin_values(axis), axis['max'] + 1)
+
+    @staticmethod
+    def _axis_extent(axis):
+        """(low, span) of an axis's full real-value range, for setRect()."""
+        return axis['min'], axis['max'] - axis['min'] + 1
+
     def _save_histogram_to_file(self, name):
         shm = self._shms.get(name)
         if shm is None:
@@ -472,7 +486,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
             return
         if not Path(path).suffix:
             path += '.txt'
-        _, _, is_2d = self._plots[name]
+        _, _, is_2d, _ = self._plots[name]
         spec = next(h for h in self._histos if h['name'] == name)
         if is_2d:
             x = self._bin_values(spec['x'])
