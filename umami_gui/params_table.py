@@ -128,11 +128,13 @@ class ParamsTable(QtWidgets.QTableWidget):
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         self._send(key, dialog.value())
+        self.refresh()
 
     def _on_item_changed(self, item):
         if item.column() != 1 or item.row() >= len(self._keys):
             return
         self._send(self._keys[item.row()], self._parse(item.text()))
+        self.refresh()
 
     @staticmethod
     def _parse(text):

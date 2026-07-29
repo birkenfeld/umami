@@ -77,9 +77,11 @@ class HistoDefDialog(QtWidgets.QDialog):
         row_layout.addWidget(bins)
         row_layout.addWidget(QtWidgets.QLabel('Min:'))
         min_edit = QtWidgets.QLineEdit(str(min_default))
+        min_edit.setMinimumWidth(70)
         row_layout.addWidget(min_edit)
         row_layout.addWidget(QtWidgets.QLabel('Max:'))
         max_edit = QtWidgets.QLineEdit(str(max_default))
+        max_edit.setMinimumWidth(70)
         row_layout.addWidget(max_edit)
         return row, bins, min_edit, max_edit
 
@@ -217,7 +219,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
 
     REFRESH_MS = 500
 
-    def __init__(self, client, ipc_name, log):
+    def __init__(self, client, ipc_name, log):  # noqa: PLR0915
         super().__init__()
         self.client = client
         self.ipc_name = ipc_name
@@ -230,6 +232,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self._aliases = []   # its available_aliases, as last seen from get_params
         self._shms = {}      # histo_name -> ShmHistogram
         self._plots = {}     # histo_name -> (PlotItem, ImageItem|PlotDataItem, is_2d)
+        self._plot_specs = {}  # histo_name -> the spec last used to build its shm/plot
 
         self.table = QtWidgets.QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(['Name', 'X', 'Y', 'Filter', ''])
@@ -321,24 +324,28 @@ class AuxHistoWindow(QtWidgets.QWidget):
         plot_widget, _, _ = self._plots.pop(name)
         plot_widget.setParent(None)
         plot_widget.deleteLater()
+        self._plot_specs.pop(name, None)
 
     def invalidate_all(self):
         """Force every cached shm segment to be reopened on the next refresh.
 
-        Needed both after the umami process itself restarts (same-named
-        segments recreated from scratch, which name-based diffing in
-        _rebuild() has no way to notice on its own) and after any
-        add/edit/delete (the whole histos list is replaced server-side,
-        recreating every segment even for entries whose definition didn't
-        change).
+        Needed after the umami process itself restarts: same-named segments
+        are recreated from scratch with a new backing shm object, which
+        _rebuild()'s own before/after spec comparison has no way to notice
+        on its own (the specs it fetches via get_params look identical).
         """
         for name in list(self._shms):
             self._forget(name)
 
-    def _rebuild(self):
-        current_names = {h['name'] for h in self._histos}
-        for name in [n for n in self._shms if n not in current_names]:
-            self._forget(name)
+    def _rebuild(self):  # noqa: PLR0915
+        # forget anything removed, or whose definition changed since we last
+        # opened its shm segment -- the server unlinks and recreates the
+        # segment for *any* change (even just a tweaked axis range), so a
+        # pure name-based diff would keep reading a now-orphaned mapping
+        current = {h['name']: h for h in self._histos}
+        for name in list(self._shms):
+            if current.get(name) != self._plot_specs.get(name):
+                self._forget(name)
 
         self.table.setRowCount(len(self._histos))
         for row, spec in enumerate(self._histos):
@@ -377,6 +384,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
                 self.log.warning(f'Could not open {shm_name!r}: {e}')
                 continue
             self._shms[name] = shm
+            self._plot_specs[name] = spec
             is_2d = shm.ny > 1
             row = i // col_count
             while row >= len(self._row_splitters):
@@ -490,7 +498,6 @@ class AuxHistoWindow(QtWidgets.QWidget):
             return
         new_specs = [*self._histos, dialog.spec()]
         self.client.set_params({f'{self._module}.histos': new_specs})
-        self.invalidate_all()
         self.refresh()
 
     def _edit_histogram(self, spec):
@@ -500,7 +507,6 @@ class AuxHistoWindow(QtWidgets.QWidget):
         new_specs = [dialog.spec() if h['name'] == spec['name'] else h
                      for h in self._histos]
         self.client.set_params({f'{self._module}.histos': new_specs})
-        self.invalidate_all()
         self.refresh()
 
     def _delete_histogram(self, name):
@@ -512,5 +518,4 @@ class AuxHistoWindow(QtWidgets.QWidget):
             return
         new_specs = [h for h in self._histos if h['name'] != name]
         self.client.set_params({f'{self._module}.histos': new_specs})
-        self.invalidate_all()
         self.refresh()
