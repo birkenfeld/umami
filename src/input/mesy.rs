@@ -68,8 +68,8 @@ impl MesyInput<(), ()> {
 
 impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
     fn start_with_source(source: S, mut commands: C, config: MesyConfig, common: InputCommon) -> UResult<()> {
-        let mod_types = commands.scan()?;
-        commands.set_up(&mod_types, &config)?;
+        let (mod_types, mod_xmit_caps) = commands.scan()?;
+        commands.set_up(&mod_types, &mod_xmit_caps, &config)?;
         let input = Self {
             source,
             command_handler: commands,

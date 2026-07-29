@@ -39,6 +39,10 @@ pub struct MesyConfig {
     /// External synchronisation input, only meaningful when `is_master`.
     #[serde(default)]
     pub ext_sync: bool,
+    /// Negotiate amplitude data (TPA) into the transmission mode if
+    /// supported, vs. capping at time+position (TP) for lower overhead.
+    #[serde(default = "default_true")]
+    pub transmit_ampl: bool,
     pub mcpd_id: u8,
     pub cells: BTreeMap<usize, MesyCellConfig>,
     pub modules: BTreeMap<usize, MesyModuleConfig>,
@@ -248,6 +252,10 @@ where
 
 fn default_ipc_name() -> String {
     "umami".into()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 pub fn load_config(path: &Path) -> UResult<Config> {

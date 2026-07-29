@@ -4,4 +4,4 @@
 - Proper docs (README)
 - Test input errors with real hw
 - Show axis binning in aux plots
-- no respones to uds -> add id?
+- gui: total counts + rate somewhere else?

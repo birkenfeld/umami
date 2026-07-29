@@ -56,6 +56,9 @@ Mesytec MCPD input.
   for slaves, the last module on the physical chain must have this set
 * `ext_sync` (optional, default `false`): external synchronisation input,
   only meaningful when `is_master` is set
+* `transmit_ampl` (optional, default `true`): negotiate amplitude data into
+  the transmission mode if the MCPD and modules support it, vs. capping at
+  time+position for lower per-event overhead at high count rates
 * `mcpd_id` (required): MCPD numeric ID
 * `cells` (required): map of cell index -> `{ source, compare }`
 * `modules` (required): map of module index -> module config (see below)

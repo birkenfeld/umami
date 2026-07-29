@@ -19,6 +19,13 @@ const HEADER_WORDS: u16 = 10;
 const BUFFERTYPE: u16 = 0x8000;
 const ERROR_FLAG: u16 = 0x8000;
 
+// Transmission mode bits (capability/mode register): which fields the
+// event stream carries. Not cumulative -- a module/MCPD capability
+// register is a bitmask of which of these are individually supported.
+const TX_P: u16 = 1;   // position only
+const TX_TP: u16 = 2;  // time + position
+const TX_TPA: u16 = 4; // time + position + amplitude
+
 #[repr(u16)]
 #[derive(Clone, Copy, Debug)]
 pub enum Cmd {
@@ -30,10 +37,13 @@ pub enum Cmd {
     SetCell = 9,
     SetGainMpsd = 13,
     SetThreshold = 14,
+    GetCapabilities = 22,
+    SetCapabilities = 23,
     GetModInfo = 24,
     ReadIds = 36,
     GetMcpdVer = 51,
     // ReadPeriReg = 52,
+    WritePeriReg = 53,
 }
 
 #[repr(u16)]
@@ -77,7 +87,9 @@ pub trait MesyCommandHandler: Send + 'static {
         Ok(())
     }
 
-    fn scan(&mut self) -> UResult<[ModType; 8]> {
+    /// Returns the module type and transmission-mode capability bitmask
+    /// (see [`Self::set_tx_mode`]) of each of the 8 module slots.
+    fn scan(&mut self) -> UResult<([ModType; 8], [u16; 8])> {
         let mcpd_ver: [U16; 3] = self.do_command(Cmd::GetMcpdVer, ())?;
         let cpu_major = mcpd_ver[0];
         let cpu_minor = mcpd_ver[1];
@@ -88,6 +100,7 @@ pub trait MesyCommandHandler: Send + 'static {
 
         let ids: [U16; 8] = self.do_command(Cmd::ReadIds, U16::new(2))?;
         let mut mod_types = [ModType::None; 8];
+        let mut mod_xmit_caps = [0u16; 8];
 
         for (i, mod_id) in ids.into_iter().enumerate() {
             mod_types[i] = ModType::from(mod_id.get());
@@ -100,14 +113,15 @@ pub trait MesyCommandHandler: Send + 'static {
             let mod_xmit_set = mod_info[2];
             let mod_major = mod_info[3] >> 8;
             let mod_minor = mod_info[3] & 0xFF;
+            mod_xmit_caps[i] = mod_xmit_cap.get();
 
             lprintln!(INFO, "MCPD module {i}: ID {}, xmit cap {}, xmit set {}, firmware {}.{}",
                       mod_id, mod_xmit_cap, mod_xmit_set, mod_major, mod_minor);
         }
-        Ok(mod_types)
+        Ok((mod_types, mod_xmit_caps))
     }
 
-    fn set_up(&mut self, modules: &[ModType; 8], config: &MesyConfig) -> UResult<()> {
+    fn set_up(&mut self, modules: &[ModType; 8], mod_xmit_caps: &[u16; 8], config: &MesyConfig) -> UResult<()> {
         if let SourceConfig::IP(addr) = &config.local {
             let data_port = resolve(addr)?.port();
             let _: [U16; 14] = self.do_command(Cmd::SetCommPars, [
@@ -121,14 +135,13 @@ pub trait MesyCommandHandler: Send + 'static {
         }
 
         self.set_timing(config.is_master, config.terminate, config.ext_sync)?;
+        self.set_tx_mode(modules, mod_xmit_caps, config.transmit_ampl)?;
 
         for i in 0..8 {
             if let Some(cfg) = config.cells.get(&i) {
                 self.set_up_cell(i, cfg)?;
             }
         }
-
-        // TODO: transmission mode (for MCPD and modules)
 
         for (i, modtype) in modules.iter().enumerate() {
             if *modtype != ModType::None {
@@ -146,6 +159,45 @@ pub trait MesyCommandHandler: Send + 'static {
         let term = master || terminate;
         let data0 = master as u16 + 2 * ext_sync as u16;
         let _res: [U16; 2] = self.do_command(Cmd::SetTiming, [U16::new(data0), U16::new(term as u16)])?;
+        Ok(())
+    }
+
+    /// Negotiate and push the transmission mode: the richest of P (position
+    /// only) / TP (+time) / TPA (+amplitude) supported by both the MCPD and
+    /// every present module, capped at TP if `transmit_ampl` is false
+    /// (amplitude data adds per-event processing overhead that can matter
+    /// at high count rates). Pushed both MCPD-wide and to each module.
+    fn set_tx_mode(&mut self, modules: &[ModType; 8], mod_xmit_caps: &[u16; 8],
+                   transmit_ampl: bool) -> UResult<()> {
+        let cap_reply: [U16; 2] = self.do_command(Cmd::GetCapabilities, ())?;
+        let mut cap = cap_reply[0].get();
+        for (i, modtype) in modules.iter().enumerate() {
+            if *modtype != ModType::None {
+                cap &= mod_xmit_caps[i];
+            }
+        }
+        if !transmit_ampl {
+            cap &= TX_P | TX_TP;
+        }
+        let mode = if cap & TX_TPA != 0 {
+            TX_TPA
+        } else if cap & TX_TP != 0 {
+            TX_TP
+        } else {
+            TX_P
+        };
+        lprintln!(INFO, "Setting transmission mode to {mode} (common capability {cap})");
+        let _res: [U16; 1] = self.do_command(Cmd::SetCapabilities, [U16::new(mode)])?;
+
+        // Update each module's own transmission mode too (peripheral register 1).
+        for (i, modtype) in modules.iter().enumerate() {
+            if *modtype != ModType::None {
+                let _res: [U16; 3] = self.do_command(
+                    Cmd::WritePeriReg,
+                    [U16::new(i as _), U16::new(1), U16::new(mode)],
+                )?;
+            }
+        }
         Ok(())
     }
 
