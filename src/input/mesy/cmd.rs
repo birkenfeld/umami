@@ -122,6 +122,10 @@ pub trait MesyCommandHandler: Send + 'static {
     }
 
     fn set_up(&mut self, modules: &[ModType; 8], mod_xmit_caps: &[u16; 8], config: &MesyConfig) -> UResult<()> {
+        // Make sure the MCPD is idle before pushing setup, regardless of
+        // what state a previous session left it running in.
+        let _ = self.stop();
+
         if let SourceConfig::IP(addr) = &config.local {
             let data_port = resolve(addr)?.port();
             let _: [U16; 14] = self.do_command(Cmd::SetCommPars, [
