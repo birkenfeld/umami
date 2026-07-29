@@ -372,7 +372,8 @@ class AuxHistoWindow(QtWidgets.QWidget):
         # fit now that the cell widgets (and their size hints) are in place
         self.table.resizeColumnToContents(4)
 
-        col_count = 3
+        # up to 3 per row, except exactly 4 which reads better as 2x2 than 3+1
+        col_count = 2 if len(self._histos) == 4 else 3
         for i, spec in enumerate(self._histos):
             name = spec['name']
             if name in self._plots:
