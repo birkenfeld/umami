@@ -50,7 +50,12 @@ Mesytec MCPD input.
 * `local` (required): local file path (replay) or local `"host:port"` for
   incoming data UDP socket (command socket is on port + 1)
 * `remote` (required): remote MCPD command socket address
-* `is_master` (required): whether this MCPD instance is the master
+* `is_master` (required): whether this MCPD instance is the sync-bus master
+  -- exactly one MCPD in the chain must be
+* `terminate` (required): sync-bus termination -- forced on for the master,
+  for slaves, the last module on the physical chain must have this set
+* `ext_sync` (optional, default `false`): external synchronisation input,
+  only meaningful when `is_master` is set
 * `mcpd_id` (required): MCPD numeric ID
 * `cells` (required): map of cell index -> `{ source, compare }`
 * `modules` (required): map of module index -> module config (see below)

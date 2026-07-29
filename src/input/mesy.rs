@@ -37,8 +37,6 @@ where
     dump: DumpHandler,
     // configuration
     name: ModuleId,
-    #[allow(unused)]
-    is_master: bool,
     mod_types: [cmd::ModType; 8],
     #[param(has_setter = true, datatype = "map of cell index to (source, compare)",
             help = "Per-cell trigger source/compare wiring, pushed live via SetCell")]
@@ -77,7 +75,6 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
             command_handler: commands,
             dump: Default::default(),
             name: common.name,
-            is_master: config.is_master,
             mod_types,
             cells: config.cells,
             modules: config.modules,
@@ -377,7 +374,6 @@ mod tests {
             command_handler: (),
             dump: Default::default(),
             name: ModuleId::new("mesy".into()),
-            is_master: false,
             mod_types: [cmd::ModType::Mpsd8; 8],
             cells: BTreeMap::new(),
             modules: BTreeMap::new(),

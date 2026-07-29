@@ -3,3 +3,5 @@
 - More custom aliases (raw -> y pre calib etc)
 - Proper docs (README)
 - Test input errors with real hw
+- Show axis binning in aux plots
+- no respones to uds -> add id?

@@ -26,6 +26,7 @@ pub enum Cmd {
     Start = 1,
     Stop = 2,
     SetCommPars = 5,
+    SetTiming = 6,
     SetCell = 9,
     SetGainMpsd = 13,
     SetThreshold = 14,
@@ -119,6 +120,8 @@ pub trait MesyCommandHandler: Send + 'static {
             lprintln!(INFO, "Set target data port to {data_port}");
         }
 
+        self.set_timing(config.is_master, config.terminate, config.ext_sync)?;
+
         for i in 0..8 {
             if let Some(cfg) = config.cells.get(&i) {
                 self.set_up_cell(i, cfg)?;
@@ -132,6 +135,17 @@ pub trait MesyCommandHandler: Send + 'static {
                 self.set_up_module(i, *modtype, config.modules.get(&i))?;
             }
         }
+        Ok(())
+    }
+
+    /// Push this MCPD's sync-bus master/slave role, termination, and external
+    /// sync setting to hardware. A master is always terminated regardless of
+    /// `terminate`, and `ext_sync` is only meaningful when `master` is set.
+    fn set_timing(&mut self, master: bool, terminate: bool, ext_sync: bool) -> UResult<()> {
+        lprintln!(INFO, "Setting timing setup: master {master}, terminate {terminate}, ext_sync {ext_sync}");
+        let term = master || terminate;
+        let data0 = master as u16 + 2 * ext_sync as u16;
+        let _res: [U16; 2] = self.do_command(Cmd::SetTiming, [U16::new(data0), U16::new(term as u16)])?;
         Ok(())
     }
 

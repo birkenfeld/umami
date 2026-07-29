@@ -34,6 +34,11 @@ pub struct MesyConfig {
     pub local: SourceConfig,
     pub remote: String,
     pub is_master: bool,
+    /// Sync-bus termination. Forced on for the master.
+    pub terminate: bool,
+    /// External synchronisation input, only meaningful when `is_master`.
+    #[serde(default)]
+    pub ext_sync: bool,
     pub mcpd_id: u8,
     pub cells: BTreeMap<usize, MesyCellConfig>,
     pub modules: BTreeMap<usize, MesyModuleConfig>,
