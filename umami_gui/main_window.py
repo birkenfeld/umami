@@ -166,7 +166,7 @@ class MainWindow(QtWidgets.QWidget):
                 title='TOF spectrum', viewBox=ZoomViewBox(),
                 axisItems={'bottom': RotatedAxisItem(orientation='bottom')})
             self.t_proj_window.setWindowTitle('UMAMI TOF spectrum')
-            self.t_proj_window.setLabel('bottom', 't bin')
+            self.t_proj_window.setLabel('bottom', 'time of flight')
             self.t_proj_window.setLabel('left', 'counts')
             self.t_proj_window.getAxis('bottom').setHeight(70)
             self.t_proj_window.resize(700, 400)
@@ -178,24 +178,24 @@ class MainWindow(QtWidgets.QWidget):
 
     @staticmethod
     def t_axis_tick_labels(edges_ns):
-        labels = []
-        lo = 0
-        n = len(edges_ns)
-        for i, hi in enumerate(edges_ns):
-            if i == n - 1:
-                labels.append('overflow')
-            else:
-                labels.append(f'{lo / 1e6:.3f}-{hi / 1e6:.3f}ms')
-                lo = hi
-        return labels
+        """(position, label) ticks marking each bin edge with a single ms value.
+
+        Position is the plot's bin-index x-coordinate (bin i spans
+        [i-0.5, i+0.5)); edges_ns holds each real bin's upper edge in ns,
+        plus a trailing overflow sentinel that isn't itself a plotted edge.
+        """
+        ticks = [(-0.5, '0')]
+        for i, edge_ns in enumerate(edges_ns[:-1]):
+            ticks.append((i + 0.5, f'{edge_ns / 1e6:.3f}ms'))
+        ticks.append((len(edges_ns) - 1, 'overflow'))
+        return ticks
 
     def apply_t_axis_ticks(self):
         if self.t_proj_window is None:
             return
         axis = self.t_proj_window.getAxis('bottom')
         if self.t_bin_edges_ns is not None:
-            labels = self.t_axis_tick_labels(self.t_bin_edges_ns)
-            axis.setTicks([list(enumerate(labels))])
+            axis.setTicks([self.t_axis_tick_labels(self.t_bin_edges_ns)])
         else:
             axis.setTicks(None)
 

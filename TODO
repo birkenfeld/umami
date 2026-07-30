@@ -3,4 +3,3 @@
 - More custom aliases (raw -> y pre calib etc)
 - Test input errors with real hw
 - cps: only each second
-- show total lifetime of run somewhere (shm?)

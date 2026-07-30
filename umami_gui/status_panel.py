@@ -70,7 +70,8 @@ class StatusPanel(QtWidgets.QFrame):
         self.total_label = QtWidgets.QLabel('in slice: <b>-</b>')
         self.total_label.setFont(value_font)
         self.total_label.setMinimumWidth(
-            self._rich_text_width(value_font, f'in slice: <b>10,000</b>{THIN_SPACE}cts'))
+            self._rich_text_width(value_font,
+                                  f'in slice: <b>10,000</b>{THIN_SPACE}cts'))
         self.layout().addWidget(self.total_label)
         self.layout().addSpacing(20)
 
