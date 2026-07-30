@@ -22,14 +22,6 @@ class StatusPanel(QtWidgets.QFrame):
     CONNECTED_COLOR = ('green', '#66bb6a')
     ERROR_COLOR = ('red', '#ef5350')
     DEFAULT_TEXT = ('#333333', '#cccccc')
-    # explicit QToolTip colors -- the transparent background stylesheet set
-    # on the LED row below otherwise leaks into tooltip rendering too
-    TOOLTIP_STYLE: ClassVar = [
-        ('QToolTip { background-color: #ffffe1; color: black; '
-         'border: 1px solid #888; }'),
-        ('QToolTip { background-color: #3c3c3c; color: #eeeeee; '
-         'border: 1px solid #888; }'),
-    ]
     LED_SIZE = 16
     LED_SIZE_MULTI_ROW = 12  # once wrapped to >1 row, shrink to fit more
     LEDS_PER_ROW = 10
@@ -42,13 +34,10 @@ class StatusPanel(QtWidgets.QFrame):
         self.connected_color = self.CONNECTED_COLOR[dark]
         self.error_color = self.ERROR_COLOR[dark]
         self.default_text_color = self.DEFAULT_TEXT[dark]
-        # applies to any tooltip triggered by a descendant (e.g. the LEDs
-        # below) -- see the TOOLTIP_STYLE comment for why this is needed
-        self.setStyleSheet(self.TOOLTIP_STYLE[dark])
         self.setLayout(QtWidgets.QHBoxLayout())
         self.layout().setContentsMargins(8, 2, 13, 2)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
-                            QtWidgets.QSizePolicy.Policy.Fixed)
+                           QtWidgets.QSizePolicy.Policy.Fixed)
 
         value_font = self.font()
         value_font.setPointSize(
@@ -77,10 +66,8 @@ class StatusPanel(QtWidgets.QFrame):
 
         self.total_label = QtWidgets.QLabel('total: <b>-</b>')
         self.total_label.setFont(value_font)
-        # a stable minimum width up to 4 digits avoids the whole status row
-        # visibly reflowing on every order-of-magnitude count increase
         self.total_label.setMinimumWidth(
-            self._rich_text_width(value_font, 'total: <b>1,000</b> cts'))
+            self._rich_text_width(value_font, 'total: <b>10,000</b> cts'))
         self.layout().addWidget(self.total_label)
         self.layout().addSpacing(20)
 
@@ -90,10 +77,7 @@ class StatusPanel(QtWidgets.QFrame):
         self.layout().addSpacing(20)
 
         # a config can have many inputs; one LED-style dot per input, wrapping
-        # to a new row every LEDS_PER_ROW -- never scrolled/clipped, all are
-        # always shown, so the panel grows taller instead. The whole
-        # (possibly multi-row) block stays pinned to the right edge via the
-        # layout's own alignment.
+        # to a new row every LEDS_PER_ROW
         inputs_widget = QtWidgets.QWidget()
         self.inputs_layout = QtWidgets.QGridLayout(inputs_widget)
         self.inputs_layout.setContentsMargins(0, 0, 0, 0)
@@ -139,10 +123,7 @@ class StatusPanel(QtWidgets.QFrame):
         painter.setPen(QtGui.QColor('black'))
         painter.setBrush(QtGui.QColor(color))
         # inset by half a pixel on every side -- the pen's stroke is centered
-        # on the ellipse's path and extends outward by half its width, which
-        # otherwise gets clipped by the pixmap edge on the top/left (a rect
-        # starting exactly at (0, 0) leaves no room there, unlike the
-        # bottom/right which already have a full pixel of margin)
+        # on the ellipse's path and extends outward by half its width
         painter.drawEllipse(QtCore.QRectF(0.5, 0.5, size - 1, size - 1))
         painter.end()
         return pixmap
