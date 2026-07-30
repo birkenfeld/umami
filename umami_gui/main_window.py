@@ -126,9 +126,22 @@ class MainWindow(QtWidgets.QWidget):
     # ---- main image plot ----
 
     def _build_main_plot(self):
+        # a plain Qt title bar, not pyqtgraph's own PlotItem.setTitle() --
+        # that renders as a single centered/HTML label with no built-in way
+        # to independently left/right-align two pieces of text across its
+        # full width (its QGraphicsTextItem sizes to content, not to the
+        # label's own allotted width)
+        title_bar = QtWidgets.QWidget()
+        title_layout = QtWidgets.QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(8, 4, 8, 2)
+        self.title_left_label = QtWidgets.QLabel('starting...')
+        self.title_right_label = QtWidgets.QLabel('')
+        title_layout.addWidget(self.title_left_label)
+        title_layout.addStretch()
+        title_layout.addWidget(self.title_right_label)
+
         self.graphics = pg.GraphicsLayoutWidget()
         self.plot = self.graphics.addPlot(viewBox=ZoomViewBox())
-        self.plot.setTitle('starting...')
         self.img = pg.ImageItem(border='w', axisOrder='row-major')
         # shift by half a pixel so integer axis ticks land on pixel centers
         # (pixel i spans [i-0.5, i+0.5]) instead of edges -- a plain
@@ -140,6 +153,13 @@ class MainWindow(QtWidgets.QWidget):
         self.img.setColorMap(pg.colormap.get('viridis'))
         self.plot.enableAutoRange('xy', True)
         self.plot.scene().sigMouseMoved.connect(self.on_mouse_moved)
+
+        self.plot_container = QtWidgets.QWidget()
+        container_layout = QtWidgets.QVBoxLayout(self.plot_container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+        container_layout.addWidget(title_bar)
+        container_layout.addWidget(self.graphics)
 
     # ---- projection plots: separate windows, created lazily on request ----
 
@@ -249,11 +269,12 @@ class MainWindow(QtWidgets.QWidget):
 
         total = int(buf.sum())
         now = time.monotonic()
-        title = f'Run {run_id}: {total} total counts'
+        counts_text = f'{total} total counts'
         if self.prev and total >= self.prev['total']:
             rate = (total - self.prev['total']) / (now - self.prev['time'])
-            title += f' ({rate:,.1f}/sec)'
-        self.plot.setTitle(title)
+            counts_text += f' ({rate:,.1f}/sec)'
+        self.title_left_label.setText(f'Run {run_id}')
+        self.title_right_label.setText(counts_text)
         self.prev['total'] = total
         self.prev['time'] = now
 
@@ -631,7 +652,7 @@ class MainWindow(QtWidgets.QWidget):
         self.log_panel.error_logged.connect(lambda: self.log_toggle.setChecked(True))
 
         self.left_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        self.left_splitter.addWidget(self.graphics)
+        self.left_splitter.addWidget(self.plot_container)
         self.left_splitter.addWidget(self.log_panel)
         self.left_splitter.setSizes([600, 200])
 
