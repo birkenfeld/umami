@@ -10,6 +10,7 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 from .icons import is_dark_mode, load_icon
 
 CONN_ICON_SIZE = QtCore.QSize(16, 16)
+THIN_SPACE = '\u2009'
 
 
 class StatusPanel(QtWidgets.QFrame):
@@ -61,13 +62,15 @@ class StatusPanel(QtWidgets.QFrame):
 
         self.time_label = QtWidgets.QLabel('time: <b>-</b>')
         self.time_label.setFont(value_font)
+        self.time_label.setMinimumWidth(
+            self._rich_text_width(value_font, f'time: {self._format_elapsed(659)}'))
         self.layout().addWidget(self.time_label)
         self.layout().addSpacing(20)
 
         self.total_label = QtWidgets.QLabel('total: <b>-</b>')
         self.total_label.setFont(value_font)
         self.total_label.setMinimumWidth(
-            self._rich_text_width(value_font, 'total: <b>10,000</b> cts'))
+            self._rich_text_width(value_font, f'total: <b>10,000</b>{THIN_SPACE}cts'))
         self.layout().addWidget(self.total_label)
         self.layout().addSpacing(20)
 
@@ -106,6 +109,18 @@ class StatusPanel(QtWidgets.QFrame):
             self.inputs_layout.removeWidget(led)
             led.deleteLater()
         self._input_leds.clear()
+
+    @staticmethod
+    def _format_elapsed(seconds):
+        """Render elapsed seconds as bolded value(s) with thin-spaced units."""
+        if seconds < 60:
+            return f'<b>{seconds}</b>{THIN_SPACE}s'
+        if seconds < 3600:
+            m, s = divmod(seconds, 60)
+            return f'<b>{m}</b>{THIN_SPACE}min <b>{s}</b>{THIN_SPACE}s'
+        h, rem = divmod(seconds, 3600)
+        m = rem // 60
+        return f'<b>{h}</b>{THIN_SPACE}hr <b>{m}</b>{THIN_SPACE}min'
 
     @staticmethod
     def _rich_text_width(font, html):
@@ -168,13 +183,13 @@ class StatusPanel(QtWidgets.QFrame):
         """
         self.run_label.setText(f'run: <b>{run_id}</b>')
         if elapsed_s is not None:
-            time_text = f'time: <b>{elapsed_s}</b>s'
+            time_text = f'time: {self._format_elapsed(elapsed_s)}'
         else:
             time_text = 'time: <b>-</b>'
         self.time_label.setText(time_text)
-        self.total_label.setText(f'total: <b>{total:,}</b> cts')
+        self.total_label.setText(f'total: <b>{total:,}</b>{THIN_SPACE}cts')
         if rate is not None:
-            rate_text = f'rate: <b>{rate:,.1f}</b>/sec'
+            rate_text = f'rate: <b>{rate:,.1f}</b>{THIN_SPACE}/sec'
         else:
             rate_text = 'rate: <b>-</b>'
         self.rate_label.setText(rate_text)
