@@ -17,6 +17,11 @@ use crate::event::EventHisto;
 pub const MAX_INPUTS: usize = 128;
 pub const MAX_HISTO_SIZE: usize = 1024 * 1024 * 1024;  // 1 GB shmem
 
+/// `global_state` bit set while a run is active (between `StartOfRun` and
+/// `EndOfRun`) -- lets a client freeze its `run_start`-derived elapsed-time
+/// display once a run ends, instead of counting up forever.
+pub const RUNNING_BIT: u32 = 1 << 1;
+
 pub struct ShmBox {
     ptr: NonNull<ShmInterface>,
 }
@@ -116,7 +121,7 @@ pub struct ShmInterface {
     pub ny: u16,
     pub nt: u16,
     pub ni: u16,
-    pub reserved: u32,  // pad to 16 bytes from global_state
+    pub run_start: u32,
 }
 
 impl ShmInterface {
@@ -127,8 +132,20 @@ impl ShmInterface {
         self.run_id[len..128].fill(0);
     }
 
+    pub fn set_run_start(&mut self, unix_secs: u32) {
+        self.run_start = unix_secs;
+    }
+
     pub fn set_initialized(&mut self) {
         self.global_state |= 1;
+    }
+
+    pub fn set_running(&mut self, running: bool) {
+        if running {
+            self.global_state |= RUNNING_BIT;
+        } else {
+            self.global_state &= !RUNNING_BIT;
+        }
     }
 
     pub fn create(name: &str, config: &HistoConfig) -> UResult<ShmBox> {

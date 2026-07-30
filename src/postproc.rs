@@ -2,6 +2,7 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use itertools::Itertools;
 use crate::{lprintln, ltrace};
@@ -87,12 +88,17 @@ impl PostProcessor {
                     current_run = run_id.clone();
                     lprintln!(INFO, "Run {current_run:?} started");
                     self.shm.set_run_id(run_id);
+                    let now = SystemTime::now().duration_since(UNIX_EPOCH)
+                                               .expect("system clock before 1970").as_secs();
+                    self.shm.set_run_start(now as u32);
+                    self.shm.set_running(true);
                     for r in &mut self.recipes {
                         r.start_of_run();
                     }
                 }
                 PipeItem::EndOfRun => {
                     lprintln!(INFO, "Run {current_run:?} finished");
+                    self.shm.set_running(false);
                 }
                 PipeItem::Clear => {
                     lprintln!(INFO, "Clearing histogram");

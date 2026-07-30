@@ -163,9 +163,8 @@ class StatusPanel(QtWidgets.QFrame):
     def update_run_info(self, run_id, elapsed_s, total, rate):
         """Update the run/time/total/rate fields.
 
-        `elapsed_s` (seconds since run start) isn't available from the
-        backend yet -- pass None until a shm field for it exists; this
-        already renders that as a plain placeholder.
+        `elapsed_s` is None before any run has ever started (no shm
+        run_start timestamp yet); rendered as a plain placeholder then.
         """
         self.run_label.setText(f'run: <b>{run_id}</b>')
         if elapsed_s is not None:

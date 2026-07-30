@@ -8,12 +8,13 @@ Shared-memory segment layout:
     Offset  Size  Field
     ------  ----  -----
        0     128  run_id (ASCII, NUL-padded)
-     128       4  global_state (u32)
+     128       4  global_state (u32, bit 0: initialized, bit 1: run active)
      132       2  nx (u16)
      134       2  ny (u16)
      136       2  nt (u16)
      138       2  ni (u16, unused -- not implemented on the UMAMI side)
-     140    nx*ny*nt x 4  histogram bins (u32, LE)
+     140       4  run_start (u32, Unix timestamp of the last StartOfRun, 0 if none yet)
+     144    nx*ny*nt x 4  histogram bins (u32, LE)
 """
 
 import mmap
@@ -28,8 +29,10 @@ int shm_open(const char *name, int flags, unsigned int mode);
 int shm_unlink(const char *name);
 ''')
 
-# run_id(128) + global_state(u32) + nx,ny,nt,ni(u16 x4) + reserved(u32) padding
+# run_id(128) + global_state(u32) + nx,ny,nt,ni(u16 x4) + run_start(u32)
 HEADER_SIZE = 128 + 4 * 4
+
+RUNNING_BIT = 1 << 1
 
 
 class ShmHistogram:
@@ -65,6 +68,20 @@ class ShmHistogram:
 
     def read_run_id(self):
         return np.frombuffer(self.mapp, 'S128', 1)[0].decode('ascii').rstrip('\x00')
+
+    def read_run_start(self):
+        """Unix timestamp of the last StartOfRun, or 0 if none yet.
+
+        Re-read on every call, like read_run_id() -- both change whenever a
+        new run starts, unlike nx/ny/nt which are cached once at construction
+        since they're fixed for the lifetime of this shm segment.
+        """
+        return int(np.frombuffer(self.mapp, '<u4', 1, 140)[0])
+
+    def read_running(self):
+        """Whether a run is currently active (between StartOfRun and EndOfRun)."""
+        global_state = int(np.frombuffer(self.mapp, '<u4', 1, 128)[0])
+        return bool(global_state & RUNNING_BIT)
 
     def read_plane(self, t=0):
         offset = HEADER_SIZE + t * self.nx * self.ny * 4

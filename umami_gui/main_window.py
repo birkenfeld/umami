@@ -90,6 +90,7 @@ class MainWindow(QtWidgets.QWidget):
         self.last_t = None
         self.last_buf = None
         self.was_connected = False
+        self.last_elapsed_s = None
         self.settings = QtCore.QSettings()
 
         self._build_main_plot()
@@ -251,13 +252,27 @@ class MainWindow(QtWidgets.QWidget):
         rate = None
         if self.prev and total >= self.prev['total']:
             rate = (total - self.prev['total']) / (now - self.prev['time'])
-        # elapsed run time isn't available yet -- needs a new shm field from
-        # the backend; the status panel already knows how to display it
-        # (as "time: -") once fed a real value here
-        self.status_panel.update_run_info(run_id, elapsed_s=None, total=total,
+        elapsed_s = self._compute_elapsed_s()
+        self.status_panel.update_run_info(run_id, elapsed_s=elapsed_s, total=total,
                                           rate=rate)
         self.prev['total'] = total
         self.prev['time'] = now
+
+    def _compute_elapsed_s(self):
+        """Seconds since the last StartOfRun, frozen once the run has ended.
+
+        Only advances from the live wall clock while shm reports a run as
+        active; once it ends, keeps returning the last value computed while
+        running instead of continuing to count up against the stale
+        run_start timestamp.
+        """
+        run_start = self.histo.read_run_start()
+        if not run_start:
+            self.last_elapsed_s = None
+            return None
+        if self.histo.read_running() or self.last_elapsed_s is None:
+            self.last_elapsed_s = max(0, int(time.time() - run_start))
+        return self.last_elapsed_s
 
     def reopen_histogram(self):
         """Re-attach to the shm segment from scratch.
