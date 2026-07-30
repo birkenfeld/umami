@@ -126,20 +126,6 @@ class MainWindow(QtWidgets.QWidget):
     # ---- main image plot ----
 
     def _build_main_plot(self):
-        # a plain Qt title bar, not pyqtgraph's own PlotItem.setTitle() --
-        # that renders as a single centered/HTML label with no built-in way
-        # to independently left/right-align two pieces of text across its
-        # full width (its QGraphicsTextItem sizes to content, not to the
-        # label's own allotted width)
-        title_bar = QtWidgets.QWidget()
-        title_layout = QtWidgets.QHBoxLayout(title_bar)
-        title_layout.setContentsMargins(8, 4, 8, 2)
-        self.title_left_label = QtWidgets.QLabel('starting...')
-        self.title_right_label = QtWidgets.QLabel('')
-        title_layout.addWidget(self.title_left_label)
-        title_layout.addStretch()
-        title_layout.addWidget(self.title_right_label)
-
         self.graphics = pg.GraphicsLayoutWidget()
         self.plot = self.graphics.addPlot(viewBox=ZoomViewBox())
         self.img = pg.ImageItem(border='w', axisOrder='row-major')
@@ -153,13 +139,6 @@ class MainWindow(QtWidgets.QWidget):
         self.img.setColorMap(pg.colormap.get('viridis'))
         self.plot.enableAutoRange('xy', True)
         self.plot.scene().sigMouseMoved.connect(self.on_mouse_moved)
-
-        self.plot_container = QtWidgets.QWidget()
-        container_layout = QtWidgets.QVBoxLayout(self.plot_container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.setSpacing(0)
-        container_layout.addWidget(title_bar)
-        container_layout.addWidget(self.graphics)
 
     # ---- projection plots: separate windows, created lazily on request ----
 
@@ -269,12 +248,14 @@ class MainWindow(QtWidgets.QWidget):
 
         total = int(buf.sum())
         now = time.monotonic()
-        counts_text = f'{total} total counts'
+        rate = None
         if self.prev and total >= self.prev['total']:
             rate = (total - self.prev['total']) / (now - self.prev['time'])
-            counts_text += f' ({rate:,.1f}/sec)'
-        self.title_left_label.setText(f'Run {run_id}')
-        self.title_right_label.setText(counts_text)
+        # elapsed run time isn't available yet -- needs a new shm field from
+        # the backend; the status panel already knows how to display it
+        # (as "time: -") once fed a real value here
+        self.status_panel.update_run_info(run_id, elapsed_s=None, total=total,
+                                          rate=rate)
         self.prev['total'] = total
         self.prev['time'] = now
 
@@ -652,7 +633,7 @@ class MainWindow(QtWidgets.QWidget):
         self.log_panel.error_logged.connect(lambda: self.log_toggle.setChecked(True))
 
         self.left_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        self.left_splitter.addWidget(self.plot_container)
+        self.left_splitter.addWidget(self.graphics)
         self.left_splitter.addWidget(self.log_panel)
         self.left_splitter.setSizes([600, 200])
 
@@ -665,9 +646,18 @@ class MainWindow(QtWidgets.QWidget):
 
         self.layout().addWidget(self.buttons_frame)
         self.layout().addWidget(self.dump_frame)
-        self.layout().addWidget(self.display_frame)
+        self.layout().addWidget(self._hline())
         self.layout().addWidget(self.status_panel)
+        self.layout().addWidget(self._hline())
+        self.layout().addWidget(self.display_frame)
         self.layout().addWidget(self.main_splitter)
+
+    @staticmethod
+    def _hline():
+        line = QtWidgets.QFrame()
+        line.setFrameShape(QtWidgets.QFrame.Shape.HLine)
+        line.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
+        return line
 
     # ---- persisted UI state ----
 
