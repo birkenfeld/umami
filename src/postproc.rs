@@ -65,7 +65,7 @@ impl PostProcessor {
         let mut current_run = String::new();
 
         // use the default recipe at first
-        let mut cur_recipe = ModuleId::new("default".into());
+        let mut cur_recipe = self.default_recipe;
         let mut recipe = *self.recipe_names.get(&self.default_recipe)
                                            .expect("default recipe exists");
 
@@ -235,6 +235,15 @@ mod tests {
     fn test_postproc_mode_switching_and_state() {
         let (input, _output, _shm) =
             make_postproc(&[("std", "histo_std"), ("tof", "histo_tof")], "std");
+
+        // the default recipe name is reported as the current mode even before
+        // any SetMode has been issued
+        let (send, recv) = channel::bounded(1);
+        input.send(PipeItem::GetState(send)).unwrap();
+        match recv.recv().unwrap() {
+            CommandReply::Data { value } => assert_eq!(value["mode"], "std"),
+            other => panic!("unexpected reply: {other:?}"),
+        }
 
         let (send, recv) = channel::bounded(1);
         input.send(PipeItem::GetModes(send)).unwrap();
