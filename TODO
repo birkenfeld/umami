@@ -2,4 +2,3 @@
 - Output fanout instead of queue?
 - More custom aliases (raw -> y pre calib etc)
 - Test input errors with real hw
-- cps: only each second
