@@ -1,6 +1,8 @@
 - How to deal with systems that only provide relative timestamps?
 - Output fanout instead of queue?
 - More custom aliases (raw -> y pre calib etc)
-- Proper docs (README)
 - Test input errors with real hw
 - gui: total counts + rate somewhere else?
+- cps: only each second
+- show total lifetime of run somewhere (shm?)
+- "show t slice" box bigger
