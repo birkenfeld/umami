@@ -120,6 +120,7 @@ extern "C" fn jumpsd_fillhisto(data: *mut c_char, len: c_int) {
 }
 
 #[derive(HasParams)]
+#[params(kind = "input", type = "jumiom")]
 pub struct JumiomInput {
     name: ModuleId,
     device: i32,

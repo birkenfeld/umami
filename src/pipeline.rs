@@ -62,7 +62,7 @@ pub enum PipeItem {
     InputState(ModuleId, InputState),
     GetModes(channel::Sender<CommandReply>),
     SetMode(ModuleId, channel::Sender<CommandReply>),
-    GetParams(channel::Sender<(ModuleId, ParamMap)>),
+    GetParams(bool, channel::Sender<(ModuleId, ParamMap)>),
     SetParams(BTreeMap<ModuleId, ParamMap>, channel::Sender<CommandReply>),
     GetState(channel::Sender<CommandReply>),
     SaveHisto(String, usize, channel::Sender<CommandReply>),

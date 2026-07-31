@@ -13,6 +13,7 @@ use super::Recipe;
 // TODO: amplitude modes
 
 #[derive(Debug, Deserialize, Clone, HasParams)]
+#[params(kind = "recipe", type = "mesy_mpsd")]
 pub struct Mpsd {}
 
 impl Recipe for Mpsd {
@@ -50,6 +51,7 @@ impl Recipe for Mpsd {
 }
 
 #[derive(Debug, Deserialize, Clone, HasParams)]
+#[params(kind = "recipe", type = "mesy_mdll")]
 pub struct Mdll {}
 
 impl Recipe for Mdll {

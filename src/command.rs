@@ -43,7 +43,7 @@ pub enum Command {
     SetRawDump { enable: bool, path: String },
     GetModes,
     SetMode { name: String },
-    GetParams,
+    GetParams { #[serde(default)] full: bool },
     SetParams { params: ParamMap },
     SaveHisto { path: String, max_nt: usize },
 }
@@ -190,13 +190,15 @@ impl CommandHandler {
                 }
                 replies.into_iter().find(|r| r.is_error()).unwrap_or(CommandReply::Ok)
             }
-            Command::GetParams => {
+            Command::GetParams { full } => {
                 let mut map = ParamMap::new();
 
                 // gather from each input's recipe first, using the shared fixed-count
                 // channel (same pattern as the Start/Stop/Reset fan-out above)
                 for (name, sender) in &self.input_send {
-                    if sender.send_deadline((Command::GetParams, rep_send.clone()), deadline).is_err() {
+                    if sender.send_deadline(
+                        (Command::GetParams { full }, rep_send.clone()), deadline,
+                    ).is_err() {
                         return unresponsive(&format!("Input {name}"));
                     }
                 }
@@ -211,7 +213,7 @@ impl CommandHandler {
 
                 // this command needs a differently typed channel
                 let (rep_send, rep_recv) = crate::channel::unbounded();
-                if self.post_send.send_deadline(PipeItem::GetParams(rep_send), deadline).is_err() {
+                if self.post_send.send_deadline(PipeItem::GetParams(full, rep_send), deadline).is_err() {
                     return unresponsive("Postprocessor");
                 }
                 // aggregate parameters from all HasParams into a single map
@@ -441,7 +443,7 @@ mod tests {
         let (handler, _inputs, post_recv) = make_handler(&[]);
         std::thread::spawn(move || {
             match post_recv.recv().unwrap() {
-                PipeItem::GetParams(send) => {
+                PipeItem::GetParams(_full, send) => {
                     let mut p1 = ParamMap::new();
                     p1.insert("bin_x".into(), serde_json::json!(1));
                     send.send((ModuleId::new("std".into()), p1)).unwrap();
@@ -453,7 +455,7 @@ mod tests {
                 other => panic!("unexpected item: {other:?}"),
             }
         });
-        match handler.handle(Command::GetParams) {
+        match handler.handle(Command::GetParams { full: false }) {
             CommandReply::Data { value } => {
                 assert_eq!(value["std.bin_x"], 1);
                 assert_eq!(value["mesy.threshold"], 5);
@@ -468,14 +470,14 @@ mod tests {
         let recv0 = inputs.into_values().next().unwrap();
         std::thread::spawn(move || {
             let (cmd, rep) = recv0.recv().unwrap();
-            assert!(matches!(cmd, Command::GetParams));
+            assert!(matches!(cmd, Command::GetParams { full: false }));
             let mut value = serde_json::Map::new();
             value.insert("ge.rebin_8x8".into(), serde_json::json!({"value": false}));
             rep.send(CommandReply::Data { value: value.into() }).unwrap();
         });
         std::thread::spawn(move || {
             match post_recv.recv().unwrap() {
-                PipeItem::GetParams(send) => {
+                PipeItem::GetParams(_full, send) => {
                     let mut p = ParamMap::new();
                     p.insert("bin_x".into(), serde_json::json!(1));
                     send.send((ModuleId::new("std".into()), p)).unwrap();
@@ -484,7 +486,7 @@ mod tests {
                 other => panic!("unexpected item: {other:?}"),
             }
         });
-        match handler.handle(Command::GetParams) {
+        match handler.handle(Command::GetParams { full: false }) {
             CommandReply::Data { value } => {
                 assert_eq!(value["ge.rebin_8x8"]["value"], false);
                 assert_eq!(value["std.bin_x"], 1);
@@ -498,7 +500,7 @@ mod tests {
         let (handler, inputs, _post_recv) = make_handler(&["ge01"]);
         let recv0 = inputs.into_values().next().unwrap();
         respond_to_input(recv0, CommandReply::new_error("recipe get_params failed".into()));
-        assert!(handler.handle(Command::GetParams).is_error());
+        assert!(handler.handle(Command::GetParams { full: false }).is_error());
     }
 
     /// SetParams forwards the whole (unsplit) dotted map to every input, so

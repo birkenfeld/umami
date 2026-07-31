@@ -28,6 +28,7 @@ const FILE_START: &[u8] = b"mesytec ";
 const FULL_HEADER: &[u8] = b"mesytec psd listmode data\nheader length: 2 lines \n";
 
 #[derive(HasParams)]
+#[params(kind = "input", type = "mesy")]
 pub struct MesyInput<S, C>
 where
     C: cmd::MesyCommandHandler,
@@ -387,7 +388,7 @@ mod tests {
     #[test]
     fn test_get_params_reports_empty_cells_and_modules() {
         let input = make_input();
-        let params = input.get_params().unwrap();
+        let params = input.get_params(false).unwrap();
         assert!(params["cells"]["value"].as_object().unwrap().is_empty());
         assert!(params["modules"]["value"].as_object().unwrap().is_empty());
     }
@@ -412,7 +413,7 @@ mod tests {
     #[test]
     fn test_get_params_reports_detected_mod_types_readonly() {
         let input = make_input();
-        let params = input.get_params().unwrap();
+        let params = input.get_params(false).unwrap();
         let types = params["mod_types"]["value"].as_array().unwrap();
         assert_eq!(types.len(), 8);
         assert!(types.iter().all(|t| t == "mpsd8"));

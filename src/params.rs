@@ -12,7 +12,9 @@ pub use umami_derive::HasParams;
 pub type ParamMap = serde_json::Map<String, serde_json::Value>;
 
 pub trait HasParams {
-    fn get_params(&self) -> UResult<ParamMap>;
+    /// `full`: include `datatype`/`help`/`readonly` metadata alongside each
+    /// value, instead of just `{"value": ...}` -- see [`ParamInfo`].
+    fn get_params(&self, full: bool) -> UResult<ParamMap>;
     fn update_params(&mut self, name: ModuleId, params: ParamMap) -> UResult<()>;
 }
 
@@ -20,5 +22,14 @@ pub trait HasParams {
 pub struct ParamInfo {
     pub datatype: String,
     pub help: String,
+    pub readonly: bool,
     pub value: serde_json::Value,
+}
+
+/// The synthetic `<module>._info` entry identifying a module's kind and
+/// configured type (e.g. `{"kind": "input", "type": "mesy"}`), inserted
+/// alongside a module's own params only in full replies -- see
+/// [`HasParams::get_params`].
+pub fn info_entry(kind: &str, type_name: &str) -> serde_json::Value {
+    serde_json::json!({"kind": kind, "type": type_name})
 }

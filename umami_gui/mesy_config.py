@@ -19,14 +19,14 @@ MODULE_TYPES = ('mpsd', 'mstd')
 
 
 def discover_mesy_inputs(params):
-    """Names of mesy inputs present in a get-params map, sorted.
+    """Names of mesy inputs present in a `full` get-params map, sorted.
 
-    A `<name>.cells` key with a matching `<name>.modules` key is unique to
-    the mesy input backend.
+    Identified via each module's `<name>._info` entry reporting kind
+    "input" and type "mesy".
     """
     return sorted(
-        key[:-len('.cells')] for key in params
-        if key.endswith('.cells') and f'{key[:-len(".cells")]}.modules' in params
+        key[:-len('._info')] for key, info in params.items()
+        if key.endswith('._info') and info['kind'] == 'input' and info['type'] == 'mesy'
     )
 
 
@@ -263,7 +263,7 @@ class McpdConfigWindow(QtWidgets.QWidget):
 
     def refresh(self):
         """Re-pull cells/modules/mod_types for every detected mesy input."""
-        params = self.client.get_params()
+        params = self.client.get_params(full=True)
         if params is None:
             return
 

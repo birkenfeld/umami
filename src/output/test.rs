@@ -22,13 +22,15 @@ pub struct TestOutput {
 }
 
 impl TestOutput {
+    pub const TYPE_NAME: &'static str = "test";
+
     pub fn new() -> Self {
         TestOutput { current_run: String::new() }
     }
 }
 
 impl HasParams for TestOutput {
-    fn get_params(&self) -> UResult<crate::params::ParamMap> {
+    fn get_params(&self, _full: bool) -> UResult<crate::params::ParamMap> {
         Ok(crate::params::ParamMap::new())
     }
     fn update_params(&mut self, _: ModuleId, _: crate::params::ParamMap) -> UResult<()> {

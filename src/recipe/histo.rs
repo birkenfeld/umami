@@ -11,6 +11,7 @@ use crate::params::HasParams;
 use crate::recipe::Recipe;
 
 #[derive(HasParams)]
+#[params(kind = "recipe", type = "histo_tof")]
 pub struct Tof {
     // Configuration
     /// Binning in spatial directions.
@@ -145,6 +146,7 @@ impl Recipe for Tof {
 
 
 #[derive(HasParams)]
+#[params(kind = "recipe", type = "histo_std")]
 pub struct Std {
     // Configuration
     /// Binning in spatial directions.

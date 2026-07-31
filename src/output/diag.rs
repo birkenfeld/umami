@@ -106,6 +106,7 @@ impl TimeHistogram {
 
 /// Output selected events, and count out-of-order events.
 #[derive(HasParams)]
+#[params(kind = "output", type = "diag")]
 pub struct DiagOutput {
     name: ModuleId,
     // Configuration

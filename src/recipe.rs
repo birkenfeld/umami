@@ -35,6 +35,7 @@ pub trait Recipe : Send + HasParams {
 
 /// A null recipe - does nothing to the events.
 #[derive(HasParams)]
+#[params(kind = "recipe", type = "none")]
 pub struct NoRecipe {}
 
 impl Recipe for NoRecipe {
@@ -55,11 +56,11 @@ pub fn from_config(map: &BTreeMap<String, RecipeConfig>, name: &str)
                             .ok_or_else(|| anyhow::anyhow!("Recipe {name} not found"))?;
 
     macro_rules! recipes {
-        ($($name:literal => $typ:ty,)*) => {
+        ($($typ:ty),* $(,)?) => {
             match this.r#type.as_str() {
-                "none" => Ok(Box::new(NoRecipe {})),
+                NoRecipe::TYPE_NAME => Ok(Box::new(NoRecipe {})),
                 $(
-                    $name => Ok(Box::new(
+                    <$typ>::TYPE_NAME => Ok(Box::new(
                         <$typ>::from_config(this.config, map)
                             .with_context(|| format!("Creating recipe {name}"))?
                     )),
@@ -70,13 +71,13 @@ pub fn from_config(map: &BTreeMap<String, RecipeConfig>, name: &str)
     }
 
     recipes! {
-        "histo_std" => histo::Std,
-        "histo_tof" => histo::Tof,
-        "mesy_mdll" => mesy::Mdll,
-        "mesy_mpsd" => mesy::Mpsd,
-        "canon" => canon::Psd,
-        "kws_gedet" => kws::KWSGERecipe,
-        "jumiom" => jumiom::Position,
+        histo::Std,
+        histo::Tof,
+        mesy::Mdll,
+        mesy::Mpsd,
+        canon::Psd,
+        kws::KWSGERecipe,
+        jumiom::Position,
     }
 }
 

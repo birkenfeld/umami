@@ -106,9 +106,9 @@ impl PostProcessor {
                 }
 
                 // Meta items, sent on to outputs
-                PipeItem::GetParams(ref send) => {
+                PipeItem::GetParams(full, ref send) => {
                     for (&name, &index) in &self.recipe_names {
-                        match self.recipes[index].get_params() {
+                        match self.recipes[index].get_params(full) {
                             Ok(params) => {
                                 let _ = send.send((name, params));
                             }
@@ -336,7 +336,7 @@ mod tests {
         // ourselves -- otherwise the reply channel never closes and the blocking
         // `into_iter()` below would hang forever.
         let (send, recv) = channel::bounded(2);
-        input.send(PipeItem::GetParams(send)).unwrap();
+        input.send(PipeItem::GetParams(false, send)).unwrap();
         output.recv_timeout(timeout).expect("forwarded item");
         let params: Vec<_> = recv.into_iter().collect();
         assert_eq!(params.len(), 1);
@@ -354,7 +354,7 @@ mod tests {
         assert!(matches!(recv.recv().unwrap(), CommandReply::Ok));
 
         let (send, recv) = channel::bounded(2);
-        input.send(PipeItem::GetParams(send)).unwrap();
+        input.send(PipeItem::GetParams(false, send)).unwrap();
         output.recv_timeout(timeout).expect("forwarded item");
         let params: Vec<_> = recv.into_iter().collect();
         assert_eq!(params[0].1["bin_x"]["value"], 4);
@@ -368,6 +368,29 @@ mod tests {
         input.send(PipeItem::SetParams(set_map, send)).unwrap();
         output.recv_timeout(timeout).expect("forwarded item");
         assert!(recv.recv().unwrap().is_error());
+    }
+
+    /// `full: true` adds the `_info` module-discovery entry and per-param
+    /// metadata (datatype/help/readonly); `full: false` reports neither.
+    #[test]
+    fn test_postproc_full_params_include_info_and_metadata() {
+        let (input, output, _shm) = make_postproc(&[("std", "histo_std")], "std");
+        let timeout = std::time::Duration::from_secs(5);
+
+        let (send, recv) = channel::bounded(2);
+        input.send(PipeItem::GetParams(true, send)).unwrap();
+        output.recv_timeout(timeout).expect("forwarded item");
+        let (_, params) = recv.into_iter().next().unwrap();
+        assert_eq!(params["_info"], serde_json::json!({"kind": "recipe", "type": "histo_std"}));
+        assert_eq!(params["bin_x"]["readonly"], false);
+        assert!(!params["bin_x"]["datatype"].as_str().unwrap().is_empty());
+
+        let (send, recv) = channel::bounded(2);
+        input.send(PipeItem::GetParams(false, send)).unwrap();
+        output.recv_timeout(timeout).expect("forwarded item");
+        let (_, params) = recv.into_iter().next().unwrap();
+        assert!(!params.contains_key("_info"));
+        assert!(!params["bin_x"].as_object().unwrap().contains_key("datatype"));
     }
 
     #[test]

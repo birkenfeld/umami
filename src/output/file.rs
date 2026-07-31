@@ -12,6 +12,7 @@ use crate::params::HasParams;
 use super::{Output, OutputCommon};
 
 #[derive(HasParams)]
+#[params(kind = "output", type = "file")]
 pub struct FileOutput {
     // Configuration
     #[param(help="Directory to write raw event files to")]

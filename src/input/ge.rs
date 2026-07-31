@@ -22,6 +22,7 @@ const PACKET_HEARTBT:    u32 = 0x5000;
 const MAX_PACKET_SIZE: usize = 65536;
 
 #[derive(HasParams)]
+#[params(kind = "input", type = "ge")]
 pub struct GeInput<S> {
     source: S,
     name: ModuleId,

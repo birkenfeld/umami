@@ -17,6 +17,7 @@ use crate::params::HasParams;
 use super::{Source, Input, InputCommon};
 
 #[derive(HasParams)]
+#[params(kind = "input", type = "canon")]
 pub struct CanonInput<S> {
     source: S,
     name: ModuleId,
@@ -395,7 +396,7 @@ mod tests {
     #[test]
     fn test_get_params_reports_channel_offset() {
         let input = make_input();
-        let params = input.get_params().unwrap();
+        let params = input.get_params(false).unwrap();
         assert_eq!(params["channel_offset"]["value"], 100);
     }
 

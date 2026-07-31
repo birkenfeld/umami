@@ -20,7 +20,8 @@ class ValueEditDialog(QtWidgets.QDialog):
 
     def __init__(self, parent, key, info):
         super().__init__(parent)
-        self.setWindowTitle(f'Edit {key}')
+        readonly = info.get('readonly', False)
+        self.setWindowTitle(f'View {key}' if readonly else f'Edit {key}')
         self.resize(500, 400)
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -35,13 +36,19 @@ class ValueEditDialog(QtWidgets.QDialog):
 
         self.edit = QtWidgets.QPlainTextEdit(json.dumps(info.get('value'), indent=2))
         self.edit.setFont(QtGui.QFont('monospace'))
+        self.edit.setReadOnly(readonly)
         layout.addWidget(self.edit)
 
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Ok |
-            QtWidgets.QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self._validate_and_accept)
-        buttons.rejected.connect(self.reject)
+        if readonly:
+            buttons = QtWidgets.QDialogButtonBox(
+                QtWidgets.QDialogButtonBox.StandardButton.Ok)
+            buttons.accepted.connect(self.reject)
+        else:
+            buttons = QtWidgets.QDialogButtonBox(
+                QtWidgets.QDialogButtonBox.StandardButton.Ok |
+                QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+            buttons.accepted.connect(self._validate_and_accept)
+            buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
         self._value = None
@@ -75,17 +82,23 @@ class ParamsTable(QtWidgets.QTableWidget):
         self.params = None
 
     def refresh(self):
-        params = self.client.get_params()
+        params = self.client.get_params(full=True)
         if params is None:
             return
         self.params = params
+        # _info entries are discovery metadata (see mesy_config.py /
+        # aux_histo.py), not user-editable parameters -- keep them out of
+        # the displayed rows.
+        shown = {k: v for k, v in params.items() if not k.endswith('._info')}
         self.blockSignals(True)
-        self.setRowCount(len(params))
+        self.setRowCount(len(shown))
         self._keys = []
-        for row, (key, info) in enumerate(sorted(params.items())):
+        for row, (key, info) in enumerate(sorted(shown.items())):
+            readonly = info.get('readonly', False)
             name_item = QtWidgets.QTableWidgetItem(key)
             name_item.setFlags(name_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            name_item.setToolTip(f"{info.get('datatype', '')}: {info.get('help', '')}")
+            tooltip = f"{info.get('datatype', '')}: {info.get('help', '')}"
+            name_item.setToolTip(f'{tooltip} (read-only)' if readonly else tooltip)
             self.setItem(row, 0, name_item)
             self._keys.append(key)
 
@@ -93,6 +106,7 @@ class ParamsTable(QtWidgets.QTableWidget):
             if isinstance(value, bool):
                 checkbox = QtWidgets.QCheckBox()
                 checkbox.setChecked(value)
+                checkbox.setEnabled(not readonly)
                 checkbox.toggled.connect(lambda checked, k=key: self._send(k, checked))
                 cell = QtWidgets.QWidget()
                 cell_layout = QtWidgets.QHBoxLayout(cell)
@@ -106,11 +120,16 @@ class ParamsTable(QtWidgets.QTableWidget):
                     text = ''
                 else:
                     text = str(value)
-                self.setItem(row, 1, QtWidgets.QTableWidgetItem(text))
+                value_item = QtWidgets.QTableWidgetItem(text)
+                if readonly:
+                    value_item.setFlags(
+                        value_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+                self.setItem(row, 1, value_item)
 
             if isinstance(value, (list, dict)):
-                edit_btn = icon_button('edit')
-                edit_btn.setToolTip('Edit in a larger dialog')
+                edit_btn = icon_button('view' if readonly else 'edit')
+                edit_btn.setToolTip('View in a larger dialog' if readonly else
+                                     'Edit in a larger dialog')
                 edit_btn.clicked.connect(
                     lambda _, k=key, i=info: self._edit_dialog(k, i))
                 cell = QtWidgets.QWidget()

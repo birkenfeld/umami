@@ -21,6 +21,7 @@ const EXT_START: u8 = 1;
 
 #[derive(Debug, Deserialize, Clone, HasParams)]
 #[serde(deny_unknown_fields)]
+#[params(kind = "recipe", type = "kws_gedet")]
 pub struct KWSGERecipe {
     #[serde(default)]
     #[param(help="Whether to use 1024-pixel (calibration mode) resolution")]

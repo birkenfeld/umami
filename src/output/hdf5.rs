@@ -19,6 +19,7 @@ use super::{Output, OutputCommon};
 ///  "pulse_height"
 ///
 #[derive(HasParams)]
+#[params(kind = "output", type = "hdf5")]
 pub struct HDF5EventsOutput {
     #[param(help="Directory to write hdf5 event files to.")]
     dir: PathBuf,

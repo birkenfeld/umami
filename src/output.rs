@@ -85,8 +85,8 @@ pub trait Output: Send + HasParams {
                         lprintln!(ERROR, [name] "Error handling clear: {e:#}");
                     }
                 }
-                PipeItem::GetParams(send) => {
-                    match self.get_params() {
+                PipeItem::GetParams(full, send) => {
+                    match self.get_params(*full) {
                         Ok(params) => send.send((common.name, params))
                                           .expect("param reply receiver died"),
                         Err(e) => {
@@ -129,6 +129,7 @@ pub trait Output: Send + HasParams {
 
 /// Absorb all events without action.
 #[derive(HasParams)]
+#[params(kind = "output", type = "none")]
 pub struct NullOutput {}
 
 impl Output for NullOutput {
@@ -154,17 +155,21 @@ impl Output for NullOutput {
 
 pub fn start(config: OutputConfig, common: OutputCommon) -> UResult<()> {
     match config.r#type.as_str() {
-        "none" => Ok(NullOutput::from_config(&common, config.config)?.start(common)?),
-        "diag" => Ok(diag::DiagOutput::from_config(&common, config.config)?.start(common)?),
+        NullOutput::TYPE_NAME => Ok(NullOutput::from_config(&common, config.config)?.start(common)?),
+        diag::DiagOutput::TYPE_NAME =>
+            Ok(diag::DiagOutput::from_config(&common, config.config)?.start(common)?),
         #[cfg(feature = "hdf5")]
-        "hdf5" => Ok(hdf5::HDF5EventsOutput::from_config(&common, config.config)?.start(common)?),
+        hdf5::HDF5EventsOutput::TYPE_NAME =>
+            Ok(hdf5::HDF5EventsOutput::from_config(&common, config.config)?.start(common)?),
         #[cfg(not(feature = "hdf5"))]
         "hdf5" => Err(anyhow!(
             "HDF5 output support was not compiled in (rebuild with --features hdf5)").into()),
-        "file" => Ok(file::FileOutput::from_config(&common, config.config)?.start(common)?),
-        "aux_histo" => Ok(aux_histo::AuxHistoOutput::from_config(&common, config.config)?.start(common)?),
+        file::FileOutput::TYPE_NAME =>
+            Ok(file::FileOutput::from_config(&common, config.config)?.start(common)?),
+        aux_histo::AuxHistoOutput::TYPE_NAME =>
+            Ok(aux_histo::AuxHistoOutput::from_config(&common, config.config)?.start(common)?),
         #[cfg(test)]
-        "test" => Ok(test::TestOutput::new().start(common)?),
+        test::TestOutput::TYPE_NAME => Ok(test::TestOutput::new().start(common)?),
         _ => Err(anyhow!("Unknown output type: {}", config.r#type).into()),
     }
 }

@@ -11,6 +11,7 @@ use crate::params::HasParams;
 use super::Recipe;
 
 #[derive(Debug, Deserialize, Clone, HasParams)]
+#[params(kind = "recipe", type = "canon")]
 pub struct Psd {
     reso: usize,
 }

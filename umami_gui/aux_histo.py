@@ -208,7 +208,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
     """Separate window for user-defined auxiliary/diagnostic histograms.
 
     Handles the `aux_histo` output type: discovers the first active one via
-    get_params (the first "<module>.histos" key found -- only one such
+    each module's `_info` entry in a `full` get-params reply (only one such
     output is supported here, matching the backend's own one-output
     convenience assumption), lets the user add/edit/delete definitions
     through a form instead of hand-written JSON, and live-plots each one
@@ -297,20 +297,23 @@ class AuxHistoWindow(QtWidgets.QWidget):
     def refresh(self):
         """Re-pull histogram definitions and rebuild the table/plot grid.
 
-        Uses the first "<module>.histos" key found from get_params, adding
-        new histograms and dropping removed ones. Safe to call often -- e.g.
+        Uses the first module whose `_info` entry (from a `full` get-params
+        reply) reports kind "output" and type "aux_histo", adding new
+        histograms and dropping removed ones. Safe to call often -- e.g.
         piggybacked on the main window's own params refresh -- since it
         no-ops on a failed/empty get_params.
         """
-        params = self.client.get_params()
+        params = self.client.get_params(full=True)
         if params is None:
             return
         self._module = None
         self._histos = []
         for key, info in sorted(params.items()):
-            if key.endswith('.histos') and isinstance(info.get('value'), list):
-                self._module = key[:-len('.histos')]
-                self._histos = info['value']
+            if (key.endswith('._info')
+                    and info['kind'] == 'output' and info['type'] == 'aux_histo'):
+                self._module = key[:-len('._info')]
+                histos_info = params.get(f'{self._module}.histos') or {}
+                self._histos = histos_info.get('value') or []
                 break
         if self._module is not None:
             aliases_info = params.get(f'{self._module}.available_aliases')

@@ -109,6 +109,7 @@ fn bin_index(v: i64, min: i64, max: i64, bins: u16) -> Option<u16> {
 }
 
 #[derive(HasParams)]
+#[params(kind = "output", type = "aux_histo")]
 pub struct AuxHistoOutput {
     ipc_name: String,
     name: ModuleId,
@@ -299,7 +300,7 @@ mod tests {
         let common = test_common_with_aliases(&ipc, "aux", aliases);
         let output = AuxHistoOutput::from_config(&common, toml::Table::new()).unwrap();
 
-        let params = output.get_params().unwrap();
+        let params = output.get_params(false).unwrap();
         assert_eq!(params["available_aliases"]["value"][0]["name"], "adc0");
         assert_eq!(params["available_aliases"]["value"][0]["expr"], "raw_0[0..12:signed]");
         assert_eq!(params["available_aliases"]["value"][0]["help"], "test alias");
@@ -514,7 +515,7 @@ mod tests {
         let output = AuxHistoOutput::from_config(&common, cfg).unwrap();
         let _guard = ShmGuard::for_name(format!("{ipc}_aux_amp"));
 
-        let params = output.get_params().unwrap();
+        let params = output.get_params(false).unwrap();
         assert_eq!(params["enabled"]["value"], true);
         assert_eq!(params["histos"]["value"][0]["name"], "amp");
     }

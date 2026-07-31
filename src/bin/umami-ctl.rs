@@ -38,7 +38,11 @@ enum Cmd {
     /// Set mode name for postprocessing.
     SetMode { name: String },
     /// Get available parameters and their current values.
-    GetParams,
+    GetParams {
+        /// Include datatype/help/readonly metadata and each module's _info entry.
+        #[clap(long)]
+        full: bool,
+    },
     /// Set some parameter values.
     SetParams { params: ParamMap },
     /// Get the current state.
@@ -60,7 +64,7 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
         Cmd::NoRaw => Command::SetRawDump { enable: false, path: String::new() },
         Cmd::GetModes => Command::GetModes,
         Cmd::SetMode { name } => Command::SetMode { name },
-        Cmd::GetParams => Command::GetParams,
+        Cmd::GetParams { full } => Command::GetParams { full },
         Cmd::SetParams { params } => Command::SetParams { params },
         Cmd::State => Command::GetState,
         Cmd::Ping => Command::Ping,

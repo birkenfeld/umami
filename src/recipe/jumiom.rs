@@ -59,6 +59,7 @@ const LIMIT_TABLE_SIZE: usize = 256 * 256;
 
 #[derive(Debug, Deserialize, Clone, HasParams)]
 #[serde(deny_unknown_fields)]
+#[params(kind = "recipe", type = "jumiom")]
 pub struct Position {
     #[serde(default)]
     mode: PositionMode,

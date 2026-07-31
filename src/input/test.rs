@@ -12,6 +12,7 @@ use crate::params::HasParams;
 use super::{Input, InputCommon};
 
 #[derive(HasParams)]
+#[params(kind = "input", type = "test")]
 pub struct TestInput {
     name: ModuleId,
     // one Neutron event per (x, y) cell in 0..nx x 0..ny, re-issued on every run

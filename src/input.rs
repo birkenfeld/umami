@@ -187,9 +187,9 @@ pub trait Input: Send + HasParams {
                 _ => CommandReply::Ok
             }
             // allow retrieving/changing both this input's own params and its recipe's
-            Command::GetParams => {
+            Command::GetParams { full } => {
                 let mut map = ParamMap::new();
-                match self.get_params() {
+                match self.get_params(full) {
                     Ok(params) => for (param, info) in params {
                         map.insert(format!("{name}.{param}"), info);
                     }
@@ -200,7 +200,7 @@ pub trait Input: Send + HasParams {
                         return;
                     }
                 }
-                match common.recipe.get_params() {
+                match common.recipe.get_params(full) {
                     Ok(params) => for (param, info) in params {
                         map.insert(format!("{}.{param}", common.recipe_name), info);
                     }
@@ -512,7 +512,7 @@ mod tests {
     fn test_get_set_params_are_addressed_by_recipe_name_not_input_name() {
         let (command_send, _state_recv, _events_recv) = start_test_input("ge");
 
-        match send_command(&command_send, Command::GetParams) {
+        match send_command(&command_send, Command::GetParams { full: false }) {
             CommandReply::Data { value } => assert_eq!(value["ge.rebin_8x8"]["value"], false),
             other => panic!("unexpected reply: {other:?}"),
         }
@@ -522,7 +522,7 @@ mod tests {
         other.insert("other.rebin_8x8".into(), serde_json::json!(true));
         assert!(matches!(
             send_command(&command_send, Command::SetParams { params: other }), CommandReply::Ok));
-        match send_command(&command_send, Command::GetParams) {
+        match send_command(&command_send, Command::GetParams { full: false }) {
             CommandReply::Data { value } => assert_eq!(value["ge.rebin_8x8"]["value"], false),
             other => panic!("unexpected reply: {other:?}"),
         }
@@ -532,7 +532,7 @@ mod tests {
         mine.insert("ge.rebin_8x8".into(), serde_json::json!(true));
         assert!(matches!(
             send_command(&command_send, Command::SetParams { params: mine }), CommandReply::Ok));
-        match send_command(&command_send, Command::GetParams) {
+        match send_command(&command_send, Command::GetParams { full: false }) {
             CommandReply::Data { value } => assert_eq!(value["ge.rebin_8x8"]["value"], true),
             other => panic!("unexpected reply: {other:?}"),
         }

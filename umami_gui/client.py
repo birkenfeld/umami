@@ -105,8 +105,8 @@ class UmamiClient:
     def set_mode(self, name):
         return self._call('set_mode', name=name)
 
-    def get_params(self):
-        return self._call('get_params')
+    def get_params(self, full=False):
+        return self._call('get_params', full=full)
 
     def set_params(self, params):
         return self._call('set_params', params=params)
