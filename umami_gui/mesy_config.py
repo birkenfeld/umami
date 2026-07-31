@@ -1,0 +1,283 @@
+# Part of the Unified Mechanism for Acquisition of Measured Intensity
+# (UMAMI), see README and LICENSE files for more info.
+
+"""Mesytec MCPD live configuration: friendly per-slot cells/modules tables.
+
+`MesyCellsTable` and `MesyModulesTable` only load/report plain dicts shaped
+like the `cells`/`modules` get-params/set-params values -- no client or
+networking dependency -- so they can be reused by an offline config-file
+editor later, not just `McpdConfigWindow`. Edits are local until explicitly
+applied (see `McpdConfigWindow`'s Apply button).
+"""
+
+from pyqtgraph.Qt import QtCore, QtWidgets
+
+from .icons import icon_button
+
+N_SLOTS = 8
+MODULE_TYPES = ('mpsd', 'mstd')
+
+
+def discover_mesy_inputs(params):
+    """Names of mesy inputs present in a get-params map, sorted.
+
+    A `<name>.cells` key with a matching `<name>.modules` key is unique to
+    the mesy input backend.
+    """
+    return sorted(
+        key[:-len('.cells')] for key in params
+        if key.endswith('.cells') and f'{key[:-len(".cells")]}.modules' in params
+    )
+
+
+def _centered(widget):
+    cell = QtWidgets.QWidget()
+    layout = QtWidgets.QHBoxLayout(cell)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+    layout.addWidget(widget)
+    return cell
+
+
+class MesyCellsTable(QtWidgets.QTableWidget):
+    """8 fixed rows (cell index 0-7): Enabled / Source / Compare.
+
+    Loads/reports a dict shaped like the `cells` param value, e.g.
+    `{"1": {"source": 2, "compare": 5}}` -- disabled rows are simply
+    omitted, matching the backend's "unlisted index -> not configured"
+    convention. Edits are local until read via `current()` -- the caller
+    (an Apply button, typically) decides when to push them.
+    """
+
+    def __init__(self):
+        super().__init__(N_SLOTS, 3)
+        self.setHorizontalHeaderLabels(['Enabled', 'Source', 'Compare'])
+        self.setVerticalHeaderLabels([f'Cell {i}' for i in range(N_SLOTS)])
+        self.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self._loading = False
+        self._checks = []
+        self._sources = []
+        self._compares = []
+        for row in range(N_SLOTS):
+            check = QtWidgets.QCheckBox()
+            check.toggled.connect(self._on_toggle)
+            self.setCellWidget(row, 0, _centered(check))
+            self._checks.append(check)
+
+            source = QtWidgets.QSpinBox()
+            source.setRange(0, 7)
+            source.setToolTip('Trigger source (0 = no trigger, 7 = compare)')
+            self.setCellWidget(row, 1, source)
+            self._sources.append(source)
+
+            compare = QtWidgets.QSpinBox()
+            compare.setRange(0, 0xFFFF)
+            self.setCellWidget(row, 2, compare)
+            self._compares.append(compare)
+
+    def set_cells(self, cells):
+        """Load from a get-params `cells` value: `{"<idx>": {source, compare}}`."""
+        self._loading = True
+        for row in range(N_SLOTS):
+            entry = cells.get(str(row))
+            enabled = entry is not None
+            self._checks[row].setChecked(enabled)
+            self._sources[row].setValue(entry['source'] if enabled else 0)
+            self._compares[row].setValue(entry['compare'] if enabled else 0)
+            self._sources[row].setEnabled(enabled)
+            self._compares[row].setEnabled(enabled)
+        self._loading = False
+
+    def _on_toggle(self, *_args):
+        if self._loading:
+            return
+        for row in range(N_SLOTS):
+            enabled = self._checks[row].isChecked()
+            self._sources[row].setEnabled(enabled)
+            self._compares[row].setEnabled(enabled)
+
+    def current(self):
+        return {
+            str(row): {'source': self._sources[row].value(),
+                       'compare': self._compares[row].value()}
+            for row in range(N_SLOTS) if self._checks[row].isChecked()
+        }
+
+
+class MesyModulesTable(QtWidgets.QTableWidget):
+    """8 fixed rows (module index 0-7): Detected / Enabled / Type / Threshold / Gain.
+
+    Loads/reports a dict shaped like the `modules` param value, e.g.
+    `{"3": {"type": "mpsd", "threshold": 42, "gain": 7}}` -- disabled rows
+    are omitted. "Detected" is read-only, filled in separately from the
+    read-only `mod_types` param via `set_detected_types()`. Edits are local
+    until read via `current()` -- the caller (an Apply button, typically)
+    decides when to push them.
+    """
+
+    def __init__(self):
+        super().__init__(N_SLOTS, 5)
+        self.setHorizontalHeaderLabels(
+            ['Detected', 'Enabled', 'Type', 'Threshold', 'Gain'])
+        self.setVerticalHeaderLabels([f'Module {i}' for i in range(N_SLOTS)])
+        self.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self._loading = False
+        self._detected = []
+        self._checks = []
+        self._types = []
+        self._thresholds = []
+        self._gains = []
+        for row in range(N_SLOTS):
+            detected = QtWidgets.QTableWidgetItem('-')
+            detected.setFlags(detected.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.setItem(row, 0, detected)
+            self._detected.append(detected)
+
+            check = QtWidgets.QCheckBox()
+            check.toggled.connect(self._on_toggle)
+            self.setCellWidget(row, 1, _centered(check))
+            self._checks.append(check)
+
+            combo = QtWidgets.QComboBox()
+            combo.addItems(MODULE_TYPES)
+            self.setCellWidget(row, 2, combo)
+            self._types.append(combo)
+
+            threshold = QtWidgets.QSpinBox()
+            threshold.setRange(0, 0xFFFF)
+            self.setCellWidget(row, 3, threshold)
+            self._thresholds.append(threshold)
+
+            gain = QtWidgets.QSpinBox()
+            gain.setRange(0, 0xFFFF)
+            gain.setToolTip('Applies to all channels of this module')
+            self.setCellWidget(row, 4, gain)
+            self._gains.append(gain)
+
+    def set_detected_types(self, mod_types):
+        """`mod_types`: the 8 strings from the read-only `mod_types` param."""
+        for row, name in enumerate(mod_types):
+            self._detected[row].setText(name)
+
+    def set_modules(self, modules):
+        """Load from a get-params `modules` value: `{"<idx>": {type, ...}}`."""
+        self._loading = True
+        for row in range(N_SLOTS):
+            entry = modules.get(str(row))
+            enabled = entry is not None
+            self._checks[row].setChecked(enabled)
+            if enabled:
+                index = self._types[row].findText(entry['type'])
+                if index >= 0:
+                    self._types[row].setCurrentIndex(index)
+                self._thresholds[row].setValue(entry['threshold'])
+                self._gains[row].setValue(entry['gain'])
+            self._types[row].setEnabled(enabled)
+            self._thresholds[row].setEnabled(enabled)
+            self._gains[row].setEnabled(enabled)
+        self._loading = False
+
+    def _on_toggle(self, *_args):
+        if self._loading:
+            return
+        for row in range(N_SLOTS):
+            enabled = self._checks[row].isChecked()
+            self._types[row].setEnabled(enabled)
+            self._thresholds[row].setEnabled(enabled)
+            self._gains[row].setEnabled(enabled)
+
+    def current(self):
+        return {
+            str(row): {'type': self._types[row].currentText(),
+                       'threshold': self._thresholds[row].value(),
+                       'gain': self._gains[row].value()}
+            for row in range(N_SLOTS) if self._checks[row].isChecked()
+        }
+
+
+class McpdConfigWindow(QtWidgets.QWidget):
+    """Separate window with one tab per detected Mesytec MCPD input.
+
+    Discovers mesy inputs from get_params by looking for a `<name>.cells`
+    key with a matching `<name>.modules` key -- that pairing is unique to
+    the mesy input backend. Follows the same "closing just hides" pattern
+    as the aux-histogram window.
+    """
+
+    def __init__(self, client):
+        super().__init__()
+        self.client = client
+        self.setWindowTitle('UMAMI MCPD setup')
+        self.resize(700, 500)
+
+        self._names = []  # mesy input names last seen, in tab order
+        self._tables = {}
+
+        self.tabs = QtWidgets.QTabWidget()
+
+        refresh_btn = icon_button('refresh', 'Refresh')
+        refresh_btn.clicked.connect(self.refresh)
+        apply_btn = icon_button('apply', 'Apply')
+        apply_btn.clicked.connect(self._apply_all)
+
+        bottom_row = QtWidgets.QHBoxLayout()
+        bottom_row.addStretch()
+        bottom_row.addWidget(refresh_btn)
+        bottom_row.addWidget(apply_btn)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(self.tabs)
+        layout.addLayout(bottom_row)
+
+    def showEvent(self, event):  # noqa: N802
+        super().showEvent(event)
+        self.refresh()
+
+    def _add_tab(self, name):
+        page = QtWidgets.QWidget()
+        page_layout = QtWidgets.QVBoxLayout(page)
+
+        cells_box = QtWidgets.QGroupBox('Cells')
+        cells_table = MesyCellsTable()
+        QtWidgets.QVBoxLayout(cells_box).addWidget(cells_table)
+
+        modules_box = QtWidgets.QGroupBox('Modules')
+        modules_table = MesyModulesTable()
+        QtWidgets.QVBoxLayout(modules_box).addWidget(modules_table)
+
+        page_layout.addWidget(cells_box)
+        page_layout.addWidget(modules_box)
+        self.tabs.addTab(page, name)
+        return cells_table, modules_table
+
+    def _apply_all(self):
+        """Push every tab's cells/modules edits live, in one set_params call."""
+        params = {}
+        for name, (cells_table, modules_table) in self._tables.items():
+            params[f'{name}.cells'] = cells_table.current()
+            params[f'{name}.modules'] = modules_table.current()
+        if params:
+            self.client.set_params(params)
+
+    def refresh(self):
+        """Re-pull cells/modules/mod_types for every detected mesy input."""
+        params = self.client.get_params()
+        if params is None:
+            return
+
+        names = discover_mesy_inputs(params)
+        if names != self._names:
+            self.tabs.clear()
+            self._names = names
+            self._tables = {name: self._add_tab(name) for name in names}
+
+        for name, (cells_table, modules_table) in self._tables.items():
+            cells = (params.get(f'{name}.cells') or {}).get('value') or {}
+            modules = (params.get(f'{name}.modules') or {}).get('value') or {}
+            mod_types = ((params.get(f'{name}.mod_types') or {}).get('value')
+                         or ['-'] * N_SLOTS)
+            cells_table.set_cells(cells)
+            modules_table.set_modules(modules)
+            modules_table.set_detected_types(mod_types)

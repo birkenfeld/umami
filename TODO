@@ -4,3 +4,4 @@
 - Test input errors with real hw
 - Explicit module types
 - Move config structs into their input modules?
+- Command to just get param values?

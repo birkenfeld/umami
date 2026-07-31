@@ -20,6 +20,7 @@ from .client import UmamiClient
 from .icons import icon_button, load_icon
 from .log_panel import LogPanel
 from .logo_widget import LogoBuildupWidget
+from .mesy_config import McpdConfigWindow, discover_mesy_inputs
 from .params_table import ParamsTable
 from .shm import ShmHistogram
 from .status_panel import StatusPanel
@@ -76,6 +77,7 @@ class MainWindow(QtWidgets.QWidget):
         self.log_panel = LogPanel()
         self.client = UmamiClient(shm_name, self.log_panel)
         self.aux_histo_window = AuxHistoWindow(self.client, shm_name, self.log_panel)
+        self.mcpd_config_window = McpdConfigWindow(self.client)
 
         self.proj_window = None
         self.proj_curve = None
@@ -208,8 +210,12 @@ class MainWindow(QtWidgets.QWidget):
     def refresh_params(self):
         self.params_table.refresh()
         self.update_t_axis_labels()
+        self.mcpd_config_btn.setVisible(
+            bool(discover_mesy_inputs(self.params_table.params or {})))
         if self.aux_histo_window.isVisible():
             self.aux_histo_window.refresh()
+        if self.mcpd_config_window.isVisible():
+            self.mcpd_config_window.refresh()
 
     def update_buffer(self):
         t = self.t_spin.value()
@@ -460,6 +466,10 @@ class MainWindow(QtWidgets.QWidget):
         self.aux_histo_window.show()
         self.aux_histo_window.raise_()
 
+    def show_mcpd_config_window(self):
+        self.mcpd_config_window.show()
+        self.mcpd_config_window.raise_()
+
     # ---- display controls: scale, colormap, levels, cursor readout ----
 
     def _build_display_controls(self):
@@ -637,6 +647,17 @@ class MainWindow(QtWidgets.QWidget):
         refresh_btn = icon_button('refresh', 'Refresh Params')
         refresh_btn.clicked.connect(self.refresh_params)
         panel.layout().addWidget(refresh_btn)
+
+        # quick-setup dialogs for specific input types, shown only when
+        # relevant to the current config -- MCPD Setup is the first of these
+        setup_row = QtWidgets.QHBoxLayout()
+        self.mcpd_config_btn = QtWidgets.QPushButton('MCPD Setup')
+        self.mcpd_config_btn.clicked.connect(self.show_mcpd_config_window)
+        self.mcpd_config_btn.setVisible(False)
+        setup_row.addWidget(self.mcpd_config_btn)
+        setup_row.addStretch()
+        panel.layout().addLayout(setup_row)
+
         panel.layout().addWidget(self.params_table)
         self.params_panel = panel
 
