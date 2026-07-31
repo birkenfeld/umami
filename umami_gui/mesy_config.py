@@ -40,18 +40,17 @@ def _centered(widget):
 
 
 class MesyCellsTable(QtWidgets.QTableWidget):
-    """8 fixed rows (cell index 0-7): Enabled / Source / Compare.
+    """8 fixed rows (cell index 0-7): Configure / Source / Compare.
 
     Loads/reports a dict shaped like the `cells` param value, e.g.
-    `{"1": {"source": 2, "compare": 5}}` -- disabled rows are simply
-    omitted, matching the backend's "unlisted index -> not configured"
-    convention. Edits are local until read via `current()` -- the caller
-    (an Apply button, typically) decides when to push them.
+    `{"1": {"source": 2, "compare": 5}}` -- "Configure" means umami manages
+    that slot, not that the cell is enabled; unset rows are omitted. Edits
+    are local until read via `current()`.
     """
 
     def __init__(self):
         super().__init__(N_SLOTS, 3)
-        self.setHorizontalHeaderLabels(['Enabled', 'Source', 'Compare'])
+        self.setHorizontalHeaderLabels(['Configure', 'Source', 'Compare'])
         self.setVerticalHeaderLabels([f'Cell {i}' for i in range(N_SLOTS)])
         self.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.Stretch)
@@ -61,6 +60,7 @@ class MesyCellsTable(QtWidgets.QTableWidget):
         self._compares = []
         for row in range(N_SLOTS):
             check = QtWidgets.QCheckBox()
+            check.setToolTip("Manage this cell's settings from umami")
             check.toggled.connect(self._on_toggle)
             self.setCellWidget(row, 0, _centered(check))
             self._checks.append(check)
@@ -106,20 +106,19 @@ class MesyCellsTable(QtWidgets.QTableWidget):
 
 
 class MesyModulesTable(QtWidgets.QTableWidget):
-    """8 fixed rows (module index 0-7): Detected / Enabled / Type / Threshold / Gain.
+    """8 fixed rows (module index 0-7): Detected / Configure / Type / Threshold / Gain.
 
     Loads/reports a dict shaped like the `modules` param value, e.g.
-    `{"3": {"type": "mpsd", "threshold": 42, "gain": 7}}` -- disabled rows
-    are omitted. "Detected" is read-only, filled in separately from the
-    read-only `mod_types` param via `set_detected_types()`. Edits are local
-    until read via `current()` -- the caller (an Apply button, typically)
-    decides when to push them.
+    `{"3": {"type": "mpsd", "threshold": 42, "gain": 7}}` -- "Configure"
+    means umami manages that slot, not that the module is enabled; unset
+    rows are omitted. "Detected" is read-only, from `mod_types`. Edits are
+    local until read via `current()`.
     """
 
     def __init__(self):
         super().__init__(N_SLOTS, 5)
         self.setHorizontalHeaderLabels(
-            ['Detected', 'Enabled', 'Type', 'Threshold', 'Gain'])
+            ['Detected', 'Configure', 'Type', 'Threshold', 'Gain'])
         self.setVerticalHeaderLabels([f'Module {i}' for i in range(N_SLOTS)])
         self.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.Stretch)
@@ -136,6 +135,7 @@ class MesyModulesTable(QtWidgets.QTableWidget):
             self._detected.append(detected)
 
             check = QtWidgets.QCheckBox()
+            check.setToolTip("Manage this module's settings from umami")
             check.toggled.connect(self._on_toggle)
             self.setCellWidget(row, 1, _centered(check))
             self._checks.append(check)
