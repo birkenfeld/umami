@@ -396,11 +396,6 @@ class MainWindow(QtWidgets.QWidget):
         frame.layout().addWidget(QtWidgets.QLabel('Mode:'))
         frame.layout().addWidget(self.mode_combo)
 
-        frame.layout().addSpacing(20)
-        aux_histo_btn = icon_button('histo', 'Aux Histograms')
-        aux_histo_btn.clicked.connect(self.show_aux_histo_window)
-        frame.layout().addWidget(aux_histo_btn)
-
         frame.layout().addStretch()
 
         self.log_toggle = icon_button('show_log', 'Show Log')
@@ -586,15 +581,18 @@ class MainWindow(QtWidgets.QWidget):
         btn.clicked.connect(self.open_t_projection_window)
         frame.layout().addWidget(btn)
 
+        aux_histo_btn = icon_button('histo', 'Aux Histograms')
+        aux_histo_btn.clicked.connect(self.show_aux_histo_window)
+        frame.layout().addWidget(aux_histo_btn)
+
         frame.layout().addSpacing(20)
 
-        btn = icon_button('save', 'Save Histogram...')
-        btn.clicked.connect(self.save_histo_dialog)
-        frame.layout().addWidget(btn)
-
-        btn = icon_button('save', 'Save Plot PNG...')
-        btn.clicked.connect(self.save_plot_image_dialog)
-        frame.layout().addWidget(btn)
+        save_btn = icon_button('save', 'Save Histogram')
+        save_menu = QtWidgets.QMenu(save_btn)
+        save_menu.addAction('ASCII text...', self.save_histo_dialog)
+        save_menu.addAction('Image...', self.save_plot_image_dialog)
+        save_btn.setMenu(save_menu)
+        frame.layout().addWidget(save_btn)
 
         self.dump_frame = frame
 
