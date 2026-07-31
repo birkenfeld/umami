@@ -73,6 +73,11 @@ Each module entry:
 * `threshold`
 * `gain`
 
+`pulser` (runtime-settable via `set_params` only): map of module index ->
+`{ chan, pos, amp, on }`, injects a test pulse into an MPSD-class module
+for calibration/testing -- `pos` is `"left"`, `"right"`, or `"middle"`.
+Every pulser is forced off at startup.
+
 ### `type = "jumiom"` (requires building with `--features jumiom`)
 
 Jumiom PSD input, using `libjumpsd.so`.

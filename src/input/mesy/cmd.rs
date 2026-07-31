@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context};
 use byteorder::{ByteOrder, LE};
 use num_enum::FromPrimitive;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use zerocopy::{FromBytes, Immutable, IntoBytes, Unaligned};
 use zerocopy::byteorder::little_endian::U16;
 use crate::{ldebug, lprintln};
@@ -38,6 +38,7 @@ pub enum Cmd {
     SetCell = 9,
     SetGainMpsd = 13,
     SetThreshold = 14,
+    SetPulser = 15,
     GetCapabilities = 22,
     SetCapabilities = 23,
     GetModInfo = 24,
@@ -64,6 +65,16 @@ pub enum ModType {
     MdllP = 235,   // MDLL+, not official, but for easier handling of different MDLL modules
     #[num_enum(default)]
     Unknown,
+}
+
+/// Position of an injected test pulse relative to the module's channel strip.
+#[repr(u16)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PulserPos {
+    Left = 0,
+    Right = 1,
+    Middle = 2,
 }
 
 /// Abstraction for the Mesytec command handler.
@@ -152,6 +163,15 @@ pub trait MesyCommandHandler: Send + 'static {
         for (i, modtype) in modules.iter().enumerate() {
             if *modtype != ModType::None {
                 self.set_up_module(i, *modtype, config.modules.get(&i))?;
+            }
+        }
+
+        // Pulser state is never persisted, so a previous session's setting
+        // could otherwise still be active; force it off on every MPSD-class
+        // module present.
+        for (i, modtype) in modules.iter().enumerate() {
+            if matches!(modtype, ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P) {
+                self.set_pulser(i, 0, PulserPos::Middle, 0, false)?;
             }
         }
         Ok(())
@@ -257,6 +277,22 @@ pub trait MesyCommandHandler: Send + 'static {
         let _res: [U16; 2] = self.do_command(
             Cmd::SetThreshold,
             [U16::new(num as _), U16::new(threshold)],
+        )?;
+        Ok(())
+    }
+
+    /// Push a test-pulse injection setting to one module. `chan` follows the
+    /// module's own channel-count convention for "all channels" (e.g. 8 for
+    /// an 8-channel MPSD). Purely a runtime hardware command, never persisted
+    /// -- also used to apply a live `SetParams` update to a running input.
+    fn set_pulser(&mut self, module: usize, chan: u16, pos: PulserPos, amp: u16, on: bool) -> UResult<()> {
+        if on {
+            lprintln!(INFO, "Setting pulser on module {module}: chan {chan}, pos {pos:?}, amp {amp}");
+        }
+        let _res: [U16; 5] = self.do_command(
+            Cmd::SetPulser,
+            [U16::new(module as _), U16::new(chan), U16::new(pos as u16),
+             U16::new(amp), U16::new(on as u16)],
         )?;
         Ok(())
     }

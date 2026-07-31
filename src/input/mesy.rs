@@ -27,6 +27,15 @@ const END_MARKER: &[u8] = b"\xff\xff\xaa\xaa\x55\x55\x00\x00";
 const FILE_START: &[u8] = b"mesytec ";
 const FULL_HEADER: &[u8] = b"mesytec psd listmode data\nheader length: 2 lines \n";
 
+/// One module's test-pulse injection setting.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PulserConfig {
+    chan: u16,
+    pos: cmd::PulserPos,
+    amp: u16,
+    on: bool,
+}
+
 #[derive(HasParams)]
 #[params(kind = "input", type = "mesy")]
 pub struct MesyInput<S, C>
@@ -39,14 +48,17 @@ where
     // configuration
     name: ModuleId,
     #[param(readonly = true, datatype = "array of detected module types",
-            help = "Module type detected per slot at startup, via ReadIds/GetModInfo")]
+            help = "Module type detected per MCPD slot at startup")]
     mod_types: [cmd::ModType; 8],
     #[param(has_setter = true, datatype = "map of cell index to (source, compare)",
-            help = "Per-cell trigger source/compare wiring, pushed live via SetCell")]
+            help = "Per-cell trigger source/compare setting")]
     cells: BTreeMap<usize, MesyCellConfig>,
     #[param(has_setter = true, datatype = "map of module index to (type, threshold, gain)",
-            help = "Per-MPSD threshold/gain, pushed live via SetGainMpsd/SetThreshold")]
+            help = "Per-MPSD threshold/gain")]
     modules: BTreeMap<usize, MesyModuleConfig>,
+    #[param(has_setter = true, datatype = "map of module index to (chan, pos, amp, on)",
+            help = "Per-module test-pulse injection")]
+    pulser: BTreeMap<usize, PulserConfig>,
     // run-time
     buf_serial: Option<u16>,
     no_event_buffers: usize,
@@ -81,6 +93,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
             mod_types,
             cells: config.cells,
             modules: config.modules,
+            pulser: BTreeMap::new(),
             buf_serial: None,
             no_event_buffers: 0,
         };
@@ -106,6 +119,14 @@ impl<S, C: cmd::MesyCommandHandler> MesyInput<S, C> {
             self.command_handler.set_up_module(idx, modtype, Some(cfg))?;
         }
         self.modules = modules;
+        Ok(())
+    }
+
+    fn set_pulser(&mut self, pulser: BTreeMap<usize, PulserConfig>) -> UResult<()> {
+        for (&idx, cfg) in &pulser {
+            self.command_handler.set_pulser(idx, cfg.chan, cfg.pos, cfg.amp, cfg.on)?;
+        }
+        self.pulser = pulser;
         Ok(())
     }
 }
@@ -380,6 +401,7 @@ mod tests {
             mod_types: [cmd::ModType::Mpsd8; 8],
             cells: BTreeMap::new(),
             modules: BTreeMap::new(),
+            pulser: BTreeMap::new(),
             buf_serial: None,
             no_event_buffers: 0,
         }
@@ -408,6 +430,29 @@ mod tests {
         assert!(matches!(input.modules[&3], MesyModuleConfig::Mpsd { threshold: 42, gain: 7 }));
         assert_eq!(input.cells[&1].source, 2);
         assert_eq!(input.cells[&1].compare, 5);
+    }
+
+    #[test]
+    fn test_get_params_reports_empty_pulser() {
+        let input = make_input();
+        let params = input.get_params(false).unwrap();
+        assert!(params["pulser"]["value"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_update_params_updates_pulser() {
+        let mut input = make_input();
+        let mut set = ParamMap::new();
+        set.insert("pulser".into(), serde_json::json!({
+            "2": {"chan": 3, "pos": "middle", "amp": 60, "on": true},
+        }));
+        input.update_params(ModuleId::new("mesy".into()), set).unwrap();
+
+        let cfg = &input.pulser[&2];
+        assert_eq!(cfg.chan, 3);
+        assert!(matches!(cfg.pos, cmd::PulserPos::Middle));
+        assert_eq!(cfg.amp, 60);
+        assert!(cfg.on);
     }
 
     #[test]
