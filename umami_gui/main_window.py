@@ -269,14 +269,15 @@ class MainWindow(QtWidgets.QWidget):
 
         Only advances from the live wall clock while shm reports a run as
         active; once it ends, keeps returning the last value computed while
-        running instead of continuing to count up against the stale
-        run_start timestamp.
+        running. If this session never observed the run while it was
+        active (e.g. the GUI was started after it ended), there's no
+        last-known value to freeze at, so this reports unknown (None).
         """
         run_start = self.histo.read_run_start()
         if not run_start:
             self.last_elapsed_s = None
             return None
-        if self.histo.read_running() or self.last_elapsed_s is None:
+        if self.histo.read_running():
             self.last_elapsed_s = max(0, int(time.time() - run_start))
         return self.last_elapsed_s
 
