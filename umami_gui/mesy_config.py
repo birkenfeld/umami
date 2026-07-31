@@ -1,13 +1,13 @@
 # Part of the Unified Mechanism for Acquisition of Measured Intensity
 # (UMAMI), see README and LICENSE files for more info.
 
-"""Mesytec MCPD live configuration: friendly per-slot cells/modules tables.
+"""Mesytec MCPD live configuration: friendly per-slot cells/modules/pulser tables.
 
-`MesyCellsTable` and `MesyModulesTable` only load/report plain dicts shaped
-like the `cells`/`modules` get-params/set-params values -- no client or
-networking dependency -- so they can be reused by an offline config-file
-editor later, not just `McpdConfigWindow`. Edits are local until explicitly
-applied (see `McpdConfigWindow`'s Apply button).
+`MesyCellsTable`, `MesyModulesTable`, and `MesyPulserTable` only load/report
+plain dicts shaped like the `cells`/`modules`/`pulser` get-params/set-params
+values -- no client or networking dependency -- so they can be reused by an
+offline config-file editor later, not just `McpdConfigWindow`. Edits are
+local until explicitly applied (see `McpdConfigWindow`'s Apply button).
 """
 
 from pyqtgraph.Qt import QtCore, QtWidgets
@@ -16,6 +16,7 @@ from .icons import icon_button
 
 N_SLOTS = 8
 MODULE_TYPES = ('mpsd', 'mstd')
+PULSER_POSITIONS = ('left', 'right', 'middle')
 
 
 def discover_mesy_inputs(params):
@@ -197,13 +198,103 @@ class MesyModulesTable(QtWidgets.QTableWidget):
         }
 
 
+class MesyPulserTable(QtWidgets.QTableWidget):
+    """8 fixed rows (module index 0-7): Configure / Channel / Position / Amplitude / On.
+
+    Loads/reports a dict shaped like the `pulser` param value, e.g.
+    `{"2": {"chan": 3, "pos": "middle", "amp": 60, "on": true}}` --
+    "Configure" means umami manages that slot's pulser setting, not that
+    the pulser is currently injecting; "On" is the actual test-pulse
+    toggle, part of the pushed value like the other fields. Unset rows are
+    omitted. Edits are local until read via `current()`.
+    """
+
+    def __init__(self):
+        super().__init__(N_SLOTS, 5)
+        self.setHorizontalHeaderLabels(
+            ['Configure', 'Channel', 'Position', 'Amplitude', 'On'])
+        self.setVerticalHeaderLabels([f'Module {i}' for i in range(N_SLOTS)])
+        self.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self._loading = False
+        self._checks = []
+        self._chans = []
+        self._positions = []
+        self._amps = []
+        self._ons = []
+        for row in range(N_SLOTS):
+            check = QtWidgets.QCheckBox()
+            check.setToolTip("Manage this module's pulser from umami")
+            check.toggled.connect(self._on_toggle)
+            self.setCellWidget(row, 0, _centered(check))
+            self._checks.append(check)
+
+            chan = QtWidgets.QSpinBox()
+            chan.setRange(0, N_SLOTS)
+            chan.setToolTip(f'Channel to pulse, or {N_SLOTS} for all channels')
+            self.setCellWidget(row, 1, chan)
+            self._chans.append(chan)
+
+            pos = QtWidgets.QComboBox()
+            pos.addItems(PULSER_POSITIONS)
+            self.setCellWidget(row, 2, pos)
+            self._positions.append(pos)
+
+            amp = QtWidgets.QSpinBox()
+            amp.setRange(0, 255)
+            self.setCellWidget(row, 3, amp)
+            self._amps.append(amp)
+
+            on = QtWidgets.QCheckBox()
+            on.setToolTip('Actually inject test pulses -- leave off when not testing')
+            self.setCellWidget(row, 4, _centered(on))
+            self._ons.append(on)
+
+    def set_pulser(self, pulser):
+        """Load from a get-params `pulser` value: `{"<idx>": {chan, pos, amp, on}}`."""
+        self._loading = True
+        for row in range(N_SLOTS):
+            entry = pulser.get(str(row))
+            configured = entry is not None
+            self._checks[row].setChecked(configured)
+            if configured:
+                self._chans[row].setValue(entry['chan'])
+                index = self._positions[row].findText(entry['pos'])
+                if index >= 0:
+                    self._positions[row].setCurrentIndex(index)
+                self._amps[row].setValue(entry['amp'])
+                self._ons[row].setChecked(entry['on'])
+            self._chans[row].setEnabled(configured)
+            self._positions[row].setEnabled(configured)
+            self._amps[row].setEnabled(configured)
+            self._ons[row].setEnabled(configured)
+        self._loading = False
+
+    def _on_toggle(self, *_args):
+        if self._loading:
+            return
+        for row in range(N_SLOTS):
+            configured = self._checks[row].isChecked()
+            self._chans[row].setEnabled(configured)
+            self._positions[row].setEnabled(configured)
+            self._amps[row].setEnabled(configured)
+            self._ons[row].setEnabled(configured)
+
+    def current(self):
+        return {
+            str(row): {'chan': self._chans[row].value(),
+                       'pos': self._positions[row].currentText(),
+                       'amp': self._amps[row].value(),
+                       'on': self._ons[row].isChecked()}
+            for row in range(N_SLOTS) if self._checks[row].isChecked()
+        }
+
+
 class McpdConfigWindow(QtWidgets.QWidget):
     """Separate window with one tab per detected Mesytec MCPD input.
 
-    Discovers mesy inputs from get_params by looking for a `<name>.cells`
-    key with a matching `<name>.modules` key -- that pairing is unique to
-    the mesy input backend. Follows the same "closing just hides" pattern
-    as the aux-histogram window.
+    Discovers mesy inputs via `discover_mesy_inputs()`. Follows the same
+    "closing just hides" pattern as the aux-histogram window.
     """
 
     def __init__(self, client):
@@ -247,22 +338,28 @@ class McpdConfigWindow(QtWidgets.QWidget):
         modules_table = MesyModulesTable()
         QtWidgets.QVBoxLayout(modules_box).addWidget(modules_table)
 
+        pulser_box = QtWidgets.QGroupBox('Pulser (test-pulse injection)')
+        pulser_table = MesyPulserTable()
+        QtWidgets.QVBoxLayout(pulser_box).addWidget(pulser_table)
+
         page_layout.addWidget(cells_box)
         page_layout.addWidget(modules_box)
+        page_layout.addWidget(pulser_box)
         self.tabs.addTab(page, name)
-        return cells_table, modules_table
+        return cells_table, modules_table, pulser_table
 
     def _apply_all(self):
-        """Push every tab's cells/modules edits live, in one set_params call."""
+        """Push every tab's cells/modules/pulser edits live, in one set_params call."""
         params = {}
-        for name, (cells_table, modules_table) in self._tables.items():
+        for name, (cells_table, modules_table, pulser_table) in self._tables.items():
             params[f'{name}.cells'] = cells_table.current()
             params[f'{name}.modules'] = modules_table.current()
+            params[f'{name}.pulser'] = pulser_table.current()
         if params:
             self.client.set_params(params)
 
     def refresh(self):
-        """Re-pull cells/modules/mod_types for every detected mesy input."""
+        """Re-pull cells/modules/mod_types/pulser for every detected mesy input."""
         params = self.client.get_params(full=True)
         if params is None:
             return
@@ -273,11 +370,13 @@ class McpdConfigWindow(QtWidgets.QWidget):
             self._names = names
             self._tables = {name: self._add_tab(name) for name in names}
 
-        for name, (cells_table, modules_table) in self._tables.items():
+        for name, (cells_table, modules_table, pulser_table) in self._tables.items():
             cells = (params.get(f'{name}.cells') or {}).get('value') or {}
             modules = (params.get(f'{name}.modules') or {}).get('value') or {}
+            pulser = (params.get(f'{name}.pulser') or {}).get('value') or {}
             mod_types = ((params.get(f'{name}.mod_types') or {}).get('value')
                          or ['-'] * N_SLOTS)
             cells_table.set_cells(cells)
             modules_table.set_modules(modules)
             modules_table.set_detected_types(mod_types)
+            pulser_table.set_pulser(pulser)
