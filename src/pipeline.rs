@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::thread;
 use anyhow::{anyhow, Context};
 use crate::output::OutputCommon;
 use crate::{channel, ldebug, lprintln, output};
@@ -88,34 +89,54 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
     let mut expr_aliases = AliasTable::new();
     let confdir = config.filename.parent().unwrap_or_else(|| Path::new("."));
 
-    for (input_name, input_config) in config.inputs {
-        let input_name = ModuleId::new(input_name);
-        ldebug!("Initializing input {input_name}: {:?}", input_config);
+    // Constructing an input can involve a slow hardware handshake (e.g. Mesy
+    // MCPD's scan/set_up round-trips), so the actual `input::start` calls run
+    // concurrently, one thread per input; only the cheap bookkeeping around
+    // it (channels, recipe/alias setup) stays sequential here.
+    thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for (input_name, input_config) in config.inputs {
+            let input_name = ModuleId::new(input_name);
+            ldebug!("Initializing input {input_name}: {:?}", input_config);
 
-        let event_send = if n_inputs == 1 {
-            postproc_send.clone()
-        } else {
-            let (send, recv) = channel::bounded(EV_CHANNEL_SIZE);
-            pipe_recvs.push(recv);
-            send
-        };
-        let (command_send, command_recv) = channel::bounded(1);
-        let input_recipe = recipe::from_config(&config.input_recipes, &input_config.recipe)?;
-        for alias in input_recipe.expr_aliases() {
-            register_alias(&mut expr_aliases, alias)?;
-        }
-        let common = InputCommon::new(
-            input_name, postproc_send.clone(), event_send, command_recv,
-            input_recipe,
-            ModuleId::new(input_config.recipe.clone()),
-        );
-        command_sends.insert(input_name, command_send);
+            let event_send = if n_inputs == 1 {
+                postproc_send.clone()
+            } else {
+                let (send, recv) = channel::bounded(EV_CHANNEL_SIZE);
+                pipe_recvs.push(recv);
+                send
+            };
+            let (command_send, command_recv) = channel::bounded(1);
+            let input_recipe = recipe::from_config(&config.input_recipes, &input_config.recipe)?;
+            for alias in input_recipe.expr_aliases() {
+                register_alias(&mut expr_aliases, alias)?;
+            }
+            let common = InputCommon::new(
+                input_name, postproc_send.clone(), event_send, command_recv,
+                input_recipe,
+                ModuleId::new(input_config.recipe.clone()),
+            );
+            command_sends.insert(input_name, command_send);
 
-        if let Err(e) = input::start(input_config.specific, confdir, common) {
-            lprintln!(ERROR, "Failed to initialize input {input_name}: {e:#}");
-            init_errors = true;
+            handles.push((input_name, scope.spawn(move || {
+                input::start(input_config.specific, confdir, common)
+            })));
         }
-    }
+        for (input_name, handle) in handles {
+            match handle.join() {
+                Ok(Err(e)) => {
+                    lprintln!(ERROR, "Failed to initialize input {input_name}: {e:#}");
+                    init_errors = true;
+                }
+                Err(_) => {
+                    lprintln!(ERROR, "Panicked while initializing input {input_name}");
+                    init_errors = true;
+                }
+                _ => ()
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    })?;
     if init_errors {
         Err(anyhow!("Some inputs failed to initialize"))?;
     }
