@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use zerocopy::{FromBytes, Immutable, IntoBytes, Unaligned};
 use zerocopy::byteorder::little_endian::U16;
 use crate::{ldebug, lprintln};
-use crate::config::{MesyCellConfig, MesyConfig, MesyModuleConfig, SourceConfig};
+use crate::config::{MesyCellConfig, MesyConfig, MesyGain, MesyModuleConfig, SourceConfig};
 use crate::error::UResult;
 use crate::util::resolve;
 
@@ -268,12 +268,26 @@ pub trait MesyCommandHandler: Send + 'static {
         }
     }
 
-    fn set_up_mpsd(&mut self, num: usize, threshold: u16, gain: u16) -> UResult<()> {
-        lprintln!(INFO, "Setting up MPSD {num} with threshold {threshold}, gain {gain}");
-        let _res: [U16; 3] = self.do_command(
-            Cmd::SetGainMpsd,
-            [U16::new(num as _), U16::new(8), U16::new(gain)],
-        )?;   // id 8 = all channels (TODO single gain)
+    fn set_up_mpsd(&mut self, num: usize, threshold: u16, gain: MesyGain) -> UResult<()> {
+        match gain {
+            MesyGain::Uniform(gain) => {
+                lprintln!(INFO, "Setting up MPSD {num} with threshold {threshold}, gain {gain}");
+                let _res: [U16; 3] = self.do_command(
+                    Cmd::SetGainMpsd,
+                    [U16::new(num as _), U16::new(8), U16::new(gain)],  // chan 8 = all channels
+                )?;
+            }
+            MesyGain::PerChannel(gains) => {
+                lprintln!(INFO, "Setting up MPSD {num} with threshold {threshold}, \
+                                 per-channel gains {gains:?}");
+                for (chan, gain) in gains.into_iter().enumerate() {
+                    let _res: [U16; 3] = self.do_command(
+                        Cmd::SetGainMpsd,
+                        [U16::new(num as _), U16::new(chan as _), U16::new(gain)],
+                    )?;
+                }
+            }
+        }
         let _res: [U16; 2] = self.do_command(
             Cmd::SetThreshold,
             [U16::new(num as _), U16::new(threshold)],

@@ -107,19 +107,26 @@ class MesyCellsTable(QtWidgets.QTableWidget):
 
 
 class MesyModulesTable(QtWidgets.QTableWidget):
-    """8 fixed rows (module index 0-7): Detected / Configure / Type / Threshold / Gain.
+    """8 fixed rows: Detected / Configure / Type / Threshold / Gain 0-7.
 
     Loads/reports a dict shaped like the `modules` param value, e.g.
-    `{"3": {"type": "mpsd", "threshold": 42, "gain": 7}}` -- "Configure"
-    means umami manages that slot, not that the module is enabled; unset
-    rows are omitted. "Detected" is read-only, from `mod_types`. Edits are
-    local until read via `current()`.
+    `{"3": {"type": "mpsd", "threshold": 42, "gain": [1,2,3,4,5,6,7,8]}}` --
+    "Configure" means umami manages that slot, not that the module is
+    enabled; unset rows are omitted. "Detected" is read-only, from
+    `mod_types`. `gain` from get-params can be a single number (loaded into
+    all 8 spinboxes) or an already-per-channel array; `current()` always
+    reports a full 8-element array (functionally identical to a uniform
+    value on the wire, just explicit). Edits are local until read via
+    `current()`.
     """
 
+    N_GAIN_CHANS = 8
+
     def __init__(self):
-        super().__init__(N_SLOTS, 5)
+        super().__init__(N_SLOTS, 4 + self.N_GAIN_CHANS)
         self.setHorizontalHeaderLabels(
-            ['Detected', 'Configure', 'Type', 'Threshold', 'Gain'])
+            ['Detected', 'Configure', 'Type', 'Threshold']
+            + [f'Gain {c}' for c in range(self.N_GAIN_CHANS)])
         self.setVerticalHeaderLabels([f'Module {i}' for i in range(N_SLOTS)])
         self.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.Stretch)
@@ -128,7 +135,7 @@ class MesyModulesTable(QtWidgets.QTableWidget):
         self._checks = []
         self._types = []
         self._thresholds = []
-        self._gains = []
+        self._gains = []  # one list of N_GAIN_CHANS QSpinBox per row
         for row in range(N_SLOTS):
             detected = QtWidgets.QTableWidgetItem('-')
             detected.setFlags(detected.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
@@ -151,11 +158,14 @@ class MesyModulesTable(QtWidgets.QTableWidget):
             self.setCellWidget(row, 3, threshold)
             self._thresholds.append(threshold)
 
-            gain = QtWidgets.QSpinBox()
-            gain.setRange(0, 0xFFFF)
-            gain.setToolTip('Applies to all channels of this module')
-            self.setCellWidget(row, 4, gain)
-            self._gains.append(gain)
+            row_gains = []
+            for chan in range(self.N_GAIN_CHANS):
+                gain = QtWidgets.QSpinBox()
+                gain.setRange(0, 0xFFFF)
+                gain.setToolTip(f'Gain for channel/tube {chan}')
+                self.setCellWidget(row, 4 + chan, gain)
+                row_gains.append(gain)
+            self._gains.append(row_gains)
 
     def set_detected_types(self, mod_types):
         """`mod_types`: the 8 strings from the read-only `mod_types` param."""
@@ -174,10 +184,14 @@ class MesyModulesTable(QtWidgets.QTableWidget):
                 if index >= 0:
                     self._types[row].setCurrentIndex(index)
                 self._thresholds[row].setValue(entry['threshold'])
-                self._gains[row].setValue(entry['gain'])
+                gain = entry['gain']
+                gains = gain if isinstance(gain, list) else [gain] * self.N_GAIN_CHANS
+                for chan, value in enumerate(gains):
+                    self._gains[row][chan].setValue(value)
             self._types[row].setEnabled(enabled)
             self._thresholds[row].setEnabled(enabled)
-            self._gains[row].setEnabled(enabled)
+            for spin in self._gains[row]:
+                spin.setEnabled(enabled)
         self._loading = False
 
     def _on_toggle(self, *_args):
@@ -187,13 +201,14 @@ class MesyModulesTable(QtWidgets.QTableWidget):
             enabled = self._checks[row].isChecked()
             self._types[row].setEnabled(enabled)
             self._thresholds[row].setEnabled(enabled)
-            self._gains[row].setEnabled(enabled)
+            for spin in self._gains[row]:
+                spin.setEnabled(enabled)
 
     def current(self):
         return {
             str(row): {'type': self._types[row].currentText(),
                        'threshold': self._thresholds[row].value(),
-                       'gain': self._gains[row].value()}
+                       'gain': [spin.value() for spin in self._gains[row]]}
             for row in range(N_SLOTS) if self._checks[row].isChecked()
         }
 
@@ -301,7 +316,7 @@ class McpdConfigWindow(QtWidgets.QWidget):
         super().__init__()
         self.client = client
         self.setWindowTitle('UMAMI MCPD setup')
-        self.resize(700, 500)
+        self.resize(1200, 500)
 
         self._names = []  # mesy input names last seen, in tab order
         self._tables = {}
@@ -328,23 +343,26 @@ class McpdConfigWindow(QtWidgets.QWidget):
 
     def _add_tab(self, name):
         page = QtWidgets.QWidget()
-        page_layout = QtWidgets.QHBoxLayout(page)
-
-        cells_box = QtWidgets.QGroupBox('Cells')
-        cells_table = MesyCellsTable()
-        QtWidgets.QVBoxLayout(cells_box).addWidget(cells_table)
+        page_layout = QtWidgets.QVBoxLayout(page)
 
         modules_box = QtWidgets.QGroupBox('Modules')
         modules_table = MesyModulesTable()
         QtWidgets.QVBoxLayout(modules_box).addWidget(modules_table)
 
+        cells_box = QtWidgets.QGroupBox('Cells')
+        cells_table = MesyCellsTable()
+        QtWidgets.QVBoxLayout(cells_box).addWidget(cells_table)
+
         pulser_box = QtWidgets.QGroupBox('Pulser')
         pulser_table = MesyPulserTable()
         QtWidgets.QVBoxLayout(pulser_box).addWidget(pulser_table)
 
+        bottom_row = QtWidgets.QHBoxLayout()
+        bottom_row.addWidget(cells_box)
+        bottom_row.addWidget(pulser_box)
+
         page_layout.addWidget(modules_box)
-        page_layout.addWidget(pulser_box)
-        page_layout.addWidget(cells_box)
+        page_layout.addLayout(bottom_row)
         self.tabs.addTab(page, name)
         return cells_table, modules_table, pulser_table
 

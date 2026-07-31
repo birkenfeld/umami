@@ -89,10 +89,9 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
     let mut expr_aliases = AliasTable::new();
     let confdir = config.filename.parent().unwrap_or_else(|| Path::new("."));
 
-    // Constructing an input can involve a slow hardware handshake (e.g. Mesy
-    // MCPD's scan/set_up round-trips), so the actual `input::start` calls run
-    // concurrently, one thread per input; only the cheap bookkeeping around
-    // it (channels, recipe/alias setup) stays sequential here.
+    // initializing an input can involve a slow hardware handshake, so the actual
+    // `input::start` calls run in a thread each; only the cheap bookkeeping
+    // around it (channels, recipe/alias setup) stays sequential here
     thread::scope(|scope| {
         let mut handles = Vec::new();
         for (input_name, input_config) in config.inputs {

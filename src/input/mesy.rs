@@ -53,7 +53,8 @@ where
     #[param(has_setter = true, datatype = "map of cell index to (source, compare)",
             help = "Per-cell trigger source/compare setting")]
     cells: BTreeMap<usize, MesyCellConfig>,
-    #[param(has_setter = true, datatype = "map of module index to (type, threshold, gain)",
+    #[param(has_setter = true,
+            datatype = "map of module index to (type, threshold, gain: number or 8-array)",
             help = "Per-MPSD threshold/gain")]
     modules: BTreeMap<usize, MesyModuleConfig>,
     #[param(has_setter = true, datatype = "map of module index to (chan, pos, amp, on)",
@@ -375,6 +376,7 @@ fn parse_int(s: &[u8]) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::MesyGain;
     use crate::params::ParamMap;
 
     struct NoSource;
@@ -427,9 +429,24 @@ mod tests {
         }));
         input.update_params(ModuleId::new("mesy".into()), set).unwrap();
 
-        assert!(matches!(input.modules[&3], MesyModuleConfig::Mpsd { threshold: 42, gain: 7 }));
+        assert!(matches!(input.modules[&3],
+                MesyModuleConfig::Mpsd { threshold: 42, gain: MesyGain::Uniform(7) }));
         assert_eq!(input.cells[&1].source, 2);
         assert_eq!(input.cells[&1].compare, 5);
+    }
+
+    #[test]
+    fn test_update_params_updates_module_with_per_channel_gain() {
+        let mut input = make_input();
+        let mut set = ParamMap::new();
+        set.insert("modules".into(), serde_json::json!({
+            "3": {"type": "mpsd", "threshold": 42, "gain": [1, 2, 3, 4, 5, 6, 7, 8]},
+        }));
+        input.update_params(ModuleId::new("mesy".into()), set).unwrap();
+
+        assert!(matches!(input.modules[&3],
+                MesyModuleConfig::Mpsd { threshold: 42, gain: MesyGain::PerChannel(
+                    [1, 2, 3, 4, 5, 6, 7, 8]) }));
     }
 
     #[test]

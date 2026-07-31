@@ -71,7 +71,8 @@ Each module entry:
 
 * `type = "mpsd"` or `type = "mstd"`
 * `threshold`
-* `gain`
+* `gain`: either a single number (same gain for every channel/tube) or an
+  array of 8 numbers (one per channel) -- MPSD modules only
 
 `pulser` (runtime-settable via `set_params` only): map of module index ->
 `{ chan, pos, amp, on }`, injects a test pulse into an MPSD-class module

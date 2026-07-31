@@ -55,12 +55,21 @@ pub struct MesyCellConfig {
     pub compare: u16,
 }
 
+/// An MPSD's gain, either the same for every channel or given per channel
+/// (one value per tube).
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum MesyGain {
+    Uniform(u16),
+    PerChannel([u16; 8]),
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum MesyModuleConfig {
     // TODO better types
-    // TODO amp mode, pulser
-    Mpsd { threshold: u16, gain: u16 },
+    // TODO amp mode
+    Mpsd { threshold: u16, gain: MesyGain },
     Mstd { threshold: u16, gain: u16 },
 }
 
