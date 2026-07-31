@@ -64,7 +64,8 @@ Mesytec MCPD input.
 * `modules` (required): map of module index -> module config (see below)
 
 Both `cells` and `modules` are runtime-settable via `set-params` and are
-pushed live to the hardware when changed.
+pushed live to the hardware when changed. `mod_types` (the module type
+detected per slot at startup) is also reported via `get-params`, read-only.
 
 Each module entry:
 

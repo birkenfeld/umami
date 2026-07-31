@@ -37,6 +37,8 @@ where
     dump: DumpHandler,
     // configuration
     name: ModuleId,
+    #[param(readonly = true, datatype = "array of detected module types",
+            help = "Module type detected per slot at startup, via ReadIds/GetModInfo")]
     mod_types: [cmd::ModType; 8],
     #[param(has_setter = true, datatype = "map of cell index to (source, compare)",
             help = "Per-cell trigger source/compare wiring, pushed live via SetCell")]
@@ -405,6 +407,23 @@ mod tests {
         assert!(matches!(input.modules[&3], MesyModuleConfig::Mpsd { threshold: 42, gain: 7 }));
         assert_eq!(input.cells[&1].source, 2);
         assert_eq!(input.cells[&1].compare, 5);
+    }
+
+    #[test]
+    fn test_get_params_reports_detected_mod_types_readonly() {
+        let input = make_input();
+        let params = input.get_params().unwrap();
+        let types = params["mod_types"]["value"].as_array().unwrap();
+        assert_eq!(types.len(), 8);
+        assert!(types.iter().all(|t| t == "mpsd8"));
+    }
+
+    #[test]
+    fn test_update_params_rejects_setting_mod_types() {
+        let mut input = make_input();
+        let mut set = ParamMap::new();
+        set.insert("mod_types".into(), serde_json::json!(vec!["mpsd8"; 8]));
+        assert!(input.update_params(ModuleId::new("mesy".into()), set).is_err());
     }
 
     #[test]

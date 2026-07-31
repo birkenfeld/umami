@@ -8,6 +8,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context};
 use byteorder::{ByteOrder, LE};
 use num_enum::FromPrimitive;
+use serde::Serialize;
 use zerocopy::{FromBytes, Immutable, IntoBytes, Unaligned};
 use zerocopy::byteorder::little_endian::U16;
 use crate::{ldebug, lprintln};
@@ -47,7 +48,8 @@ pub enum Cmd {
 }
 
 #[repr(u16)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, FromPrimitive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ModType {
     None = 0,
     Mpsd8Old = 1,
