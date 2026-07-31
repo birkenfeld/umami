@@ -96,6 +96,28 @@ The input backends (`input.rs`, `input/canon.rs`, `input/mesy.rs`,
 `input/mesy/cmd.rs`) are the weakest spots, since covering them properly
 would need mocking their TCP/UDP interfaces — not planned for now.
 
+## Manual Testing Harness
+
+`test/harness.sh` wraps the manual test loop — building, starting a real
+`umami` instance, driving it via `umami-ctl`, and exercising `umami-gui`
+under a dedicated Xvfb display — into single-script invocations instead of
+a fresh set of ad-hoc shell commands for every step. Run
+`test/harness.sh help` for the full command list; the common flow:
+
+```sh
+test/harness.sh start canon.conf   # or mesy.conf / ge.conf; builds + starts, waits for ping
+test/harness.sh ctl canon start my-run-id
+test/harness.sh ctl canon state
+test/harness.sh gui canon          # launches umami-gui under Xvfb :99
+test/harness.sh screenshot out.png
+test/harness.sh stop canon         # kills the process, drops its shm segment
+```
+
+Instances are tracked by name (default: the config's basename) under
+`test/.harness/`, so several can run concurrently. `test/synthetic.conf`
+(the `type = "test"` input) can't be used here — it's `#[cfg(test)]`-gated
+and only exists inside `cargo test` builds; use `canon`/`mesy`/`ge` instead.
+
 ## Config
 
 Runtime config is TOML. Example configs in `test/*.conf`.
@@ -129,12 +151,11 @@ no separate packaging step. The package version is derived from the git tag
 
 - `umami_det.py` is a second, Tango/Entangle-based client against the same
   wire protocol — useful as a reference for command usage patterns.
-- To exercise the GUI live (e.g. after a change), start a real `umami`
-  process against one of the `test/*.conf` configs and drive it under Xvfb:
-  `Xvfb :99 -screen 0 1280x900x24 &`, then
-  `DISPLAY=:99 uv run umami-gui <ipc_name>`. Screenshot with ImageMagick's
-  `import -window root out.png`; drive clicks with `xdotool mousemove --sync
-  X Y click 1`.
+- To exercise the GUI live (e.g. after a change), use `test/harness.sh` (see
+  "Manual Testing Harness" above): `start` an instance, then `gui`/
+  `screenshot`/`click`/`key` to drive and inspect it under a dedicated Xvfb
+  display (`:99`), without separate manual `Xvfb`/`uv run`/`import`/
+  `xdotool` invocations.
 
 ## Documentation
 

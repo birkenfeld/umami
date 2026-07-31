@@ -1,5 +1,6 @@
 /target
 /test/data
+/test/.harness
 /dev
 /raw
 __pycache__
