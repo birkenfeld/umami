@@ -199,29 +199,29 @@ class MesyModulesTable(QtWidgets.QTableWidget):
 
 
 class MesyPulserTable(QtWidgets.QTableWidget):
-    """8 fixed rows (module index 0-7): Configure / Channel / Position / Amplitude / On.
+    """8 fixed rows (module index 0-7): Configure / On / Channel / Position / Amplitude.
 
     Loads/reports a dict shaped like the `pulser` param value, e.g.
     `{"2": {"chan": 3, "pos": "middle", "amp": 60, "on": true}}` --
     "Configure" means umami manages that slot's pulser setting, not that
-    the pulser is currently injecting; "On" is the actual test-pulse
-    toggle, part of the pushed value like the other fields. Unset rows are
-    omitted. Edits are local until read via `current()`.
+    the pulser is currently injecting; "On" is the actual toggle, part of
+    the pushed value like the other fields. Unset rows are omitted. Edits
+    are local until read via `current()`.
     """
 
     def __init__(self):
         super().__init__(N_SLOTS, 5)
         self.setHorizontalHeaderLabels(
-            ['Configure', 'Channel', 'Position', 'Amplitude', 'On'])
+            ['Configure', 'On', 'Channel', 'Position', 'Amplitude'])
         self.setVerticalHeaderLabels([f'Module {i}' for i in range(N_SLOTS)])
         self.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.Stretch)
         self._loading = False
         self._checks = []
+        self._ons = []
         self._chans = []
         self._positions = []
         self._amps = []
-        self._ons = []
         for row in range(N_SLOTS):
             check = QtWidgets.QCheckBox()
             check.setToolTip("Manage this module's pulser from umami")
@@ -229,26 +229,26 @@ class MesyPulserTable(QtWidgets.QTableWidget):
             self.setCellWidget(row, 0, _centered(check))
             self._checks.append(check)
 
+            on = QtWidgets.QCheckBox()
+            on.setToolTip('Actually inject test pulses -- leave off when not testing')
+            self.setCellWidget(row, 1, _centered(on))
+            self._ons.append(on)
+
             chan = QtWidgets.QSpinBox()
             chan.setRange(0, N_SLOTS)
             chan.setToolTip(f'Channel to pulse, or {N_SLOTS} for all channels')
-            self.setCellWidget(row, 1, chan)
+            self.setCellWidget(row, 2, chan)
             self._chans.append(chan)
 
             pos = QtWidgets.QComboBox()
             pos.addItems(PULSER_POSITIONS)
-            self.setCellWidget(row, 2, pos)
+            self.setCellWidget(row, 3, pos)
             self._positions.append(pos)
 
             amp = QtWidgets.QSpinBox()
             amp.setRange(0, 255)
-            self.setCellWidget(row, 3, amp)
+            self.setCellWidget(row, 4, amp)
             self._amps.append(amp)
-
-            on = QtWidgets.QCheckBox()
-            on.setToolTip('Actually inject test pulses -- leave off when not testing')
-            self.setCellWidget(row, 4, _centered(on))
-            self._ons.append(on)
 
     def set_pulser(self, pulser):
         """Load from a get-params `pulser` value: `{"<idx>": {chan, pos, amp, on}}`."""
@@ -328,7 +328,7 @@ class McpdConfigWindow(QtWidgets.QWidget):
 
     def _add_tab(self, name):
         page = QtWidgets.QWidget()
-        page_layout = QtWidgets.QVBoxLayout(page)
+        page_layout = QtWidgets.QHBoxLayout(page)
 
         cells_box = QtWidgets.QGroupBox('Cells')
         cells_table = MesyCellsTable()
@@ -338,13 +338,13 @@ class McpdConfigWindow(QtWidgets.QWidget):
         modules_table = MesyModulesTable()
         QtWidgets.QVBoxLayout(modules_box).addWidget(modules_table)
 
-        pulser_box = QtWidgets.QGroupBox('Pulser (test-pulse injection)')
+        pulser_box = QtWidgets.QGroupBox('Pulser')
         pulser_table = MesyPulserTable()
         QtWidgets.QVBoxLayout(pulser_box).addWidget(pulser_table)
 
-        page_layout.addWidget(cells_box)
         page_layout.addWidget(modules_box)
         page_layout.addWidget(pulser_box)
+        page_layout.addWidget(cells_box)
         self.tabs.addTab(page, name)
         return cells_table, modules_table, pulser_table
 
