@@ -14,7 +14,7 @@ from pyqtgraph import exporters
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from . import __version__
-from .aux_histo import AuxHistoWindow
+from .aux_histo import AuxHistoWindow, discover_aux_histo_output
 from .axis_items import RotatedAxisItem, ZoomViewBox
 from .client import UmamiClient
 from .icons import icon_button, load_icon
@@ -210,8 +210,9 @@ class MainWindow(QtWidgets.QWidget):
     def refresh_params(self):
         self.params_table.refresh()
         self.update_t_axis_labels()
-        self.mcpd_config_btn.setVisible(
-            bool(discover_mesy_inputs(self.params_table.params or {})))
+        params = self.params_table.params or {}
+        self.mcpd_config_btn.setVisible(bool(discover_mesy_inputs(params)))
+        self.aux_histo_btn.setVisible(discover_aux_histo_output(params) is not None)
         if self.aux_histo_window.isVisible():
             self.aux_histo_window.refresh()
         if self.mcpd_config_window.isVisible():
@@ -581,9 +582,10 @@ class MainWindow(QtWidgets.QWidget):
         btn.clicked.connect(self.open_t_projection_window)
         frame.layout().addWidget(btn)
 
-        aux_histo_btn = icon_button('histo', 'Aux Histograms')
-        aux_histo_btn.clicked.connect(self.show_aux_histo_window)
-        frame.layout().addWidget(aux_histo_btn)
+        self.aux_histo_btn = icon_button('histo', 'Aux Histograms')
+        self.aux_histo_btn.clicked.connect(self.show_aux_histo_window)
+        self.aux_histo_btn.setVisible(False)
+        frame.layout().addWidget(self.aux_histo_btn)
 
         frame.layout().addSpacing(20)
 

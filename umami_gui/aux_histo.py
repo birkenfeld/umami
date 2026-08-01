@@ -39,6 +39,20 @@ an axis expression's result is binned into [min, max] -- values outside \
 that range are silently dropped, not clamped.'''
 
 
+def discover_aux_histo_output(params):
+    """Name of the first aux_histo output in a `full` get-params map, or None.
+
+    Identified via its `<name>._info` entry reporting kind "output" and type
+    "aux_histo" -- only one such output is supported here, matching the
+    backend's own one-output convenience assumption.
+    """
+    return next(
+        (key[:-len('._info')] for key, info in sorted(params.items())
+         if key.endswith('._info') and info['kind'] == 'output'
+         and info['type'] == 'aux_histo'),
+        None)
+
+
 def help_text(aliases):
     """Format the help text including `available_aliases` param for display.
 
@@ -297,28 +311,21 @@ class AuxHistoWindow(QtWidgets.QWidget):
     def refresh(self):
         """Re-pull histogram definitions and rebuild the table/plot grid.
 
-        Uses the first module whose `_info` entry (from a `full` get-params
-        reply) reports kind "output" and type "aux_histo", adding new
-        histograms and dropping removed ones. Safe to call often -- e.g.
-        piggybacked on the main window's own params refresh -- since it
-        no-ops on a failed/empty get_params.
+        Adding new histograms and dropping removed ones. Safe to call often
+        -- e.g. piggybacked on the main window's own params refresh -- since
+        it no-ops on a failed/empty get_params.
         """
         params = self.client.get_params(full=True)
         if params is None:
             return
-        self._module = None
-        self._histos = []
-        for key, info in sorted(params.items()):
-            if (key.endswith('._info')
-                    and info['kind'] == 'output' and info['type'] == 'aux_histo'):
-                self._module = key[:-len('._info')]
-                histos_info = params.get(f'{self._module}.histos') or {}
-                self._histos = histos_info.get('value') or []
-                break
+        self._module = discover_aux_histo_output(params)
         if self._module is not None:
+            histos_info = params.get(f'{self._module}.histos') or {}
+            self._histos = histos_info.get('value') or []
             aliases_info = params.get(f'{self._module}.available_aliases')
             self._aliases = (aliases_info or {}).get('value') or []
         else:
+            self._histos = []
             self._aliases = []
         self._rebuild()
 
