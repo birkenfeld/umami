@@ -113,3 +113,6 @@ class UmamiClient:
 
     def save_histo(self, path, max_nt):
         return self._call('save_histo', path=path, max_nt=max_nt)
+
+    def save_config(self, path=None):
+        return self._call('save_config', path=path)

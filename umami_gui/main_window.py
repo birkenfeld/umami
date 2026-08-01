@@ -636,6 +636,18 @@ class MainWindow(QtWidgets.QWidget):
             path += '.png'
         exporters.ImageExporter(self.plot).export(path)
 
+    def save_config_same_file(self):
+        self.client.save_config()
+
+    def save_config_dialog(self):
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, 'Save Config', '', 'Config files (*.conf);;All files (*)')
+        if not path:
+            return
+        if not Path(path).suffix:
+            path += '.conf'
+        self.client.save_config(path)
+
     # ---- params panel ----
 
     def _build_params_panel(self):
@@ -658,6 +670,14 @@ class MainWindow(QtWidgets.QWidget):
         panel.layout().addLayout(setup_row)
 
         panel.layout().addWidget(self.params_table)
+
+        save_config_btn = icon_button('save', 'Save Config')
+        save_config_menu = QtWidgets.QMenu(save_config_btn)
+        save_config_menu.addAction('Same config file', self.save_config_same_file)
+        save_config_menu.addAction('Select new file...', self.save_config_dialog)
+        save_config_btn.setMenu(save_config_menu)
+        panel.layout().addWidget(save_config_btn)
+
         self.params_panel = panel
 
     # ---- assembly ----

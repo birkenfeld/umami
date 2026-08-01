@@ -6,6 +6,7 @@ use std::os::unix::net;
 use std::time::{Duration, Instant};
 use anyhow::Context;
 use serde::{Serialize, Deserialize};
+use serde::de::IntoDeserializer;
 use serde_json::Value;
 use uds::UnixDatagramExt;
 use crate::{ldebug, lprintln};
@@ -324,7 +325,7 @@ impl CommandHandler {
             if value.is_null() {
                 continue;
             }
-            patch_param(&mut doc, module, param, json_to_toml(value));
+            patch_param(&mut doc, module, param, value);
         }
 
         let target = path.map_or_else(|| self.config_path.clone(), Into::into);
@@ -339,15 +340,25 @@ impl CommandHandler {
 /// Sets `<module>.<param> = value` in `doc`, searching every top-level
 /// section a module name can live in. No-ops (silently) if `module` isn't
 /// found anywhere -- e.g. the auto-created "null" output that has no entry
-/// in the original file.
-fn patch_param(doc: &mut toml_edit::DocumentMut, module: &str, param: &str, value: toml_edit::Value) {
+/// in the original file. Leaves an existing entry untouched (no rewrite,
+/// no reformatting) if its value already matches.
+fn patch_param(doc: &mut toml_edit::DocumentMut, module: &str, param: &str, value: &Value) {
     for section in ["inputs", "input_recipes", "process_modes", "outputs"] {
         if let Some(table) = doc.get_mut(section)
             .and_then(|s| s.as_table_like_mut())
             .and_then(|t| t.get_mut(module))
             .and_then(|m| m.as_table_like_mut())
         {
-            table.insert(param, toml_edit::Item::Value(value));
+            // toml_edit::Value has no PartialEq; convert both sides via serde
+            // into toml::Value (which has one) to compare.
+            let unchanged = table.get(param)
+                .and_then(|existing| existing.as_value())
+                .and_then(|existing| toml::Value::deserialize(existing.clone().into_deserializer()).ok())
+                .zip(toml::Value::try_from(value).ok())
+                .is_some_and(|(existing, new)| existing == new);
+            if !unchanged {
+                table.insert(param, toml_edit::Item::Value(json_to_toml(value)));
+            }
             return;
         }
     }
@@ -665,6 +676,65 @@ std = { type = "histo_std", bin_x = 1 }
         // readonly/runtime_only fields must not have been written
         assert!(doc["inputs"]["ge01"].get("mod_types").is_none());
         assert!(doc["process_modes"]["std"].get("pulser").is_none());
+    }
+
+    /// A param whose current value already matches what's in the file is
+    /// left byte-for-byte untouched (no reformatting), while one that
+    /// differs gets patched -- both for a scalar and a compound value.
+    #[test]
+    fn test_save_config_leaves_unchanged_values_byte_for_byte() {
+        let path = std::env::temp_dir().join(format!(
+            "umami_saveconfig_test_{}_{}.conf", std::process::id(),
+            COUNTER.fetch_add(1, Ordering::SeqCst)));
+        std::fs::write(&path, r#"
+[inputs.ge01]
+type = "ge"
+source = "localhost:50000"
+channel_offset    =    0
+
+[process_modes]
+default = "std"
+std = { type = "histo_std", bin_x = 1, bin_y = 2 }
+"#).unwrap();
+
+        let (handler, inputs, post_recv) = make_handler_at(&["ge01"], path.clone());
+        let recv0 = inputs.into_values().next().unwrap();
+        std::thread::spawn(move || {
+            let (_cmd, rep) = recv0.recv().unwrap();
+            let mut value = serde_json::Map::new();
+            // unchanged (still 0) -- must not touch its odd spacing
+            value.insert("ge01.channel_offset".into(), serde_json::json!({
+                "value": 0, "datatype": "u32", "help": "", "readonly": false, "runtime_only": false,
+            }));
+            rep.send(CommandReply::Data { value: value.into() }).unwrap();
+        });
+        std::thread::spawn(move || {
+            match post_recv.recv().unwrap() {
+                PipeItem::GetParams(_full, send) => {
+                    let mut p = ParamMap::new();
+                    // unchanged
+                    p.insert("bin_x".into(), serde_json::json!({
+                        "value": 1, "datatype": "u16", "help": "", "readonly": false, "runtime_only": false,
+                    }));
+                    // changed
+                    p.insert("bin_y".into(), serde_json::json!({
+                        "value": 5, "datatype": "u16", "help": "", "readonly": false, "runtime_only": false,
+                    }));
+                    send.send((ModuleId::new("std".into()), p)).unwrap();
+                }
+                other => panic!("unexpected item: {other:?}"),
+            }
+        });
+
+        assert!(matches!(
+            handler.handle(Command::SaveConfig { path: None }), CommandReply::Ok));
+
+        let saved = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert!(saved.contains("channel_offset    =    0"), "saved:\n{saved}");
+        let doc: toml_edit::DocumentMut = saved.parse().unwrap();
+        assert_eq!(doc["process_modes"]["std"]["bin_x"].as_integer(), Some(1));
+        assert_eq!(doc["process_modes"]["std"]["bin_y"].as_integer(), Some(5));
     }
 
     #[test]

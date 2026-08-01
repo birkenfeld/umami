@@ -2,5 +2,4 @@
 - Output fanout instead of queue?
 - More custom aliases (raw -> y pre calib etc)
 - Test input errors with real hw
-- writeback pretty
-- only if changed val
+- Save config: only if val changed in session
