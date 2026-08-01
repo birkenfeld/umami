@@ -193,98 +193,113 @@ impl CommandHandler {
                 }
                 replies.into_iter().find(|r| r.is_error()).unwrap_or(CommandReply::Ok)
             }
-            Command::GetParams { full } => {
-                let mut map = ParamMap::new();
-
-                // gather from each input's recipe first, using the shared fixed-count
-                // channel (same pattern as the Start/Stop/Reset fan-out above)
-                for (name, sender) in &self.input_send {
-                    if sender.send_deadline(
-                        (Command::GetParams { full }, rep_send.clone()), deadline,
-                    ).is_err() {
-                        return unresponsive(&format!("Input {name}"));
-                    }
-                }
-                for _ in 0..self.input_send.len() {
-                    match rep_recv.recv_deadline(deadline) {
-                        Ok(CommandReply::Data { value: Value::Object(obj) }) => map.extend(obj),
-                        Ok(reply) if reply.is_error() => return reply,
-                        Ok(_) => {} // shouldn't happen
-                        Err(_) => return unresponsive("An input"),
-                    }
-                }
-
-                // this command needs a differently typed channel
-                let (rep_send, rep_recv) = crate::channel::unbounded();
-                if self.post_send.send_deadline(PipeItem::GetParams(full, rep_send), deadline).is_err() {
-                    return unresponsive("Postprocessor");
-                }
-                // aggregate parameters from all HasParams into a single map
-                loop {
-                    match rep_recv.recv_deadline(deadline) {
-                        Ok((name, params)) => for (param, info) in params {
-                            map.insert(format!("{name}.{param}"), info);
-                        },
-                        Err(RecvTimeoutError::Disconnected) => break,
-                        Err(RecvTimeoutError::Timeout) => return unresponsive("A recipe or output"),
-                    }
-                }
-                CommandReply::Data { value: map.into() }
-            }
-            Command::SetParams { params } => {
-                // validate keys up front, before touching any channel
-                for name in params.keys() {
-                    if !name.contains('.') {
-                        return CommandReply::new_error(
-                            format!("Invalid param key {name}, needs to be of the \
-                                     form <module>.<param>")
-                        );
-                    }
-                }
-
-                // broadcast the full (unsplit) map to every input; each applies only
-                // the portion addressed to its own recipe name and no-ops otherwise
-                for (name, sender) in &self.input_send {
-                    if sender.send_deadline(
-                        (Command::SetParams { params: params.clone() }, rep_send.clone()), deadline,
-                    ).is_err() {
-                        return unresponsive(&format!("Input {name}"));
-                    }
-                }
-                for _ in 0..self.input_send.len() {
-                    match rep_recv.recv_deadline(deadline) {
-                        Ok(reply) if reply.is_error() => return reply,
-                        Ok(_) => {}
-                        Err(_) => return unresponsive("An input"),
-                    }
-                }
-
-                // parse parameters from single map into multiple maps, for the
-                // postprocessor's recipes and the outputs
-                let mut new_map = BTreeMap::new();
-                for (name, value) in params {
-                    let (module, param) = name.split_once('.').expect("checked above");
-                    new_map.entry(ModuleId::new(module.into()))
-                           .or_insert_with(ParamMap::new)
-                           .insert(param.into(), value);
-                }
-
-                // new pair to not mix input and postprocessor replies on the same channel
-                let (rep_send, rep_recv) = crate::channel::unbounded();
-                if self.post_send.send_deadline(PipeItem::SetParams(new_map, rep_send), deadline).is_err() {
-                    return unresponsive("Postprocessor");
-                }
-                // aggregate errors, if any
-                loop {
-                    match rep_recv.recv_deadline(deadline) {
-                        Ok(reply) if reply.is_error() => return reply,
-                        Ok(_) => {}
-                        Err(RecvTimeoutError::Disconnected) => return CommandReply::Ok,
-                        Err(RecvTimeoutError::Timeout) => return unresponsive("A recipe or output"),
-                    }
-                }
-            }
+            Command::GetParams { full } => self.get_params(full),
+            Command::SetParams { params } => self.set_params(params),
             Command::SaveConfig { path } => self.save_config(path),
+        }
+    }
+
+    /// Aggregates every input's own params, every input's recipe's params,
+    /// and the postprocessor's recipes'/outputs' params into one flat
+    /// `<module>.<param>` map.
+    fn get_params(&self, full: bool) -> CommandReply {
+        let (rep_send, rep_recv) = crate::channel::bounded(self.input_send.len());
+        let deadline = Instant::now() + REPLY_TIMEOUT;
+        let mut map = ParamMap::new();
+
+        // gather from each input's recipe first, using a fixed-count channel
+        // (same pattern as the Start/Stop/Reset fan-out in `handle`)
+        for (name, sender) in &self.input_send {
+            if sender.send_deadline(
+                (Command::GetParams { full }, rep_send.clone()), deadline,
+            ).is_err() {
+                return unresponsive(&format!("Input {name}"));
+            }
+        }
+        for _ in 0..self.input_send.len() {
+            match rep_recv.recv_deadline(deadline) {
+                Ok(CommandReply::Data { value: Value::Object(obj) }) => map.extend(obj),
+                Ok(reply) if reply.is_error() => return reply,
+                Ok(_) => {} // shouldn't happen
+                Err(_) => return unresponsive("An input"),
+            }
+        }
+
+        // this command needs a differently typed channel
+        let (rep_send, rep_recv) = crate::channel::unbounded();
+        if self.post_send.send_deadline(PipeItem::GetParams(full, rep_send), deadline).is_err() {
+            return unresponsive("Postprocessor");
+        }
+        // aggregate parameters from all HasParams into a single map
+        loop {
+            match rep_recv.recv_deadline(deadline) {
+                Ok((name, params)) => for (param, info) in params {
+                    map.insert(format!("{name}.{param}"), info);
+                },
+                Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => return unresponsive("A recipe or output"),
+            }
+        }
+        CommandReply::Data { value: map.into() }
+    }
+
+    /// Broadcasts a flat `<module>.<param>` map to every input (each applies
+    /// only the portion addressed to its own recipe name) and to the
+    /// postprocessor's recipes/outputs (split by module first).
+    fn set_params(&self, params: ParamMap) -> CommandReply {
+        let (rep_send, rep_recv) = crate::channel::bounded(self.input_send.len());
+        let deadline = Instant::now() + REPLY_TIMEOUT;
+
+        // validate keys up front, before touching any channel
+        for name in params.keys() {
+            if !name.contains('.') {
+                return CommandReply::new_error(
+                    format!("Invalid param key {name}, needs to be of the \
+                             form <module>.<param>")
+                );
+            }
+        }
+
+        // broadcast the full (unsplit) map to every input; each applies only
+        // the portion addressed to its own recipe name and no-ops otherwise
+        for (name, sender) in &self.input_send {
+            if sender.send_deadline(
+                (Command::SetParams { params: params.clone() }, rep_send.clone()), deadline,
+            ).is_err() {
+                return unresponsive(&format!("Input {name}"));
+            }
+        }
+        for _ in 0..self.input_send.len() {
+            match rep_recv.recv_deadline(deadline) {
+                Ok(reply) if reply.is_error() => return reply,
+                Ok(_) => {}
+                Err(_) => return unresponsive("An input"),
+            }
+        }
+
+        // parse parameters from single map into multiple maps, for the
+        // postprocessor's recipes and the outputs
+        let mut new_map = BTreeMap::new();
+        for (name, value) in params {
+            let (module, param) = name.split_once('.').expect("checked above");
+            new_map.entry(ModuleId::new(module.into()))
+                   .or_insert_with(ParamMap::new)
+                   .insert(param.into(), value);
+        }
+
+        // new pair to not mix input and postprocessor replies on the same channel
+        let (rep_send, rep_recv) = crate::channel::unbounded();
+        if self.post_send.send_deadline(PipeItem::SetParams(new_map, rep_send), deadline).is_err() {
+            return unresponsive("Postprocessor");
+        }
+        // aggregate errors, if any
+        loop {
+            match rep_recv.recv_deadline(deadline) {
+                Ok(reply) if reply.is_error() => return reply,
+                Ok(_) => {}
+                Err(RecvTimeoutError::Disconnected) => return CommandReply::Ok,
+                Err(RecvTimeoutError::Timeout) => return unresponsive("A recipe or output"),
+            }
         }
     }
 
