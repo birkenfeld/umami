@@ -2,4 +2,5 @@
 - Output fanout instead of queue?
 - More custom aliases (raw -> y pre calib etc)
 - Test input errors with real hw
-- Mesy: read out current vals?
+- writeback pretty
+- only if changed val

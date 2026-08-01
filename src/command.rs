@@ -46,6 +46,7 @@ pub enum Command {
     GetParams { #[serde(default)] full: bool },
     SetParams { params: ParamMap },
     SaveHisto { path: String, max_nt: usize },
+    SaveConfig { path: Option<String> },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -75,6 +76,7 @@ pub struct CommandHandler {
     sock: net::UnixDatagram,
     input_send: BTreeMap<ModuleId, Sender<(Command, Sender<CommandReply>)>>,
     post_send: Sender<PipeItem>,
+    config_path: std::path::PathBuf,
 }
 
 impl CommandHandler {
@@ -82,12 +84,13 @@ impl CommandHandler {
         socket_name: &str,
         input_send: BTreeMap<ModuleId, Sender<(Command, Sender<CommandReply>)>>,
         post_send: Sender<PipeItem>,
+        config_path: std::path::PathBuf,
     ) -> UResult<Self> {
         let addr = uds::UnixSocketAddr::from_abstract(socket_name.as_bytes())
             .context("Creating abstract socket address")?;
         let sock = net::UnixDatagram::bind_unix_addr(&addr)
             .with_context(|| format!("Binding command listener to {addr}"))?;
-        Ok(Self { sock, input_send, post_send })
+        Ok(Self { sock, input_send, post_send, config_path })
     }
 
     pub fn start(mut self) -> anyhow::Result<()> {
@@ -281,6 +284,100 @@ impl CommandHandler {
                     }
                 }
             }
+            Command::SaveConfig { path } => self.save_config(path),
+        }
+    }
+
+    /// Patches every settable, non-runtime-only param's current value into
+    /// the original config file (`self.config_path`) and writes the result
+    /// to `path`, or back to `self.config_path` if `path` is `None`.
+    fn save_config(&self, path: Option<String>) -> CommandReply {
+        let params = match self.handle(Command::GetParams { full: true }) {
+            CommandReply::Data { value: Value::Object(map) } => map,
+            reply if reply.is_error() => return reply,
+            _ => return CommandReply::new_error("Unexpected reply gathering params".into()),
+        };
+
+        let content = match std::fs::read_to_string(&self.config_path) {
+            Ok(s) => s,
+            Err(e) => return CommandReply::new_error(
+                format!("Failed to read config file {:?}: {e:#}", self.config_path)),
+        };
+        let mut doc = match content.parse::<toml_edit::DocumentMut>() {
+            Ok(d) => d,
+            Err(e) => return CommandReply::new_error(
+                format!("Failed to parse config file {:?}: {e:#}", self.config_path)),
+        };
+
+        for (key, info) in &params {
+            let Some((module, param)) = key.split_once('.') else { continue };
+            if param == "_info" {
+                continue;
+            }
+            let Some(info) = info.as_object() else { continue };
+            if info.get("readonly").and_then(Value::as_bool).unwrap_or(false)
+                || info.get("runtime_only").and_then(Value::as_bool).unwrap_or(false)
+            {
+                continue;
+            }
+            let Some(value) = info.get("value") else { continue };
+            if value.is_null() {
+                continue;
+            }
+            patch_param(&mut doc, module, param, json_to_toml(value));
+        }
+
+        let target = path.map_or_else(|| self.config_path.clone(), Into::into);
+        match std::fs::write(&target, doc.to_string()) {
+            Ok(()) => CommandReply::Ok,
+            Err(e) => CommandReply::new_error(
+                format!("Failed to write config file {target:?}: {e:#}")),
+        }
+    }
+}
+
+/// Sets `<module>.<param> = value` in `doc`, searching every top-level
+/// section a module name can live in. No-ops (silently) if `module` isn't
+/// found anywhere -- e.g. the auto-created "null" output that has no entry
+/// in the original file.
+fn patch_param(doc: &mut toml_edit::DocumentMut, module: &str, param: &str, value: toml_edit::Value) {
+    for section in ["inputs", "input_recipes", "process_modes", "outputs"] {
+        if let Some(table) = doc.get_mut(section)
+            .and_then(|s| s.as_table_like_mut())
+            .and_then(|t| t.get_mut(module))
+            .and_then(|m| m.as_table_like_mut())
+        {
+            table.insert(param, toml_edit::Item::Value(value));
+            return;
+        }
+    }
+}
+
+/// Converts a `get-params` JSON value into the equivalent `toml_edit` value.
+/// Compound (map/array) values become inline tables/arrays -- this doesn't
+/// try to preserve any existing nested-table formatting for them, only the
+/// surrounding file's.
+fn json_to_toml(value: &Value) -> toml_edit::Value {
+    match value {
+        Value::Null => toml_edit::Value::from(""),
+        Value::Bool(b) => toml_edit::Value::from(*b),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                toml_edit::Value::from(i)
+            } else {
+                toml_edit::Value::from(n.as_f64().unwrap_or(0.0))
+            }
+        }
+        Value::String(s) => toml_edit::Value::from(s.as_str()),
+        Value::Array(arr) => {
+            toml_edit::Value::from(arr.iter().map(json_to_toml).collect::<toml_edit::Array>())
+        }
+        Value::Object(map) => {
+            let mut table = toml_edit::InlineTable::new();
+            for (k, v) in map {
+                table.insert(k, json_to_toml(v));
+            }
+            toml_edit::Value::from(table)
         }
     }
 }
@@ -303,6 +400,14 @@ mod tests {
     fn make_handler(module_names: &[&str])
         -> (CommandHandler, BTreeMap<ModuleId, InputRecv>, Receiver<PipeItem>)
     {
+        make_handler_at(module_names, "test.conf".into())
+    }
+
+    /// Like [`make_handler`], but with a config file path the test controls
+    /// (needed for `SaveConfig`, which reads/writes it for real).
+    fn make_handler_at(module_names: &[&str], config_path: std::path::PathBuf)
+        -> (CommandHandler, BTreeMap<ModuleId, InputRecv>, Receiver<PipeItem>)
+    {
         let mut input_send = BTreeMap::new();
         let mut input_recvs = BTreeMap::new();
         for name in module_names {
@@ -314,7 +419,7 @@ mod tests {
         let (post_send, post_recv) = crate::channel::unbounded();
         let sock_name = format!("umami_cmdtest_{}_{}",
                                 COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id());
-        let handler = CommandHandler::new(&sock_name, input_send, post_send).unwrap();
+        let handler = CommandHandler::new(&sock_name, input_send, post_send, config_path).unwrap();
         (handler, input_recvs, post_recv)
     }
 
@@ -493,6 +598,73 @@ mod tests {
             }
             other => panic!("unexpected reply: {other:?}"),
         }
+    }
+
+    /// SaveConfig patches settable values into the original file, skips
+    /// readonly/runtime_only ones, and leaves unrelated content (comments,
+    /// other sections) untouched.
+    #[test]
+    fn test_save_config_patches_settable_values_and_skips_readonly_and_runtime_only() {
+        let path = std::env::temp_dir().join(format!(
+            "umami_saveconfig_test_{}_{}.conf", std::process::id(),
+            COUNTER.fetch_add(1, Ordering::SeqCst)));
+        std::fs::write(&path, r#"
+# a comment that should survive
+[inputs.ge01]
+type = "ge"
+source = "localhost:50000"
+channel_offset = 0
+
+[process_modes]
+default = "std"
+std = { type = "histo_std", bin_x = 1 }
+"#).unwrap();
+
+        let (handler, inputs, post_recv) = make_handler_at(&["ge01"], path.clone());
+        let recv0 = inputs.into_values().next().unwrap();
+        std::thread::spawn(move || {
+            let (cmd, rep) = recv0.recv().unwrap();
+            assert!(matches!(cmd, Command::GetParams { full: true }));
+            let mut value = serde_json::Map::new();
+            value.insert("ge01.channel_offset".into(), serde_json::json!({
+                "value": 5, "datatype": "u32", "help": "", "readonly": false, "runtime_only": false,
+            }));
+            value.insert("ge01.mod_types".into(), serde_json::json!({
+                "value": ["mpsd8"], "datatype": "", "help": "", "readonly": true, "runtime_only": false,
+            }));
+            rep.send(CommandReply::Data { value: value.into() }).unwrap();
+        });
+        std::thread::spawn(move || {
+            match post_recv.recv().unwrap() {
+                PipeItem::GetParams(full, send) => {
+                    assert!(full);
+                    let mut p = ParamMap::new();
+                    p.insert("bin_x".into(), serde_json::json!({
+                        "value": 4, "datatype": "u16", "help": "", "readonly": false, "runtime_only": false,
+                    }));
+                    p.insert("pulser".into(), serde_json::json!({
+                        "value": {"0": {"on": true}}, "datatype": "", "help": "",
+                        "readonly": false, "runtime_only": true,
+                    }));
+                    send.send((ModuleId::new("std".into()), p)).unwrap();
+                }
+                other => panic!("unexpected item: {other:?}"),
+            }
+        });
+
+        assert!(matches!(
+            handler.handle(Command::SaveConfig { path: None }), CommandReply::Ok));
+
+        let saved = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert!(saved.contains("a comment that should survive"));
+        assert!(saved.contains("source = \"localhost:50000\""), "saved:\n{saved}");
+        let doc: toml_edit::DocumentMut = saved.parse().unwrap();
+        assert_eq!(doc["inputs"]["ge01"]["channel_offset"].as_integer(), Some(5));
+        assert_eq!(doc["process_modes"]["std"]["bin_x"].as_integer(), Some(4));
+        // readonly/runtime_only fields must not have been written
+        assert!(doc["inputs"]["ge01"].get("mod_types").is_none());
+        assert!(doc["process_modes"]["std"].get("pulser").is_none());
     }
 
     #[test]

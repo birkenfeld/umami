@@ -12,8 +12,9 @@ pub use umami_derive::HasParams;
 pub type ParamMap = serde_json::Map<String, serde_json::Value>;
 
 pub trait HasParams {
-    /// `full`: include `datatype`/`help`/`readonly` metadata alongside each
-    /// value, instead of just `{"value": ...}` -- see [`ParamInfo`].
+    /// `full`: include `datatype`/`help`/`readonly`/`runtime_only` metadata
+    /// alongside each value, instead of just `{"value": ...}` -- see
+    /// [`ParamInfo`].
     fn get_params(&self, full: bool) -> UResult<ParamMap>;
     fn update_params(&mut self, name: ModuleId, params: ParamMap) -> UResult<()>;
 }
@@ -23,6 +24,8 @@ pub struct ParamInfo {
     pub datatype: String,
     pub help: String,
     pub readonly: bool,
+    /// Not written back to the config file by `SaveConfig`.
+    pub runtime_only: bool,
     pub value: serde_json::Value,
 }
 

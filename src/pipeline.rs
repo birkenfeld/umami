@@ -148,6 +148,7 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
         &config.ipc_name,
         command_sends,
         postproc_send,
+        config.filename.clone(),
     ).context("Creating command handler")?;
 
     // build the postprocessor's recipes and collect expression aliases

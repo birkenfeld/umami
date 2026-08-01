@@ -32,6 +32,25 @@ fn default_true() -> bool {
     true
 }
 
+/// Deserializes a `BTreeMap<usize, T>` from a string-keyed map, as TOML (and
+/// JSON) always represent it on the wire -- the `toml` crate can't
+/// deserialize a non-string-keyed map directly.
+fn deserialize_usize_map<'de, D, T>(deserializer: D) -> Result<BTreeMap<usize, T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let string_keyed: BTreeMap<String, T> = BTreeMap::deserialize(deserializer)?;
+    string_keyed.into_iter()
+        .map(|(k, v)| {
+            k.parse::<usize>()
+                .map(|idx| (idx, v))
+                .map_err(|_| serde::de::Error::custom(
+                    format!("Invalid index key {k:?}, expected a number")))
+        })
+        .collect()
+}
+
 #[derive(Debug, Deserialize)]
 pub struct MesyConfig {
     pub local: SourceConfig,
@@ -47,7 +66,9 @@ pub struct MesyConfig {
     #[serde(default = "default_true")]
     pub transmit_ampl: bool,
     pub mcpd_id: u8,
+    #[serde(deserialize_with = "deserialize_usize_map")]
     pub cells: BTreeMap<usize, MesyCellConfig>,
+    #[serde(deserialize_with = "deserialize_usize_map")]
     pub modules: BTreeMap<usize, MesyModuleConfig>,
 }
 
@@ -149,7 +170,8 @@ where
             datatype = "map of module index to (type, threshold, gain: number or 8-array)",
             help = "Per-MPSD threshold/gain")]
     modules: BTreeMap<usize, MesyModuleConfig>,
-    #[param(has_setter = true, datatype = "map of module index to (chan, pos, amp, on)",
+    #[param(has_setter = true, runtime_only = true,
+            datatype = "map of module index to (chan, pos, amp, on)",
             help = "Per-module test-pulse injection")]
     pulser: BTreeMap<usize, PulserConfig>,
     // run-time
@@ -469,6 +491,30 @@ fn parse_int(s: &[u8]) -> Option<u64> {
 mod tests {
     use super::*;
     use crate::params::ParamMap;
+
+    #[test]
+    fn test_mesy_config_parses_populated_cells_and_modules_from_toml() {
+        let cfg: MesyConfig = toml::from_str(r#"
+            local = "localhost:50000"
+            remote = "localhost:50001"
+            is_master = true
+            terminate = true
+            mcpd_id = 0
+
+            [cells.1]
+            source = "aux2"
+            compare = 5
+
+            [modules.3]
+            type = "mpsd"
+            threshold = 42
+            gain = 7
+        "#).unwrap();
+        assert!(matches!(cfg.cells[&1].source, CellTrigger::Aux2));
+        assert_eq!(cfg.cells[&1].compare.get(), 5);
+        assert!(matches!(cfg.modules[&3],
+                MesyModuleConfig::Mpsd { threshold: 42, gain: MesyGain::Uniform(7) }));
+    }
 
     struct NoSource;
 

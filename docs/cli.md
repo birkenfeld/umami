@@ -39,8 +39,9 @@ umami-ctl [--ipc umami] <command>
 | `no-raw` | | Disable raw dumping. |
 | `get-modes` | | List available postprocessing mode names as JSON. |
 | `set-mode` | `NAME` | Switch the active postprocessing mode. |
-| `get-params` | `[--full]` | Get all recipe/input/output parameters and their current values, as JSON: `{"module.param": {"value": ...}}`. With `--full`, each entry also carries `datatype`/`help`/`readonly`, and every module gets a `"module._info": {"kind": "input"\|"output"\|"recipe", "type": "..."}` entry. |
+| `get-params` | `[--full]` | Get all recipe/input/output parameters and their current values, as JSON: `{"module.param": {"value": ...}}`. With `--full`, each entry also carries metadata, and every module gets a `"module._info" entry. |
 | `set-params` | `'{"KEY": VALUE, ...}'` | Set one or more parameters, addressed by the `"module.param"` keys from `get-params`. |
+| `save-config` | `[PATH]` | Save current settable parameter values into the config file the instance was started from, or `PATH` if given. |
 | `state` | | Print a JSON object with the instance's display name (if set), current mode, and per-input states. |
 | `ping` | | Print the UMAMI version. |
 

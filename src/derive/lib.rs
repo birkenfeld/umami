@@ -36,6 +36,7 @@ struct Param {
     help: Option<String>,
     has_setter: Option<bool>,
     readonly: Option<bool>,
+    runtime_only: Option<bool>,
 }
 
 #[proc_macro_derive(HasParams, attributes(param, params))]
@@ -64,6 +65,7 @@ pub fn derive_has_params(input: proc_macro::TokenStream) -> proc_macro::TokenStr
         let help = param.help.unwrap_or(String::new());
 
         let readonly = param.readonly.unwrap_or(false);
+        let runtime_only = param.runtime_only.unwrap_or(false);
         getters.push(quip! {
             let value = serde_json::to_value(&self.#id)
                 .context(#{format!("Parameter {name} cannot be serialized to JSON, \
@@ -73,6 +75,7 @@ pub fn derive_has_params(input: proc_macro::TokenStream) -> proc_macro::TokenStr
                     datatype: #typ.into(),
                     help: #help.into(),
                     readonly: #readonly,
+                    runtime_only: #runtime_only,
                     value,
                 }).context("Serializing parameter value")?
             } else {

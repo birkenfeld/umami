@@ -45,6 +45,9 @@ enum Cmd {
     },
     /// Set some parameter values.
     SetParams { params: ParamMap },
+    /// Save current settable parameter values back into the config file the
+    /// instance was started from, or PATH if given.
+    SaveConfig { path: Option<String> },
     /// Get the current state.
     State,
     /// Get Umami version.
@@ -66,6 +69,7 @@ fn inner_main(args: Options) -> anyhow::Result<()> {
         Cmd::SetMode { name } => Command::SetMode { name },
         Cmd::GetParams { full } => Command::GetParams { full },
         Cmd::SetParams { params } => Command::SetParams { params },
+        Cmd::SaveConfig { path } => Command::SaveConfig { path },
         Cmd::State => Command::GetState,
         Cmd::Ping => Command::Ping,
     };
