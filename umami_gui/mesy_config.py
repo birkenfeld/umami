@@ -17,6 +17,8 @@ from .icons import icon_button
 N_SLOTS = 8
 MODULE_TYPES = ('mpsd', 'mstd')
 PULSER_POSITIONS = ('left', 'right', 'middle')
+CELL_TRIGGERS = (
+    'none', 'aux1', 'aux2', 'aux3', 'aux4', 'digital1', 'digital2', 'compare')
 
 
 def discover_mesy_inputs(params):
@@ -44,9 +46,9 @@ class MesyCellsTable(QtWidgets.QTableWidget):
     """8 fixed rows (cell index 0-7): Configure / Source / Compare.
 
     Loads/reports a dict shaped like the `cells` param value, e.g.
-    `{"1": {"source": 2, "compare": 5}}` -- "Configure" means umami manages
-    that slot, not that the cell is enabled; unset rows are omitted. Edits
-    are local until read via `current()`.
+    `{"1": {"source": "aux2", "compare": 5}}` -- "Configure" means umami
+    manages that slot, not that the cell is enabled; unset rows are
+    omitted. Edits are local until read via `current()`.
     """
 
     def __init__(self):
@@ -66,14 +68,19 @@ class MesyCellsTable(QtWidgets.QTableWidget):
             self.setCellWidget(row, 0, _centered(check))
             self._checks.append(check)
 
-            source = QtWidgets.QSpinBox()
-            source.setRange(0, 7)
-            source.setToolTip('Trigger source (0 = no trigger, 7 = compare)')
+            source = QtWidgets.QComboBox()
+            source.addItems(CELL_TRIGGERS)
+            source.setToolTip(
+                'Trigger source: none, one of 4 aux timers, one of 2 digital inputs, '
+                'or a bit of the compare register (see Compare)')
             self.setCellWidget(row, 1, source)
             self._sources.append(source)
 
             compare = QtWidgets.QSpinBox()
-            compare.setRange(0, 0xFFFF)
+            compare.setRange(0, 22)
+            compare.setToolTip(
+                'Only used when source = compare: bit 0-20 of the compare/status '
+                'register, 21 = counter overflow, 22 = rising edge')
             self.setCellWidget(row, 2, compare)
             self._compares.append(compare)
 
@@ -84,8 +91,11 @@ class MesyCellsTable(QtWidgets.QTableWidget):
             entry = cells.get(str(row))
             enabled = entry is not None
             self._checks[row].setChecked(enabled)
-            self._sources[row].setValue(entry['source'] if enabled else 0)
-            self._compares[row].setValue(entry['compare'] if enabled else 0)
+            if enabled:
+                index = self._sources[row].findText(entry['source'])
+                if index >= 0:
+                    self._sources[row].setCurrentIndex(index)
+                self._compares[row].setValue(entry['compare'])
             self._sources[row].setEnabled(enabled)
             self._compares[row].setEnabled(enabled)
         self._loading = False
@@ -100,7 +110,7 @@ class MesyCellsTable(QtWidgets.QTableWidget):
 
     def current(self):
         return {
-            str(row): {'source': self._sources[row].value(),
+            str(row): {'source': self._sources[row].currentText(),
                        'compare': self._compares[row].value()}
             for row in range(N_SLOTS) if self._checks[row].isChecked()
         }
@@ -316,7 +326,7 @@ class McpdConfigWindow(QtWidgets.QWidget):
         super().__init__()
         self.client = client
         self.setWindowTitle('UMAMI MCPD setup')
-        self.resize(1200, 500)
+        self.resize(1200, 800)
 
         self._names = []  # mesy input names last seen, in tab order
         self._tables = {}

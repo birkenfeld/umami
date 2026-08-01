@@ -3,5 +3,4 @@
 - More custom aliases (raw -> y pre calib etc)
 - Test input errors with real hw
 - Move config structs into their input modules?
-- Mesy: gain per tube
-- Mesy: explain cell settings in dialog
+- Mesy: read out current vals?

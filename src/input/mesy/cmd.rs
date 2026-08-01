@@ -230,11 +230,11 @@ pub trait MesyCommandHandler: Send + 'static {
     /// Push one cell's trigger source/compare wiring to hardware. Also used
     /// to apply a live `SetParams` update to a running input.
     fn set_up_cell(&mut self, idx: usize, cfg: &MesyCellConfig) -> UResult<()> {
-        lprintln!(INFO, "Setting up cell {idx} with source {}, compare {}",
-                  cfg.source, cfg.compare);
+        lprintln!(INFO, "Setting up cell {idx} with source {:?}, compare {}",
+                  cfg.source, cfg.compare.get());
         let _res: [U16; 3] = self.do_command(
             Cmd::SetCell,
-            [U16::new(idx as _), U16::new(cfg.source), U16::new(cfg.compare)],
+            [U16::new(idx as _), U16::new(cfg.source as u16), U16::new(cfg.compare.get())],
         )?;
         Ok(())
     }

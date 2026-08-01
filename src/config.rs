@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use crate::error::UResult;
 
@@ -48,11 +48,54 @@ pub struct MesyConfig {
     pub modules: BTreeMap<usize, MesyModuleConfig>,
 }
 
+/// A cell's trigger source: which physical/logical signal counts into it.
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CellTrigger {
+    None = 0,
+    Aux1 = 1,
+    Aux2 = 2,
+    Aux3 = 3,
+    Aux4 = 4,
+    Digital1 = 5,
+    Digital2 = 6,
+    Compare = 7,
+}
+
+/// A bit index into the MCPD's compare/status register: 0-20 select one of
+/// its 21 status bits, 21 is the counter-overflow pseudo-bit, 22 is the
+/// rising-edge pseudo-bit. Only meaningful when a cell's `source` is
+/// `CellTrigger::Compare`.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct CompareBit(u16);
+
+impl CompareBit {
+    pub fn new(value: u16) -> anyhow::Result<Self> {
+        if value > 22 {
+            Err(anyhow!("Compare bit must be 0-22, got {value}"))?;
+        }
+        Ok(Self(value))
+    }
+
+    pub fn get(self) -> u16 {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for CompareBit {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where D: serde::Deserializer<'de>
+    {
+        let value = u16::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MesyCellConfig {
-    // TODO values are more restricted
-    pub source: u16,
-    pub compare: u16,
+    pub source: CellTrigger,
+    pub compare: CompareBit,
 }
 
 /// An MPSD's gain, either the same for every channel or given per channel

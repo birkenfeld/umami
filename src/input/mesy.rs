@@ -425,14 +425,24 @@ mod tests {
             "3": {"type": "mpsd", "threshold": 42, "gain": 7},
         }));
         set.insert("cells".into(), serde_json::json!({
-            "1": {"source": 2, "compare": 5},
+            "1": {"source": "aux2", "compare": 5},
         }));
         input.update_params(ModuleId::new("mesy".into()), set).unwrap();
 
         assert!(matches!(input.modules[&3],
                 MesyModuleConfig::Mpsd { threshold: 42, gain: MesyGain::Uniform(7) }));
-        assert_eq!(input.cells[&1].source, 2);
-        assert_eq!(input.cells[&1].compare, 5);
+        assert!(matches!(input.cells[&1].source, crate::config::CellTrigger::Aux2));
+        assert_eq!(input.cells[&1].compare.get(), 5);
+    }
+
+    #[test]
+    fn test_update_params_rejects_out_of_range_compare_bit() {
+        let mut input = make_input();
+        let mut set = ParamMap::new();
+        set.insert("cells".into(), serde_json::json!({
+            "1": {"source": "compare", "compare": 23},
+        }));
+        assert!(input.update_params(ModuleId::new("mesy".into()), set).is_err());
     }
 
     #[test]

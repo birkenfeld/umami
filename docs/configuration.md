@@ -60,7 +60,11 @@ Mesytec MCPD input.
   the transmission mode if the MCPD and modules support it, vs. capping at
   time+position for lower per-event overhead at high count rates
 * `mcpd_id` (required): MCPD numeric ID
-* `cells` (required): map of cell index -> `{ source, compare }`
+* `cells` (required): map of cell index -> `{ source, compare }`, where
+  `source` is one of `"none"`, `"aux1"`-`"aux4"`, `"digital1"`, `"digital2"`,
+  `"compare"`, and `compare` (only used when `source` is `"compare"`) is a
+  compare/status register bit index 0-20, or 21/22 for the counter-overflow/
+  rising-edge pseudo-bits
 * `modules` (required): map of module index -> module config (see below)
 
 Both `cells` and `modules` are runtime-settable via `set-params` and are
