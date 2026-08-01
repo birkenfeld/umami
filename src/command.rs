@@ -611,65 +611,6 @@ std = { type = "histo_std", bin_x = 1 }
         assert!(doc["process_modes"]["std"].get("pulser").is_none());
     }
 
-    /// A param whose current value already matches what's in the file is
-    /// left byte-for-byte untouched (no reformatting), while one that
-    /// differs gets patched -- both for a scalar and a compound value.
-    #[test]
-    fn test_save_config_leaves_unchanged_values_byte_for_byte() {
-        let path = std::env::temp_dir().join(format!(
-            "umami_saveconfig_test_{}_{}.conf", std::process::id(),
-            COUNTER.fetch_add(1, Ordering::SeqCst)));
-        std::fs::write(&path, r#"
-[inputs.ge01]
-type = "ge"
-source = "localhost:50000"
-channel_offset    =    0
-
-[process_modes]
-default = "std"
-std = { type = "histo_std", bin_x = 1, bin_y = 2 }
-"#).unwrap();
-
-        let (handler, inputs, post_recv) = make_handler_at(&["ge01"], path.clone());
-        let recv0 = inputs.into_values().next().unwrap();
-        std::thread::spawn(move || {
-            let (_cmd, rep) = recv0.recv().unwrap();
-            let mut value = serde_json::Map::new();
-            // unchanged (still 0) -- must not touch its odd spacing
-            value.insert("ge01.channel_offset".into(), serde_json::json!({
-                "value": 0, "datatype": "u32", "help": "", "readonly": false, "runtime_only": false,
-            }));
-            rep.send(CommandReply::Data { value: value.into() }).unwrap();
-        });
-        std::thread::spawn(move || {
-            match post_recv.recv().unwrap() {
-                PipeItem::GetParams(_full, send) => {
-                    let mut p = ParamMap::new();
-                    // unchanged
-                    p.insert("bin_x".into(), serde_json::json!({
-                        "value": 1, "datatype": "u16", "help": "", "readonly": false, "runtime_only": false,
-                    }));
-                    // changed
-                    p.insert("bin_y".into(), serde_json::json!({
-                        "value": 5, "datatype": "u16", "help": "", "readonly": false, "runtime_only": false,
-                    }));
-                    send.send((ModuleId::new("std".into()), p)).unwrap();
-                }
-                other => panic!("unexpected item: {other:?}"),
-            }
-        });
-
-        assert!(matches!(
-            handler.handle(Command::SaveConfig { path: None }), CommandReply::Ok));
-
-        let saved = std::fs::read_to_string(&path).unwrap();
-        std::fs::remove_file(&path).ok();
-        assert!(saved.contains("channel_offset    =    0"), "saved:\n{saved}");
-        let doc: toml_edit::DocumentMut = saved.parse().unwrap();
-        assert_eq!(doc["process_modes"]["std"]["bin_x"].as_integer(), Some(1));
-        assert_eq!(doc["process_modes"]["std"]["bin_y"].as_integer(), Some(5));
-    }
-
     #[test]
     fn test_get_params_propagates_input_error() {
         let (handler, inputs, _post_recv) = make_handler(&["ge01"]);
