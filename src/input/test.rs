@@ -4,12 +4,21 @@
 //! A synthetic input backend used only in pipeline tests (see
 //! [`crate::config::SpecificInputConfig::Test`]).
 
+use serde::Deserialize;
 use crate::command::{Command, CommandReply, ModuleId};
-use crate::config::TestInputConfig;
 use crate::error::{UError, UResult};
 use crate::event::{Event, EventHisto, EventType};
 use crate::params::HasParams;
 use super::{Input, InputCommon};
+
+/// Config for this synthetic input backend: it generates one Neutron event
+/// for every (x, y) cell in `0..nx` x `0..ny`, so tests can assert an exact
+/// histogram.
+#[derive(Debug, Deserialize)]
+pub struct TestInputConfig {
+    pub nx: u16,
+    pub ny: u16,
+}
 
 #[derive(HasParams)]
 #[params(kind = "input", type = "test")]

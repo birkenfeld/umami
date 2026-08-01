@@ -12,9 +12,10 @@ use serde::{Deserialize, Serialize};
 use zerocopy::{FromBytes, Immutable, IntoBytes, Unaligned};
 use zerocopy::byteorder::little_endian::U16;
 use crate::{ldebug, lprintln};
-use crate::config::{MesyCellConfig, MesyConfig, MesyGain, MesyModuleConfig, SourceConfig};
+use crate::config::SourceConfig;
 use crate::error::UResult;
 use crate::util::resolve;
+use super::{MesyCellConfig, MesyConfig, MesyGain, MesyModuleConfig};
 
 const HEADER_WORDS: u16 = 10;
 const BUFFERTYPE: u16 = 0x8000;

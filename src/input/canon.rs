@@ -7,14 +7,23 @@ use std::path::Path;
 use std::time::Duration;
 use anyhow::Context;
 use byteorder::{ByteOrder, ReadBytesExt, WriteBytesExt, BE};
+use serde::Deserialize;
 use crate::lprintln;
 use crate::command::{Command, CommandReply, ModuleId};
-use crate::config::{CanonConfig, SourceConfig};
+use crate::config::SourceConfig;
 use crate::error::{UError, UResult};
 use crate::event::{Event, EventTime, EventType};
 use crate::input::{ReplayFile, DumpHandler};
 use crate::params::HasParams;
 use super::{Source, Input, InputCommon};
+
+#[derive(Debug, Deserialize)]
+pub struct CanonConfig {
+    pub source: SourceConfig,
+    pub channel_offset: u32,
+    #[serde(default)]
+    pub gatenet: bool,
+}
 
 #[derive(HasParams)]
 #[params(kind = "input", type = "canon")]

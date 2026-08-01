@@ -6,8 +6,9 @@ use std::net::TcpStream;
 use std::path::Path;
 use anyhow::{anyhow, Context};
 use byteorder::{ByteOrder, LE};
+use serde::Deserialize;
 use crate::command::{Command, CommandReply, ModuleId};
-use crate::config::{GEConfig, SourceConfig};
+use crate::config::SourceConfig;
 use crate::error::{UError, UResult};
 use crate::input::{ReplayFile, DumpHandler};
 use crate::event::{Event, EventTime, EventFlags, EventType};
@@ -20,6 +21,13 @@ const PACKET_DIAG:       u32 = 0x3000;
 const PACKET_DIAG_FAKE:  u32 = 0x3100;
 const PACKET_HEARTBT:    u32 = 0x5000;
 const MAX_PACKET_SIZE: usize = 65536;
+
+#[derive(Debug, Deserialize)]
+pub struct GEConfig {
+    pub source: SourceConfig,
+    #[serde(default)]
+    pub timestamper: bool,
+}
 
 #[derive(HasParams)]
 #[params(kind = "input", type = "ge")]

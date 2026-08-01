@@ -16,8 +16,8 @@
 //! unconditionally -- `histo_std`/`histo_tof`'s own `use_gate` handles the
 //! filtering, same as for every other detector.
 
-use crate::config::JumiomMode;
 use crate::event::{Event, EventTime, EventType};
+use super::JumiomMode;
 
 /// Each TOF1 tick is one microsecond (confirmed hardware constant).
 const NS_PER_TICK: i64 = 1_000;

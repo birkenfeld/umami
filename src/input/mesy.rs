@@ -6,11 +6,12 @@ mod cmd;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use byteorder::{ByteOrder, BE, LE};
+use serde::{Deserialize, Serialize};
 use crate::lprintln;
 use crate::command::{Command, CommandReply, ModuleId};
-use crate::config::{MesyCellConfig, MesyConfig, MesyModuleConfig, SourceConfig};
+use crate::config::SourceConfig;
 use crate::error::{UError, UResult};
 use crate::event::{Event, EventType, EventTime};
 use crate::input::{ReplayFile, DumpHandler};
@@ -26,6 +27,97 @@ const PKT_MARKER: &[u8] = b"\x00\x00\xff\xff\x55\x55\xaa\xaa";
 const END_MARKER: &[u8] = b"\xff\xff\xaa\xaa\x55\x55\x00\x00";
 const FILE_START: &[u8] = b"mesytec ";
 const FULL_HEADER: &[u8] = b"mesytec psd listmode data\nheader length: 2 lines \n";
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MesyConfig {
+    pub local: SourceConfig,
+    pub remote: String,
+    pub is_master: bool,
+    /// Sync-bus termination. Forced on for the master.
+    pub terminate: bool,
+    /// External synchronisation input, only meaningful when `is_master`.
+    #[serde(default)]
+    pub ext_sync: bool,
+    /// Negotiate amplitude data (TPA) into the transmission mode if
+    /// supported, vs. capping at time+position (TP) for lower overhead.
+    #[serde(default = "default_true")]
+    pub transmit_ampl: bool,
+    pub mcpd_id: u8,
+    pub cells: BTreeMap<usize, MesyCellConfig>,
+    pub modules: BTreeMap<usize, MesyModuleConfig>,
+}
+
+/// A cell's trigger source: which physical/logical signal counts into it.
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CellTrigger {
+    None = 0,
+    Aux1 = 1,
+    Aux2 = 2,
+    Aux3 = 3,
+    Aux4 = 4,
+    Digital1 = 5,
+    Digital2 = 6,
+    Compare = 7,
+}
+
+/// A bit index into the MCPD's compare/status register: 0-20 select one of
+/// its 21 status bits, 21 is the counter-overflow pseudo-bit, 22 is the
+/// rising-edge pseudo-bit. Only meaningful when a cell's `source` is
+/// `CellTrigger::Compare`.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct CompareBit(u16);
+
+impl CompareBit {
+    pub fn new(value: u16) -> anyhow::Result<Self> {
+        if value > 22 {
+            Err(anyhow!("Compare bit must be 0-22, got {value}"))?;
+        }
+        Ok(Self(value))
+    }
+
+    pub fn get(self) -> u16 {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for CompareBit {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where D: serde::Deserializer<'de>
+    {
+        let value = u16::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MesyCellConfig {
+    pub source: CellTrigger,
+    pub compare: CompareBit,
+}
+
+/// An MPSD's gain, either the same for every channel or given per channel
+/// (one value per tube).
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum MesyGain {
+    Uniform(u16),
+    PerChannel([u16; 8]),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum MesyModuleConfig {
+    // TODO better types
+    // TODO amp mode
+    Mpsd { threshold: u16, gain: MesyGain },
+    Mstd { threshold: u16, gain: u16 },
+}
 
 /// One module's test-pulse injection setting.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -376,7 +468,6 @@ fn parse_int(s: &[u8]) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::MesyGain;
     use crate::params::ParamMap;
 
     struct NoSource;
@@ -431,7 +522,7 @@ mod tests {
 
         assert!(matches!(input.modules[&3],
                 MesyModuleConfig::Mpsd { threshold: 42, gain: MesyGain::Uniform(7) }));
-        assert!(matches!(input.cells[&1].source, crate::config::CellTrigger::Aux2));
+        assert!(matches!(input.cells[&1].source, CellTrigger::Aux2));
         assert_eq!(input.cells[&1].compare.get(), 5);
     }
 

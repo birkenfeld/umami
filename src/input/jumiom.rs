@@ -19,14 +19,64 @@ use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use anyhow::{anyhow, Context};
+use serde::{Deserialize, Serialize};
 use crate::channel::{Receiver, RecvTimeoutError};
 use crate::command::{Command, CommandReply, ModuleId};
-use crate::config::{JumiomCalibration, JumiomConfig, JumiomMode};
 use crate::error::{UError, UResult};
 use crate::event::Event;
 use crate::lprintln;
 use crate::input::{DumpHandler, Input, InputCommon};
 use crate::params::HasParams;
+
+/// Acquisition mode for the Jumiom PSD (selects both the hardware mode set
+/// up via `jumpsd_set_*_mode` and the raw word-stream decoding). `Tof2` is
+/// intentionally not supported (see `decode.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JumiomMode {
+    Tof1,
+    Raw,
+    Ramp,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JumiomConfig {
+    /// Device number, i.e. `/dev/jumpsd_d<device>`.
+    pub device: i32,
+    pub mode: JumiomMode,
+    /// Hardware calibration to push at acquisition start, matching what
+    /// `jumiom_dma_wrapper`'s startup sequence used to write from
+    /// `globalData.gp` when `loadCard` was set. If unset, umami leaves the
+    /// hardware's current settings untouched (like `loadCard = 0`).
+    #[serde(default)]
+    pub calibration: Option<JumiomCalibration>,
+}
+
+/// Hardware calibration values for the Jumiom PSD, pushed via the
+/// `jumpsd_write_*` API in `jumpsd_setup_callback`. Grouped to match how
+/// they're set together in the field's `entangle` config
+/// (`jumiom_det.ImageChannel`).
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+pub struct JumiomCalibration {
+    /// Upper/lower/gate ADC thresholds (`jumpsd_write_threshold` levels 0..2).
+    pub thresholds: [i32; 3],
+    /// Gain potentiometer setting per ADC channel (`jumpsd_write_poti`).
+    pub poti: [i32; 4],
+    /// DAC offset per ADC channel, single-ended (`jumpsd_write_dac`).
+    pub dac1: [i32; 4],
+    /// DAC offset per ADC channel, differential (`jumpsd_write_dac2`).
+    pub dac2: [i32; 4],
+    /// Pileup rejection count.
+    pub pileup: i32,
+    /// Monitor timer reset delay [us] (`jumpsd_write_monitor_delay`).
+    /// Monitor recording is always enabled, regardless of this block.
+    #[serde(default)]
+    pub monitor_delay: i32,
+    /// Chopper timer reset delay [us] (`jumpsd_write_chopper_delay`).
+    /// Chopper recording is always enabled, regardless of this block.
+    #[serde(default)]
+    pub chopper_delay: i32,
+}
 
 unsafe extern "C" {
     fn wrapped_jumpsd_dma(dev: c_int) -> c_int;
@@ -276,7 +326,7 @@ mod tests {
     #[test]
     fn test_get_params_reports_mode_and_calibration() {
         let input = make_input();
-        let params = input.get_params().unwrap();
+        let params = input.get_params(false).unwrap();
         assert_eq!(params["mode"]["value"], "raw");
         assert!(params["calibration"]["value"].is_null());
     }

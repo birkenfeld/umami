@@ -1,13 +1,13 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-mod ge;
-mod canon;
-mod mesy;
+pub(crate) mod ge;
+pub(crate) mod canon;
+pub(crate) mod mesy;
 #[cfg(feature = "jumiom")]
-mod jumiom;
+pub(crate) mod jumiom;
 #[cfg(test)]
-mod test;
+pub(crate) mod test;
 
 use std::fs::File;
 use std::thread;
@@ -476,7 +476,8 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::time::Duration;
-    use crate::config::{RecipeConfig, TestInputConfig};
+    use crate::config::RecipeConfig;
+    use super::test::TestInputConfig;
     use crate::recipe;
 
     type CommandSend = Sender<(Command, Sender<CommandReply>)>;
