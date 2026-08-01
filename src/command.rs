@@ -1,12 +1,11 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::os::unix::net;
 use std::time::{Duration, Instant};
 use anyhow::Context;
 use serde::{Serialize, Deserialize};
-use serde::de::IntoDeserializer;
 use serde_json::Value;
 use uds::UnixDatagramExt;
 use crate::{ldebug, lprintln};
@@ -289,9 +288,10 @@ impl CommandHandler {
         }
     }
 
-    /// Patches every settable, non-runtime-only param's current value into
-    /// the original config file (`self.config_path`) and writes the result
-    /// to `path`, or back to `self.config_path` if `path` is `None`.
+    /// Gathers every settable, non-runtime-only param's current value and
+    /// patches it into the original config file (`self.config_path`),
+    /// writing the result to `path`, or back to `self.config_path` if
+    /// `path` is `None`.
     fn save_config(&self, path: Option<String>) -> CommandReply {
         let params = match self.handle(Command::GetParams { full: true }) {
             CommandReply::Data { value: Value::Object(map) } => map,
@@ -299,17 +299,7 @@ impl CommandHandler {
             _ => return CommandReply::new_error("Unexpected reply gathering params".into()),
         };
 
-        let content = match std::fs::read_to_string(&self.config_path) {
-            Ok(s) => s,
-            Err(e) => return CommandReply::new_error(
-                format!("Failed to read config file {:?}: {e:#}", self.config_path)),
-        };
-        let mut doc = match content.parse::<toml_edit::DocumentMut>() {
-            Ok(d) => d,
-            Err(e) => return CommandReply::new_error(
-                format!("Failed to parse config file {:?}: {e:#}", self.config_path)),
-        };
-
+        let mut updates = HashMap::new();
         for (key, info) in &params {
             let Some((module, param)) = key.split_once('.') else { continue };
             if param == "_info" {
@@ -325,70 +315,13 @@ impl CommandHandler {
             if value.is_null() {
                 continue;
             }
-            patch_param(&mut doc, module, param, value);
+            updates.insert((module, param), value);
         }
 
         let target = path.map_or_else(|| self.config_path.clone(), Into::into);
-        match std::fs::write(&target, doc.to_string()) {
+        match crate::config::patch_config_file(&self.config_path, &target, &updates) {
             Ok(()) => CommandReply::Ok,
-            Err(e) => CommandReply::new_error(
-                format!("Failed to write config file {target:?}: {e:#}")),
-        }
-    }
-}
-
-/// Sets `<module>.<param> = value` in `doc`, searching every top-level
-/// section a module name can live in. No-ops (silently) if `module` isn't
-/// found anywhere -- e.g. the auto-created "null" output that has no entry
-/// in the original file. Leaves an existing entry untouched (no rewrite,
-/// no reformatting) if its value already matches.
-fn patch_param(doc: &mut toml_edit::DocumentMut, module: &str, param: &str, value: &Value) {
-    for section in ["inputs", "input_recipes", "process_modes", "outputs"] {
-        if let Some(table) = doc.get_mut(section)
-            .and_then(|s| s.as_table_like_mut())
-            .and_then(|t| t.get_mut(module))
-            .and_then(|m| m.as_table_like_mut())
-        {
-            // toml_edit::Value has no PartialEq; convert both sides via serde
-            // into toml::Value (which has one) to compare.
-            let unchanged = table.get(param)
-                .and_then(|existing| existing.as_value())
-                .and_then(|existing| toml::Value::deserialize(existing.clone().into_deserializer()).ok())
-                .zip(toml::Value::try_from(value).ok())
-                .is_some_and(|(existing, new)| existing == new);
-            if !unchanged {
-                table.insert(param, toml_edit::Item::Value(json_to_toml(value)));
-            }
-            return;
-        }
-    }
-}
-
-/// Converts a `get-params` JSON value into the equivalent `toml_edit` value.
-/// Compound (map/array) values become inline tables/arrays -- this doesn't
-/// try to preserve any existing nested-table formatting for them, only the
-/// surrounding file's.
-fn json_to_toml(value: &Value) -> toml_edit::Value {
-    match value {
-        Value::Null => toml_edit::Value::from(""),
-        Value::Bool(b) => toml_edit::Value::from(*b),
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                toml_edit::Value::from(i)
-            } else {
-                toml_edit::Value::from(n.as_f64().unwrap_or(0.0))
-            }
-        }
-        Value::String(s) => toml_edit::Value::from(s.as_str()),
-        Value::Array(arr) => {
-            toml_edit::Value::from(arr.iter().map(json_to_toml).collect::<toml_edit::Array>())
-        }
-        Value::Object(map) => {
-            let mut table = toml_edit::InlineTable::new();
-            for (k, v) in map {
-                table.insert(k, json_to_toml(v));
-            }
-            toml_edit::Value::from(table)
+            Err(e) => CommandReply::new_error(format!("Failed to save config: {e:#}")),
         }
     }
 }

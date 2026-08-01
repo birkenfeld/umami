@@ -7,6 +7,7 @@ use serde::Serialize;
 use crate::command::ModuleId;
 use crate::error::UResult;
 
+// The bulk of the functionality lives here.
 pub use umami_derive::HasParams;
 
 pub type ParamMap = serde_json::Map<String, serde_json::Value>;

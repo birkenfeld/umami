@@ -1,10 +1,11 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::Deserialize;
+use serde::de::IntoDeserializer;
 use crate::error::UResult;
 use crate::input::canon::CanonConfig;
 use crate::input::ge::GEConfig;
@@ -157,9 +158,124 @@ pub fn load_config(path: &Path) -> UResult<Config> {
     Ok(config)
 }
 
+/// Patches `(module, param) -> value` entries into the config file at
+/// `source_path`, preserving existing formatting/comments, and writes the
+/// result to `target_path` (which may be the same path). Used by
+/// `SaveConfig` to persist a `set-params`-tweaked runtime state.
+pub fn patch_config_file(
+    source_path: &Path,
+    target_path: &Path,
+    updates: &HashMap<(&str, &str), &serde_json::Value>,
+) -> UResult<()> {
+    let content = std::fs::read_to_string(source_path)
+        .with_context(|| format!("Failed to read config file {source_path:?}"))?;
+    let mut doc: toml_edit::DocumentMut = content.parse()
+        .with_context(|| format!("Failed to parse config file {source_path:?}"))?;
+
+    for (&(module, param), &value) in updates {
+        patch_param(&mut doc, module, param, value);
+    }
+
+    std::fs::write(target_path, doc.to_string())
+        .with_context(|| format!("Failed to write config file {target_path:?}"))?;
+    Ok(())
+}
+
+/// Sets `<module>.<param> = value` in `doc`, searching every top-level
+/// section a module name can live in. No-ops (silently) if `module` isn't
+/// found anywhere -- e.g. the auto-created "null" output that has no entry
+/// in the original file. Leaves an existing entry untouched (no rewrite,
+/// no reformatting) if its value already matches.
+fn patch_param(doc: &mut toml_edit::DocumentMut, module: &str, param: &str, value: &serde_json::Value) {
+    for section in ["inputs", "input_recipes", "process_modes", "outputs"] {
+        if let Some(table) = doc.get_mut(section)
+            .and_then(|s| s.as_table_like_mut())
+            .and_then(|t| t.get_mut(module))
+            .and_then(|m| m.as_table_like_mut())
+        {
+            // toml_edit::Value has no PartialEq; convert both sides via serde
+            // into toml::Value (which has one) to compare.
+            let unchanged = table.get(param)
+                .and_then(|existing| existing.as_value())
+                .and_then(|existing| {
+                    toml::Value::deserialize(existing.clone().into_deserializer()).ok()
+                })
+                .zip(toml::Value::try_from(value).ok())
+                .is_some_and(|(existing, new)| existing == new);
+            if !unchanged {
+                table.insert(param, toml_edit::Item::Value(json_to_toml(value)));
+            }
+            return;
+        }
+    }
+}
+
+/// Converts a `get-params` JSON value into the equivalent `toml_edit` value.
+/// Compound (map/array) values become inline tables/arrays -- this doesn't
+/// try to preserve any existing nested-table formatting for them, only the
+/// surrounding file's.
+fn json_to_toml(value: &serde_json::Value) -> toml_edit::Value {
+    match value {
+        serde_json::Value::Null => toml_edit::Value::from(""),
+        serde_json::Value::Bool(b) => toml_edit::Value::from(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                toml_edit::Value::from(i)
+            } else {
+                toml_edit::Value::from(n.as_f64().unwrap_or(0.0))
+            }
+        }
+        serde_json::Value::String(s) => toml_edit::Value::from(s.as_str()),
+        serde_json::Value::Array(arr) => {
+            toml_edit::Value::from(arr.iter().map(json_to_toml).collect::<toml_edit::Array>())
+        }
+        serde_json::Value::Object(map) => {
+            let mut table = toml_edit::InlineTable::new();
+            for (k, v) in map {
+                table.insert(k, json_to_toml(v));
+            }
+            toml_edit::Value::from(table)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An unchanged value is left byte-for-byte untouched (no reformatting),
+    /// a changed one is patched, and unrelated content (comments, other
+    /// sections) survives -- both for a scalar and a compound value.
+    #[test]
+    fn test_patch_config_file_leaves_unchanged_values_untouched() {
+        let dir = std::env::temp_dir();
+        let source = dir.join(format!("umami_patch_test_source_{}.conf", std::process::id()));
+        let target = dir.join(format!("umami_patch_test_target_{}.conf", std::process::id()));
+        std::fs::write(&source, r#"
+# a comment that should survive
+[inputs.mcpd0]
+type = "mesy"
+cells    =    { 1 = { source = "aux2", compare = 5 } }
+modules = {}
+"#).unwrap();
+
+        let unchanged_cells = serde_json::json!({"1": {"source": "aux2", "compare": 5}});
+        let changed_modules = serde_json::json!({"0": {"type": "mpsd", "threshold": 7, "gain": 3}});
+        let updates = HashMap::from([
+            (("mcpd0", "cells"), &unchanged_cells),
+            (("mcpd0", "modules"), &changed_modules),
+        ]);
+        patch_config_file(&source, &target, &updates).unwrap();
+
+        let saved = std::fs::read_to_string(&target).unwrap();
+        std::fs::remove_file(&source).ok();
+        std::fs::remove_file(&target).ok();
+        assert!(saved.contains("a comment that should survive"));
+        assert!(saved.contains("cells    =    { 1 = { source = \"aux2\", compare = 5 } }"),
+                "saved:\n{saved}");
+        let doc: toml_edit::DocumentMut = saved.parse().unwrap();
+        assert_eq!(doc["inputs"]["mcpd0"]["modules"]["0"]["threshold"].as_integer(), Some(7));
+    }
 
     #[test]
     fn test_source_config_deserialize() {
