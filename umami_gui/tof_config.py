@@ -89,7 +89,9 @@ class TofBinsWidget(QtWidgets.QWidget):
         super().__init__()
         self._bins = None
 
-        layout = QtWidgets.QFormLayout(self)
+        outer = QtWidgets.QVBoxLayout(self)
+        layout = QtWidgets.QFormLayout()
+        outer.addLayout(layout)
 
         self.unit_combo = QtWidgets.QComboBox()
         self.unit_combo.addItems(list(UNIT_FACTORS))
@@ -130,10 +132,11 @@ class TofBinsWidget(QtWidgets.QWidget):
         offset_row = self._field_row(self.offset_check, self.offset_spin)
         layout.addRow('Offset (extra bin):', offset_row)
 
+        outer.addWidget(QtWidgets.QLabel('Bins:'))
         self.preview = QtWidgets.QPlainTextEdit()
         self.preview.setReadOnly(True)
-        self.preview.setMaximumHeight(80)
-        layout.addRow('Bins:', self.preview)
+        self.preview.setMinimumHeight(80)
+        outer.addWidget(self.preview, 1)
 
         self._update_suffixes()
         self._update_preview()
