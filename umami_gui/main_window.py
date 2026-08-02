@@ -168,6 +168,7 @@ class MainWindow(QtWidgets.QWidget):
             self.proj_window.resize(700, 400)
             self.proj_curve = self.proj_window.plot(stepMode='center', fillLevel=0,
                                                      brush=(0, 0, 255, 80))
+            self.proj_window.scene().sigMouseMoved.connect(self.on_proj_mouse_moved)
         self.proj_window.show()
         self.proj_window.raise_()
 
@@ -601,6 +602,20 @@ class MainWindow(QtWidgets.QWidget):
                 f'x={x}  y={y}  counts={int(self.last_buf[y, x])}')
         else:
             self.cursor_label.setText('')
+
+    def on_proj_mouse_moved(self, scene_pos):
+        plot_item = self.proj_window.getPlotItem()
+        if not plot_item.sceneBoundingRect().contains(scene_pos):
+            QtWidgets.QToolTip.hideText()
+            return
+        view_pos = plot_item.vb.mapSceneToView(scene_pos)
+        x = int(np.floor(view_pos.x() + 0.5))
+        _xdata, ydata = self.proj_curve.getData()
+        if ydata is None or not 0 <= x < len(ydata):
+            QtWidgets.QToolTip.hideText()
+            return
+        text = f'x={x}\ncounts={int(ydata[x])}'
+        QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), text)
 
     def _t_bin_range_ms(self, i):
         """(lo, hi) in ms for time-bin `i`; `hi` is `None` for the overflow bin."""
