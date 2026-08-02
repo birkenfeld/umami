@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{bail, Context};
 use uds::UnixDatagramExt;
 
-use crate::command::{Command, CommandReply};
+use crate::command::{Command, CommandReply, RECV_BUFFER_SIZE};
 
 static CLIENT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -38,7 +38,7 @@ impl Client {
     pub fn send(&self, cmd: &Command) -> anyhow::Result<CommandReply> {
         let cmd_json = serde_json::to_string(cmd).context("Serializing command to JSON")?;
         self.sock.send(cmd_json.as_bytes()).context("Sending command")?;
-        let mut buf = [0u8; 4096];
+        let mut buf = [0u8; RECV_BUFFER_SIZE];
         let n = match self.sock.recv(&mut buf) {
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {

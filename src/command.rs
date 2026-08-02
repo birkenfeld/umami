@@ -16,6 +16,13 @@ use crate::pipeline::PipeItem;
 
 pub type ModuleId = internment::Intern<String>;
 
+/// Datagram receive buffer size, for both the server (this module) and
+/// clients (`client.rs`, `umami_gui/client.py`). Sized to comfortably fit a
+/// SetParams/GetParams reply carrying a `time_bins` array up to the GUI's
+/// 4096-channel cap, with headroom -- well under the default 208 KiB
+/// Unix-socket buffer, so no setsockopt is needed.
+pub const RECV_BUFFER_SIZE: usize = 131_072;
+
 /// Cap on how long a single command waits for replies from inputs/postprocessor.
 /// A wedged component is a data-integrity problem that needs a human to look at
 /// it regardless; this timeout's only job is to keep the command socket itself
@@ -102,7 +109,7 @@ impl CommandHandler {
     }
 
     pub fn main(&mut self) {
-        let mut buf = [0u8; 8192];
+        let mut buf = [0u8; RECV_BUFFER_SIZE];
         loop {
             match self.sock.recv_from(&mut buf) {
                 Ok((n, addr)) => {

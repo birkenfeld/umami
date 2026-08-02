@@ -9,6 +9,10 @@ import os
 import socket
 
 SOCKET_TIMEOUT = 0.5
+# Matches the server's receive buffer (see `command.rs`) -- large enough for
+# a full-params reply embedding a `time_bins` array up to the GUI's
+# 4096-channel cap.
+RECV_BUFFER = 131_072
 
 _bind_counter = itertools.count()
 
@@ -61,7 +65,7 @@ class UmamiClient:
                 self.log.info(f'-> {msg}')
             try:
                 self.sock.sendall(msg.encode())
-                raw = self.sock.recv(4096)
+                raw = self.sock.recv(RECV_BUFFER)
             except OSError as e:
                 self.connected = False
                 self.log.warning(f'Lost connection to {self.ipc_name!r}: {e}')
