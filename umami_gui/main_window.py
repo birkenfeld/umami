@@ -184,6 +184,7 @@ class MainWindow(QtWidgets.QWidget):
             self.t_proj_curve = self.t_proj_window.plot(stepMode='center', fillLevel=0,
                                                          brush=(0, 0, 255, 80))
             self.apply_t_axis_ticks()
+            self.t_proj_window.scene().sigMouseMoved.connect(self.on_t_proj_mouse_moved)
         self.t_proj_window.show()
         self.t_proj_window.raise_()
 
@@ -600,6 +601,35 @@ class MainWindow(QtWidgets.QWidget):
                 f'x={x}  y={y}  counts={int(self.last_buf[y, x])}')
         else:
             self.cursor_label.setText('')
+
+    def _t_bin_range_ms(self, i):
+        """(lo, hi) in ms for time-bin `i`; `hi` is `None` for the overflow bin."""
+        edges = self.t_bin_edges_ns
+        lo = edges[i - 1] / 1e6 if i > 0 else 0.0
+        if i == len(edges) - 1:
+            return lo, None
+        return lo, edges[i] / 1e6
+
+    def on_t_proj_mouse_moved(self, scene_pos):
+        plot_item = self.t_proj_window.getPlotItem()
+        if not plot_item.sceneBoundingRect().contains(scene_pos):
+            QtWidgets.QToolTip.hideText()
+            return
+        view_pos = plot_item.vb.mapSceneToView(scene_pos)
+        i = int(np.floor(view_pos.x() + 0.5))
+        _xdata, ydata = self.t_proj_curve.getData()
+        if ydata is None or not 0 <= i < len(ydata):
+            QtWidgets.QToolTip.hideText()
+            return
+        counts = int(ydata[i])
+        if self.t_bin_edges_ns is not None and i < len(self.t_bin_edges_ns):
+            lo, hi = self._t_bin_range_ms(i)
+            edge_text = (f'{lo:.3f}-{hi:.3f} ms' if hi is not None
+                         else f'{lo:.3f} ms-overflow')
+        else:
+            edge_text = f'bin {i}'
+        text = f'{edge_text}\ncounts={counts}'
+        QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), text)
 
     # ---- raw dump / save histo controls ----
 
