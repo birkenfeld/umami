@@ -4,6 +4,7 @@
 """Top-level UMAMI histogram viewer window."""
 
 import html
+import math
 import sys
 import time
 from pathlib import Path
@@ -28,6 +29,11 @@ from .tof_config import TofConfigWindow, discover_tof_recipes
 
 IMAGE_REFRESH_MS = 250
 STATE_POLL_MS = 1000
+
+# Cap on labeled bin-edge ticks on the TOF spectrum's x axis -- with many
+# TOF bins, labeling every one overlaps into unreadable clutter, so they're
+# thinned out like pyqtgraph's own automatic ticks would.
+MAX_T_AXIS_LABELS = 20
 
 # display name -> pyqtgraph colormap name; pyqtgraph has no plain 'grey'/'gray'
 # map, so this points at CET-L1, its linear (grayscale) perceptual map
@@ -183,24 +189,33 @@ class MainWindow(QtWidgets.QWidget):
 
     @staticmethod
     def t_axis_tick_labels(edges_ns):
-        """(position, label) ticks marking each bin edge with a single ms value.
+        """[major, minor] tick levels for `AxisItem.setTicks()`.
 
         Position is the plot's bin-index x-coordinate (bin i spans
         [i-0.5, i+0.5)); edges_ns holds each real bin's upper edge in ns,
         plus a trailing overflow sentinel that isn't itself a plotted edge.
+        Labeling every one of e.g. 4096 bins would overlap into mush, so
+        only an evenly-spaced subset (at most `MAX_T_AXIS_LABELS`) is
+        labeled -- offset by one stride from the fixed leading "0" tick, so
+        it doesn't crowd its neighbor -- while every real edge still gets an
+        unlabeled minor tick, like automatic ticks would show.
         """
-        ticks = [(-0.5, '0')]
-        for i, edge_ns in enumerate(edges_ns[:-1]):
-            ticks.append((i + 0.5, f'{edge_ns / 1e6:.3f}ms'))
-        ticks.append((len(edges_ns) - 1, 'overflow'))
-        return ticks
+        real_edges = edges_ns[:-1]
+        n = len(real_edges)
+        stride = math.ceil(n / MAX_T_AXIS_LABELS) or 1
+        major = [(-0.5, '0')]
+        major.extend((i + 0.5, f'{real_edges[i] / 1e6:.3f}ms')
+                     for i in range(stride - 1, n, stride))
+        major.append((len(edges_ns) - 1, 'overflow'))
+        minor = [(i + 0.5, '') for i in range(n)]
+        return [major, minor]
 
     def apply_t_axis_ticks(self):
         if self.t_proj_window is None:
             return
         axis = self.t_proj_window.getAxis('bottom')
         if self.t_bin_edges_ns is not None:
-            axis.setTicks([self.t_axis_tick_labels(self.t_bin_edges_ns)])
+            axis.setTicks(self.t_axis_tick_labels(self.t_bin_edges_ns))
         else:
             axis.setTicks(None)
 
