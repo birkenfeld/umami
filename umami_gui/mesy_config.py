@@ -322,6 +322,8 @@ class McpdConfigWindow(QtWidgets.QWidget):
     "closing just hides" pattern as the aux-histogram window.
     """
 
+    applied = QtCore.pyqtSignal()
+
     def __init__(self, client):
         super().__init__()
         self.client = client
@@ -388,6 +390,7 @@ class McpdConfigWindow(QtWidgets.QWidget):
             params[f'{name}.pulser'] = pulser_table.current()
         if params:
             self.client.set_params(params)
+            self.applied.emit()
 
     def refresh(self):
         """Re-pull cells/modules/mod_types/pulser for every detected mesy input."""

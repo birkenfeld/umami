@@ -207,6 +207,8 @@ class TofConfigWindow(QtWidgets.QWidget):
     "closing just hides" pattern as the other quick-setup windows.
     """
 
+    applied = QtCore.pyqtSignal()
+
     def __init__(self, client):
         super().__init__()
         self.client = client
@@ -249,6 +251,7 @@ class TofConfigWindow(QtWidgets.QWidget):
                 params[f'{name}.time_bins'] = bins
         if params:
             self.client.set_params(params)
+            self.applied.emit()
 
     def _update_apply_enabled(self):
         widgets = self._tabs_by_name.values()

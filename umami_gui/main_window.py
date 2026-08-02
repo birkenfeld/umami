@@ -466,30 +466,40 @@ class MainWindow(QtWidgets.QWidget):
         self.client.start(self.run_id_field.text() or
                           time.strftime('%Y-%m-%d_%H:%M:%S'))
 
-    def _quick_setup_window(self, attr, factory):
-        """Get (creating on first use) one of the optional quick-setup windows."""
+    def _quick_setup_window(self, attr, factory, on_applied=None):
+        """Get (creating on first use) one of the optional quick-setup windows.
+
+        `on_applied`, if given, is connected to the window's `applied` signal
+        right after construction -- so a live Apply there also refreshes the
+        main params table instead of leaving it stale until manually pulled.
+        """
         window = getattr(self, attr)
         if window is None:
             window = factory()
+            if on_applied is not None:
+                window.applied.connect(on_applied)
             setattr(self, attr, window)
         return window
 
     def show_aux_histo_window(self):
         window = self._quick_setup_window(
             'aux_histo_window',
-            lambda: AuxHistoWindow(self.client, self.shm_name, self.log_panel))
+            lambda: AuxHistoWindow(self.client, self.shm_name, self.log_panel),
+            on_applied=self.refresh_params)
         window.show()
         window.raise_()
 
     def show_mcpd_config_window(self):
         window = self._quick_setup_window(
-            'mcpd_config_window', lambda: McpdConfigWindow(self.client))
+            'mcpd_config_window', lambda: McpdConfigWindow(self.client),
+            on_applied=self.refresh_params)
         window.show()
         window.raise_()
 
     def show_tof_config_window(self):
         window = self._quick_setup_window(
-            'tof_config_window', lambda: TofConfigWindow(self.client))
+            'tof_config_window', lambda: TofConfigWindow(self.client),
+            on_applied=self.refresh_params)
         window.show()
         window.raise_()
 

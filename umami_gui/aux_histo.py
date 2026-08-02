@@ -233,6 +233,8 @@ class AuxHistoWindow(QtWidgets.QWidget):
 
     REFRESH_MS = 500
 
+    applied = QtCore.pyqtSignal()
+
     def __init__(self, client, ipc_name, log):  # noqa: PLR0915
         super().__init__()
         self.client = client
@@ -539,6 +541,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
             return
         new_specs = [*self._histos, dialog.spec()]
         self.client.set_params({f'{self._module}.histos': new_specs})
+        self.applied.emit()
         self.refresh()
 
     def _edit_histogram(self, spec):
@@ -548,6 +551,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
         new_specs = [dialog.spec() if h['name'] == spec['name'] else h
                      for h in self._histos]
         self.client.set_params({f'{self._module}.histos': new_specs})
+        self.applied.emit()
         self.refresh()
 
     def _delete_histogram(self, name):
@@ -559,4 +563,5 @@ class AuxHistoWindow(QtWidgets.QWidget):
             return
         new_specs = [h for h in self._histos if h['name'] != name]
         self.client.set_params({f'{self._module}.histos': new_specs})
+        self.applied.emit()
         self.refresh()
