@@ -11,9 +11,9 @@ import math
 
 import numpy as np
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtGui, QtWidgets
 
 from .axis_items import RotatedAxisItem, ZoomViewBox
+from .plot_utils import connect_hover_tooltip, step_histogram_curve
 
 # Cap on labeled bin-edge ticks on the TOF spectrum's x axis -- with many
 # TOF bins, labeling every one overlaps into unreadable clutter, so they're
@@ -34,26 +34,19 @@ class DiffractogramWindow(pg.PlotWidget):
         self.setLabel('bottom', 'x channel')
         self.setLabel('left', 'counts')
         self.resize(700, 400)
-        self.curve = self.plot(stepMode='center', fillLevel=0, brush=(0, 0, 255, 80))
-        self.scene().sigMouseMoved.connect(self._on_mouse_moved)
+        self.curve = step_histogram_curve(self)
+        connect_hover_tooltip(self, self._hover_text)
 
     def update_data(self, x_edges, y):
         if self.isVisible():
             self.curve.setData(x_edges, y, stepMode='center')
 
-    def _on_mouse_moved(self, scene_pos):
-        plot_item = self.getPlotItem()
-        if not plot_item.sceneBoundingRect().contains(scene_pos):
-            QtWidgets.QToolTip.hideText()
-            return
-        view_pos = plot_item.vb.mapSceneToView(scene_pos)
-        x = int(np.floor(view_pos.x() + 0.5))
+    def _hover_text(self, view_x):
+        x = int(np.floor(view_x + 0.5))
         _xdata, ydata = self.curve.getData()
         if ydata is None or not 0 <= x < len(ydata):
-            QtWidgets.QToolTip.hideText()
-            return
-        text = f'x={x}\ncounts={int(ydata[x])}'
-        QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), text)
+            return None
+        return f'x={x}\ncounts={int(ydata[x])}'
 
 
 class TofSpectrumWindow(pg.PlotWidget):
@@ -74,11 +67,11 @@ class TofSpectrumWindow(pg.PlotWidget):
         self.setLabel('left', 'counts')
         self.getAxis('bottom').setHeight(70)
         self.resize(700, 400)
-        self.curve = self.plot(stepMode='center', fillLevel=0, brush=(0, 0, 255, 80))
+        self.curve = step_histogram_curve(self)
         # raw time_bins of the active mode (nanoseconds, trailing overflow
         # sentinel included), or None to fall back to plain bin-index labeling
         self.bin_edges_ns = None
-        self.scene().sigMouseMoved.connect(self._on_mouse_moved)
+        connect_hover_tooltip(self, self._hover_text)
         self._apply_ticks()
 
     def set_bin_edges_ns(self, value):
@@ -128,17 +121,11 @@ class TofSpectrumWindow(pg.PlotWidget):
             return lo, None
         return lo, edges[i] / 1e6
 
-    def _on_mouse_moved(self, scene_pos):
-        plot_item = self.getPlotItem()
-        if not plot_item.sceneBoundingRect().contains(scene_pos):
-            QtWidgets.QToolTip.hideText()
-            return
-        view_pos = plot_item.vb.mapSceneToView(scene_pos)
-        i = int(np.floor(view_pos.x() + 0.5))
+    def _hover_text(self, view_x):
+        i = int(np.floor(view_x + 0.5))
         _xdata, ydata = self.curve.getData()
         if ydata is None or not 0 <= i < len(ydata):
-            QtWidgets.QToolTip.hideText()
-            return
+            return None
         counts = int(ydata[i])
         if self.bin_edges_ns is not None and i < len(self.bin_edges_ns):
             lo, hi = self._bin_range_ms(i)
@@ -146,5 +133,4 @@ class TofSpectrumWindow(pg.PlotWidget):
                          else f'{lo:.3f} ms-overflow')
         else:
             edge_text = f'bin {i}'
-        text = f'{edge_text}\ncounts={counts}'
-        QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), text)
+        return f'{edge_text}\ncounts={counts}'

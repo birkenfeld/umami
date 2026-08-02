@@ -11,10 +11,11 @@ from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
+from pyqtgraph.Qt import QtCore, QtWidgets
 
 from .axis_items import ZoomViewBox
 from .icons import icon_button
+from .plot_utils import connect_hover_tooltip, step_histogram_curve
 from .shm import ShmHistogram
 
 # Kept in sync by hand with the grammar/field table documented in
@@ -423,12 +424,11 @@ class AuxHistoWindow(QtWidgets.QWidget):
                 extent = QtCore.QRectF(x_lo, y_lo, x_span, y_span)
                 self._plots[name] = (plot_widget, img, True, extent)
             else:
-                curve = plot_item.plot(
-                    stepMode='center', fillLevel=0, brush=(0, 0, 255, 80))
+                curve = step_histogram_curve(plot_item)
                 edges = self._bin_edges(spec['x'])
                 self._plots[name] = (plot_widget, curve, False, edges)
-                plot_widget.scene().sigMouseMoved.connect(
-                    lambda pos, n=name: self._on_histo_mouse_moved(n, pos))
+                connect_hover_tooltip(
+                    plot_widget, lambda vx, n=name: self._hover_text(n, vx))
 
     def _update_plots(self):
         for name, shm in list(self._shms.items()):
@@ -450,22 +450,15 @@ class AuxHistoWindow(QtWidgets.QWidget):
             except OSError as e:
                 self.log.warning(f'Error reading aux histogram {name!r}: {e}')
 
-    def _on_histo_mouse_moved(self, name, scene_pos):
-        """Hover tooltip for a 1-D histogram's plot (2-D ones aren't handled yet)."""
-        plot_widget, curve, _is_2d, edges = self._plots[name]
-        plot_item = plot_widget.getPlotItem()
-        if not plot_item.sceneBoundingRect().contains(scene_pos):
-            QtWidgets.QToolTip.hideText()
-            return
-        view_pos = plot_item.vb.mapSceneToView(scene_pos)
+    def _hover_text(self, name, view_x):
+        """Hover tooltip text for a 1-D histogram's plot (not 2-D ones, yet)."""
+        _plot_widget, curve, _is_2d, edges = self._plots[name]
         _xdata, ydata = curve.getData()
-        i = int(np.searchsorted(edges, view_pos.x(), side='right')) - 1
+        i = int(np.searchsorted(edges, view_x, side='right')) - 1
         if ydata is None or not 0 <= i < len(ydata):
-            QtWidgets.QToolTip.hideText()
-            return
+            return None
         x_value = (edges[i] + edges[i + 1]) / 2
-        text = f'x={x_value:.3g}\ncounts={int(ydata[i])}'
-        QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), text)
+        return f'x={x_value:.3g}\ncounts={int(ydata[i])}'
 
     def _on_row_double_clicked(self, row, _column):
         if 0 <= row < len(self._histos):
