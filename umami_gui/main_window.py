@@ -24,6 +24,7 @@ from .mesy_config import McpdConfigWindow, discover_mesy_inputs
 from .params_table import ParamsTable
 from .shm import ShmHistogram
 from .status_panel import StatusPanel
+from .tof_config import TofConfigWindow, discover_tof_recipes
 
 IMAGE_REFRESH_MS = 250
 STATE_POLL_MS = 1000
@@ -76,8 +77,10 @@ class MainWindow(QtWidgets.QWidget):
 
         self.log_panel = LogPanel()
         self.client = UmamiClient(shm_name, self.log_panel)
-        self.aux_histo_window = AuxHistoWindow(self.client, shm_name, self.log_panel)
-        self.mcpd_config_window = McpdConfigWindow(self.client)
+        # Quick-setup windows are created lazily, on first use -- see
+        # `_quick_setup_window()` -- since there's an ever-growing set of
+        # them and most instances only ever need a few.
+        self.aux_histo_window = self.mcpd_config_window = self.tof_config_window = None
 
         self.proj_window = None
         self.proj_curve = None
@@ -212,11 +215,14 @@ class MainWindow(QtWidgets.QWidget):
         self.update_t_axis_labels()
         params = self.params_table.params or {}
         self.mcpd_config_btn.setVisible(bool(discover_mesy_inputs(params)))
+        self.tof_config_btn.setVisible(bool(discover_tof_recipes(params)))
         self.aux_histo_btn.setVisible(discover_aux_histo_output(params) is not None)
-        if self.aux_histo_window.isVisible():
+        if self.aux_histo_window is not None and self.aux_histo_window.isVisible():
             self.aux_histo_window.refresh()
-        if self.mcpd_config_window.isVisible():
+        if self.mcpd_config_window is not None and self.mcpd_config_window.isVisible():
             self.mcpd_config_window.refresh()
+        if self.tof_config_window is not None and self.tof_config_window.isVisible():
+            self.tof_config_window.refresh()
 
     def update_buffer(self):
         t = self.t_spin.value()
@@ -328,7 +334,8 @@ class MainWindow(QtWidgets.QWidget):
         """
         self.log_panel.info('Reconnected -- reinitializing (config may have changed)')
         self.reopen_histogram()
-        self.aux_histo_window.invalidate_all()
+        if self.aux_histo_window is not None:
+            self.aux_histo_window.invalidate_all()
         self.status_panel.reset_inputs()
         modes = self.client.get_modes()
         if modes is not None:
@@ -459,13 +466,32 @@ class MainWindow(QtWidgets.QWidget):
         self.client.start(self.run_id_field.text() or
                           time.strftime('%Y-%m-%d_%H:%M:%S'))
 
+    def _quick_setup_window(self, attr, factory):
+        """Get (creating on first use) one of the optional quick-setup windows."""
+        window = getattr(self, attr)
+        if window is None:
+            window = factory()
+            setattr(self, attr, window)
+        return window
+
     def show_aux_histo_window(self):
-        self.aux_histo_window.show()
-        self.aux_histo_window.raise_()
+        window = self._quick_setup_window(
+            'aux_histo_window',
+            lambda: AuxHistoWindow(self.client, self.shm_name, self.log_panel))
+        window.show()
+        window.raise_()
 
     def show_mcpd_config_window(self):
-        self.mcpd_config_window.show()
-        self.mcpd_config_window.raise_()
+        window = self._quick_setup_window(
+            'mcpd_config_window', lambda: McpdConfigWindow(self.client))
+        window.show()
+        window.raise_()
+
+    def show_tof_config_window(self):
+        window = self._quick_setup_window(
+            'tof_config_window', lambda: TofConfigWindow(self.client))
+        window.show()
+        window.raise_()
 
     # ---- display controls: scale, colormap, levels, cursor readout ----
 
@@ -521,6 +547,7 @@ class MainWindow(QtWidgets.QWidget):
         self.level_min_spin.valueChanged.connect(lambda _: self.update_buffer())
         self.level_max_spin.valueChanged.connect(lambda _: self.update_buffer())
 
+        frame.layout().addSpacing(20)
         frame.layout().addStretch()
 
         self.cursor_label = QtWidgets.QLabel('')
@@ -668,6 +695,10 @@ class MainWindow(QtWidgets.QWidget):
         self.mcpd_config_btn.clicked.connect(self.show_mcpd_config_window)
         self.mcpd_config_btn.setVisible(False)
         setup_row.addWidget(self.mcpd_config_btn)
+        self.tof_config_btn = QtWidgets.QPushButton('TOF Setup')
+        self.tof_config_btn.clicked.connect(self.show_tof_config_window)
+        self.tof_config_btn.setVisible(False)
+        setup_row.addWidget(self.tof_config_btn)
         setup_row.addStretch()
         panel.layout().addLayout(setup_row)
 

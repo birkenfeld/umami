@@ -38,7 +38,7 @@ exclude = ["umami_det.py"]
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = ["ANN", "D1", "D203", "D213", "EM1", "FBT", "G004",
-          "PERF203", "PLR2004", "TD", "TRY400"]
+          "PERF203", "PLR2004", "TD", "TRY003", "TRY400"]
 flake8-copyright.notice-rgx = "(?i)see README and LICENSE"
 flake8-quotes.inline-quotes = "single"
 flake8-quotes.multiline-quotes = "single"
