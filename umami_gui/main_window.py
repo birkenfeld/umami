@@ -4,7 +4,6 @@
 """Top-level UMAMI histogram viewer window."""
 
 import html
-import math
 import sys
 import time
 from pathlib import Path
@@ -16,24 +15,20 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from . import __version__
 from .aux_histo import AuxHistoWindow, discover_aux_histo_output
-from .axis_items import RotatedAxisItem, ZoomViewBox
+from .axis_items import ZoomViewBox
 from .client import UmamiClient
 from .icons import icon_button, load_icon
 from .log_panel import LogPanel
 from .logo_widget import LogoBuildupWidget
 from .mesy_config import McpdConfigWindow, discover_mesy_inputs
 from .params_table import ParamsTable
+from .projection_windows import DiffractogramWindow, TofSpectrumWindow
 from .shm import ShmHistogram
 from .status_panel import StatusPanel
 from .tof_config import TofConfigWindow, discover_tof_recipes
 
 IMAGE_REFRESH_MS = 250
 STATE_POLL_MS = 1000
-
-# Cap on labeled bin-edge ticks on the TOF spectrum's x axis -- with many
-# TOF bins, labeling every one overlaps into unreadable clutter, so they're
-# thinned out like pyqtgraph's own automatic ticks would.
-MAX_T_AXIS_LABELS = 20
 
 # display name -> pyqtgraph colormap name; pyqtgraph has no plain 'grey'/'gray'
 # map, so this points at CET-L1, its linear (grayscale) perceptual map
@@ -87,14 +82,8 @@ class MainWindow(QtWidgets.QWidget):
         # `_quick_setup_window()` -- since there's an ever-growing set of
         # them and most instances only ever need a few.
         self.aux_histo_window = self.mcpd_config_window = self.tof_config_window = None
+        self.proj_window = self.t_proj_window = None
 
-        self.proj_window = None
-        self.proj_curve = None
-        self.t_proj_window = None
-        self.t_proj_curve = None
-        # raw time_bins of the active mode (nanoseconds, trailing overflow
-        # sentinel included), or None to fall back to plain bin-index labeling
-        self.t_bin_edges_ns = None
         self.current_mode = None
         self.instance_name = None
         self.prev = {}
@@ -105,7 +94,6 @@ class MainWindow(QtWidgets.QWidget):
         self.settings = QtCore.QSettings()
 
         self._build_main_plot()
-        self._build_projection_state()
         self._build_status_and_mode()
         self._build_buttons()
         self._build_display_controls()
@@ -154,78 +142,23 @@ class MainWindow(QtWidgets.QWidget):
 
     # ---- projection plots: separate windows, created lazily on request ----
 
-    def _build_projection_state(self):
-        self.proj_x_edges = np.arange(self.histo.nx + 1) - 0.5
-        self.t_proj_x_edges = np.arange(self.histo.nt + 1) - 0.5
-
     def open_projection_window(self):
-        if self.proj_window is None:
-            self.proj_window = pg.PlotWidget(
-                title='Diffractogram', viewBox=ZoomViewBox())
-            self.proj_window.setWindowTitle('UMAMI diffractogram')
-            self.proj_window.setLabel('bottom', 'x channel')
-            self.proj_window.setLabel('left', 'counts')
-            self.proj_window.resize(700, 400)
-            self.proj_curve = self.proj_window.plot(stepMode='center', fillLevel=0,
-                                                     brush=(0, 0, 255, 80))
-            self.proj_window.scene().sigMouseMoved.connect(self.on_proj_mouse_moved)
-        self.proj_window.show()
-        self.proj_window.raise_()
+        window = self._quick_setup_window('proj_window', DiffractogramWindow)
+        window.show()
+        window.raise_()
 
     def open_t_projection_window(self):
-        if self.t_proj_window is None:
-            self.t_proj_window = pg.PlotWidget(
-                title='TOF spectrum', viewBox=ZoomViewBox(),
-                axisItems={'bottom': RotatedAxisItem(orientation='bottom')})
-            self.t_proj_window.setWindowTitle('UMAMI TOF spectrum')
-            self.t_proj_window.setLabel('bottom', 'time of flight')
-            self.t_proj_window.setLabel('left', 'counts')
-            self.t_proj_window.getAxis('bottom').setHeight(70)
-            self.t_proj_window.resize(700, 400)
-            self.t_proj_curve = self.t_proj_window.plot(stepMode='center', fillLevel=0,
-                                                         brush=(0, 0, 255, 80))
-            self.apply_t_axis_ticks()
-            self.t_proj_window.scene().sigMouseMoved.connect(self.on_t_proj_mouse_moved)
-        self.t_proj_window.show()
-        self.t_proj_window.raise_()
-
-    @staticmethod
-    def t_axis_tick_labels(edges_ns):
-        """[major, minor] tick levels for `AxisItem.setTicks()`.
-
-        Position is the plot's bin-index x-coordinate (bin i spans
-        [i-0.5, i+0.5)); edges_ns holds each real bin's upper edge in ns,
-        plus a trailing overflow sentinel that isn't itself a plotted edge.
-        Labeling every one of e.g. 4096 bins would overlap into mush, so
-        only an evenly-spaced subset (at most `MAX_T_AXIS_LABELS`) is
-        labeled -- offset by one stride from the fixed leading "0" tick, so
-        it doesn't crowd its neighbor -- while every real edge still gets an
-        unlabeled minor tick, like automatic ticks would show.
-        """
-        real_edges = edges_ns[:-1]
-        n = len(real_edges)
-        stride = math.ceil(n / MAX_T_AXIS_LABELS) or 1
-        major = [(-0.5, '0')]
-        major.extend((i + 0.5, f'{real_edges[i] / 1e6:.3f}ms')
-                     for i in range(stride - 1, n, stride))
-        major.append((len(edges_ns) - 1, 'overflow'))
-        minor = [(i + 0.5, '') for i in range(n)]
-        return [major, minor]
-
-    def apply_t_axis_ticks(self):
-        if self.t_proj_window is None:
-            return
-        axis = self.t_proj_window.getAxis('bottom')
-        if self.t_bin_edges_ns is not None:
-            axis.setTicks(self.t_axis_tick_labels(self.t_bin_edges_ns))
-        else:
-            axis.setTicks(None)
+        window = self._quick_setup_window('t_proj_window', TofSpectrumWindow)
+        window.show()
+        window.raise_()
+        self.update_t_axis_labels()
 
     def update_t_axis_labels(self):
+        if self.t_proj_window is None:
+            return
         info = (self.params_table.params or {}).get(f'{self.current_mode}.time_bins')
         value = info.get('value') if info else None
-        self.t_bin_edges_ns = value if value and len(value) > 1 else None
-        self.apply_t_axis_ticks()
+        self.t_proj_window.set_bin_edges_ns(value)
 
     def refresh_params(self):
         self.params_table.refresh()
@@ -264,18 +197,13 @@ class MainWindow(QtWidgets.QWidget):
             if self.log_scale_check.isChecked():
                 lo, hi = np.log10(lo + 0.1), np.log10(hi + 0.1)
             self.img.setImage(display, autoLevels=False, levels=(lo, hi))
-        if self.proj_curve is not None and self.proj_window.isVisible():
-            self.proj_curve.setData(self.proj_x_edges, buf.sum(axis=0),
-                                    stepMode='center')
-        if self.t_proj_curve is not None and self.t_proj_window.isVisible():
-            if self.t_bin_edges_ns is not None:
-                n = len(self.t_bin_edges_ns)
-                edges = np.arange(n + 1) - 0.5
-            else:
-                n = self.histo.nt
-                edges = self.t_proj_x_edges
-            self.t_proj_curve.setData(edges, self.histo.read_time_projection(n),
-                                      stepMode='center')
+        if self.proj_window is not None:
+            x_edges = np.arange(self.histo.nx + 1) - 0.5
+            self.proj_window.update_data(x_edges, buf.sum(axis=0))
+        if self.t_proj_window is not None:
+            edges_ns = self.t_proj_window.bin_edges_ns
+            n = len(edges_ns) if edges_ns is not None else self.histo.nt
+            self.t_proj_window.update_data(n, self.histo.read_time_projection(n))
 
         total = int(buf.sum())
         now = time.monotonic()
@@ -319,8 +247,6 @@ class MainWindow(QtWidgets.QWidget):
             return
         self.histo.close()
         self.histo = new_histo
-        self.proj_x_edges = np.arange(self.histo.nx + 1) - 0.5
-        self.t_proj_x_edges = np.arange(self.histo.nt + 1) - 0.5
         self.prev.clear()
         self.plot.enableAutoRange('xy', True)
         self.t_spin.setRange(0, max(self.histo.nt - 1, 0))
@@ -603,48 +529,6 @@ class MainWindow(QtWidgets.QWidget):
         else:
             self.cursor_label.setText('')
 
-    def on_proj_mouse_moved(self, scene_pos):
-        plot_item = self.proj_window.getPlotItem()
-        if not plot_item.sceneBoundingRect().contains(scene_pos):
-            QtWidgets.QToolTip.hideText()
-            return
-        view_pos = plot_item.vb.mapSceneToView(scene_pos)
-        x = int(np.floor(view_pos.x() + 0.5))
-        _xdata, ydata = self.proj_curve.getData()
-        if ydata is None or not 0 <= x < len(ydata):
-            QtWidgets.QToolTip.hideText()
-            return
-        text = f'x={x}\ncounts={int(ydata[x])}'
-        QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), text)
-
-    def _t_bin_range_ms(self, i):
-        """(lo, hi) in ms for time-bin `i`; `hi` is `None` for the overflow bin."""
-        edges = self.t_bin_edges_ns
-        lo = edges[i - 1] / 1e6 if i > 0 else 0.0
-        if i == len(edges) - 1:
-            return lo, None
-        return lo, edges[i] / 1e6
-
-    def on_t_proj_mouse_moved(self, scene_pos):
-        plot_item = self.t_proj_window.getPlotItem()
-        if not plot_item.sceneBoundingRect().contains(scene_pos):
-            QtWidgets.QToolTip.hideText()
-            return
-        view_pos = plot_item.vb.mapSceneToView(scene_pos)
-        i = int(np.floor(view_pos.x() + 0.5))
-        _xdata, ydata = self.t_proj_curve.getData()
-        if ydata is None or not 0 <= i < len(ydata):
-            QtWidgets.QToolTip.hideText()
-            return
-        counts = int(ydata[i])
-        if self.t_bin_edges_ns is not None and i < len(self.t_bin_edges_ns):
-            lo, hi = self._t_bin_range_ms(i)
-            edge_text = (f'{lo:.3f}-{hi:.3f} ms' if hi is not None
-                         else f'{lo:.3f} ms-overflow')
-        else:
-            edge_text = f'bin {i}'
-        text = f'{edge_text}\ncounts={counts}'
-        QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), text)
 
     # ---- raw dump / save histo controls ----
 
