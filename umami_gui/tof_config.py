@@ -8,7 +8,7 @@ networking dependency -- so it (and `TofBinsWidget`) can be reused by an
 offline config-file editor later, not just `TofConfigWindow`.
 """
 
-from pyqtgraph.Qt import QtWidgets
+from pyqtgraph.Qt import QtCore, QtWidgets
 
 from .icons import icon_button
 
@@ -20,6 +20,11 @@ MODE_WIDTH_TOTAL = 2
 # user pick a more convenient unit to type numbers in.
 UNIT_FACTORS = {'ns': 1, 'µs': 1_000, 'ms': 1_000_000}
 DEFAULT_UNIT = 'µs'
+
+# Keeps a generated `time_bins` well within the command socket's datagram
+# size limit (see `command.rs`), in every mode -- including width+total,
+# where the bin count is derived rather than typed in directly.
+MAX_BINS = 4096
 
 
 def discover_tof_recipes(params):
@@ -61,6 +66,9 @@ def generate_time_bins(mode, number=None, width=None, total=None, offset=0):
     else:
         raise ValueError(f'Unknown mode {mode!r}')
 
+    if number > MAX_BINS:
+        raise ValueError(f'Too many bins ({number}), the limit is {MAX_BINS}')
+
     bins = [round(offset)] if offset else []
     bins.extend(round(offset + i * width) for i in range(1, number + 1))
     return bins
@@ -69,11 +77,13 @@ def generate_time_bins(mode, number=None, width=None, total=None, offset=0):
 class TofBinsWidget(QtWidgets.QWidget):
     """Equal-width `time_bins` generator for one histo_tof mode.
 
-    Local state only -- load the current value via `set_current()`, read a
-    freshly generated one via `current()` (`None` until "Generate" is
-    clicked at least once). The caller (an Apply button, typically) decides
-    when to push it.
+    Local state only -- the preview (and `current()`) update live as the
+    fields change. The caller (an Apply button, typically) decides when to
+    push `current()`, which is `None` whenever the input isn't in a valid,
+    complete state.
     """
+
+    changed = QtCore.pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -85,6 +95,7 @@ class TofBinsWidget(QtWidgets.QWidget):
         self.unit_combo.addItems(list(UNIT_FACTORS))
         self.unit_combo.setCurrentText(DEFAULT_UNIT)
         self.unit_combo.currentTextChanged.connect(self._update_suffixes)
+        self.unit_combo.currentTextChanged.connect(self._update_preview)
         layout.addRow('Unit:', self.unit_combo)
 
         # Which two of number/width/total to use is picked implicitly: each
@@ -92,7 +103,7 @@ class TofBinsWidget(QtWidgets.QWidget):
         # can also un/check by hand). Exactly two checked selects the mode,
         # the unchecked one is the value `generate_time_bins()` derives.
         self.number_spin = QtWidgets.QSpinBox()
-        self.number_spin.setRange(1, 1_000_000)
+        self.number_spin.setRange(1, MAX_BINS)
         self.number_check, number_row = self._given_field(self.number_spin)
         layout.addRow('Number of bins:', number_row)
 
@@ -112,35 +123,36 @@ class TofBinsWidget(QtWidgets.QWidget):
         self.offset_spin.setDecimals(0)
         self.offset_spin.setRange(1, 1e15)
         self.offset_spin.setEnabled(False)
+        self.offset_spin.valueChanged.connect(self._update_preview)
         self.offset_check = QtWidgets.QCheckBox()
         self.offset_check.toggled.connect(self.offset_spin.setEnabled)
-        layout.addRow('Offset (extra bin):', self._field_row(self.offset_check, self.offset_spin))
-
-        generate_btn = QtWidgets.QPushButton('Generate')
-        generate_btn.clicked.connect(self._generate)
-        layout.addRow(generate_btn)
+        self.offset_check.toggled.connect(self._update_preview)
+        offset_row = self._field_row(self.offset_check, self.offset_spin)
+        layout.addRow('Offset (extra bin):', offset_row)
 
         self.preview = QtWidgets.QPlainTextEdit()
         self.preview.setReadOnly(True)
         self.preview.setMaximumHeight(80)
-        layout.addRow('New bins:', self.preview)
+        layout.addRow('Bins:', self.preview)
 
         self._update_suffixes()
+        self._update_preview()
 
     @staticmethod
     def _field_row(checkbox, spin):
-        """A checkbox + `spin` row, aligned like every other field row."""
+        """Build a checkbox + `spin` row, aligned like every other field row."""
         row = QtWidgets.QHBoxLayout()
         row.addWidget(checkbox)
         row.addWidget(spin)
         return row
 
-    @classmethod
-    def _given_field(cls, spin):
+    def _given_field(self, spin):
         """Build a checkbox + `spin` row; editing `spin` auto-checks the box."""
         checkbox = QtWidgets.QCheckBox()
         spin.valueChanged.connect(lambda _v: checkbox.setChecked(True))
-        return checkbox, cls._field_row(checkbox, spin)
+        spin.valueChanged.connect(self._update_preview)
+        checkbox.toggled.connect(self._update_preview)
+        return checkbox, self._field_row(checkbox, spin)
 
     def _mode(self):
         """Mode implied by which two of the three checkboxes are checked, or `None`."""
@@ -160,11 +172,13 @@ class TofBinsWidget(QtWidgets.QWidget):
         self.total_spin.setSuffix(suffix)
         self.offset_spin.setSuffix(suffix)
 
-    def _generate(self):
+    def _update_preview(self, *_args):
+        """Recompute `current()` from the fields and refresh the preview text."""
         mode = self._mode()
         if mode is None:
-            QtWidgets.QMessageBox.warning(
-                self, 'Invalid input', 'Check exactly two of number/width/total.')
+            self._bins = None
+            self.preview.setPlainText('(check exactly two of number/width/total)')
+            self.changed.emit()
             return
         factor = UNIT_FACTORS[self.unit_combo.currentText()]
         checked = self.offset_check.isChecked()
@@ -175,16 +189,14 @@ class TofBinsWidget(QtWidgets.QWidget):
                 width=self.width_spin.value() * factor,
                 total=self.total_spin.value() * factor, offset=offset)
         except ValueError as e:
-            QtWidgets.QMessageBox.warning(self, 'Invalid input', str(e))
-            return
-        self.preview.setPlainText(str(self._bins))
-
-    def set_current(self, bins):
-        """Load from a get-params `time_bins` value (list of ints)."""
-        self.current_label.setText(str(bins))
+            self._bins = None
+            self.preview.setPlainText(str(e))
+        else:
+            self.preview.setPlainText(str(self._bins))
+        self.changed.emit()
 
     def current(self):
-        """Return the last-generated bins, or `None` if "Generate" was never clicked."""
+        """Return the live-generated bins, or `None` if the input is invalid."""
         return self._bins
 
 
@@ -208,19 +220,17 @@ class TofConfigWindow(QtWidgets.QWidget):
 
         close_btn = QtWidgets.QPushButton('Close')
         close_btn.clicked.connect(self.close)
-        refresh_btn = icon_button('refresh', 'Refresh')
-        refresh_btn.clicked.connect(self.refresh)
-        apply_btn = icon_button('apply', 'Apply')
-        apply_btn.setToolTip(
-            'Push each tab\'s generated bins live -- tabs where "Generate"\n'
-            'was not clicked (since the last Refresh) are left untouched.')
-        apply_btn.clicked.connect(self._apply_all)
+        self.apply_btn = icon_button('apply', 'Apply')
+        self.apply_btn.setToolTip(
+            "Push every tab's bins live (tabs with an incomplete or\n"
+            'inconsistent number/width/total selection are skipped).')
+        self.apply_btn.clicked.connect(self._apply_all)
+        self.apply_btn.setEnabled(False)
 
         bottom_row = QtWidgets.QHBoxLayout()
         bottom_row.addWidget(close_btn)
         bottom_row.addStretch()
-        bottom_row.addWidget(refresh_btn)
-        bottom_row.addWidget(apply_btn)
+        bottom_row.addWidget(self.apply_btn)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.tabs)
@@ -231,25 +241,21 @@ class TofConfigWindow(QtWidgets.QWidget):
         self.refresh()
 
     def _apply_all(self):
-        """Push every tab's freshly generated bins live, in one set_params call.
-
-        Tabs where "Generate" was never clicked contribute nothing -- if that
-        leaves nothing to push at all, say so instead of silently no-op-ing.
-        """
+        """Push every tab's currently valid bins live, in one set_params call."""
         params = {}
         for name, widget in self._tabs_by_name.items():
             bins = widget.current()
             if bins is not None:
                 params[f'{name}.time_bins'] = bins
-        if not params:
-            QtWidgets.QMessageBox.information(
-                self, 'Nothing to apply',
-                'Click "Generate" on at least one tab first.')
-            return
-        self.client.set_params(params)
+        if params:
+            self.client.set_params(params)
+
+    def _update_apply_enabled(self):
+        widgets = self._tabs_by_name.values()
+        self.apply_btn.setEnabled(any(w.current() is not None for w in widgets))
 
     def refresh(self):
-        """Re-pull the current time_bins for every detected histo_tof mode."""
+        """Re-detect and rebuild tabs for the currently active histo_tof modes."""
         params = self.client.get_params(full=True)
         if params is None:
             return
@@ -261,9 +267,7 @@ class TofConfigWindow(QtWidgets.QWidget):
             self._tabs_by_name = {}
             for name in names:
                 widget = TofBinsWidget()
+                widget.changed.connect(self._update_apply_enabled)
                 self.tabs.addTab(widget, name)
                 self._tabs_by_name[name] = widget
-
-        for name, widget in self._tabs_by_name.items():
-            bins_info = params.get(f'{name}.time_bins') or {}
-            widget.set_current(bins_info.get('value') or [])
+            self._update_apply_enabled()

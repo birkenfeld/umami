@@ -333,12 +333,15 @@ class McpdConfigWindow(QtWidgets.QWidget):
 
         self.tabs = QtWidgets.QTabWidget()
 
+        close_btn = QtWidgets.QPushButton('Close')
+        close_btn.clicked.connect(self.close)
         refresh_btn = icon_button('refresh', 'Refresh')
         refresh_btn.clicked.connect(self.refresh)
         apply_btn = icon_button('apply', 'Apply')
         apply_btn.clicked.connect(self._apply_all)
 
         bottom_row = QtWidgets.QHBoxLayout()
+        bottom_row.addWidget(close_btn)
         bottom_row.addStretch()
         bottom_row.addWidget(refresh_btn)
         bottom_row.addWidget(apply_btn)
