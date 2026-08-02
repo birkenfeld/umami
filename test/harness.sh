@@ -53,6 +53,7 @@ GUI (shared Xvfb display DISPLAY_NUM, started on demand):
   gui-stop                Stop umami-gui and Xvfb.
   screenshot <outfile>    Capture the Xvfb display to a PNG.
   click <x> <y>           Left-click at (x, y) on the display.
+  mousemove <x> <y>       Move the mouse to (x, y) without clicking.
   key <keysym>            Send a key/key-combo (xdotool syntax, e.g. "ctrl+q").
 
 Example:
@@ -121,9 +122,12 @@ cmd_start() {
     echo "$ipc" > "$inst_dir/ipc"
     echo "$conf_path" > "$inst_dir/conf"
 
-    # Config paths (e.g. "data/mesy/00678408.mdat") are resolved relative to
-    # the process's cwd, not the config file's location, so we must run from
-    # test/ for the checked-in test/data/* files to be found.
+    # Input source paths (e.g. "data/mesy/00678408.mdat") are resolved
+    # relative to the *config file's own* (canonicalized) directory, so
+    # those are found regardless of cwd -- but raw_dir and output paths
+    # (e.g. the hdf5 output's dir) are resolved relative to the process's
+    # cwd instead, so we still run from test/ for any of those given as a
+    # relative path in a checked-in config.
     (
         cd "$SCRIPT_DIR"
         setsid "$bin" "${args[@]}" > "$inst_dir/log" 2>&1 < /dev/null &
@@ -316,6 +320,15 @@ cmd_click() {
     DISPLAY="$DISPLAY_NUM" xdotool mousemove --sync "$1" "$2" click 1
 }
 
+cmd_mousemove() {
+    if [[ $# -lt 2 ]]; then
+        echo "Usage: mousemove <x> <y>" >&2
+        exit 1
+    fi
+    require_xvfb
+    DISPLAY="$DISPLAY_NUM" xdotool mousemove --sync "$1" "$2"
+}
+
 cmd_key() {
     if [[ $# -lt 1 ]]; then
         echo "Usage: key <keysym>" >&2
@@ -342,6 +355,7 @@ main() {
         gui-stop) cmd_gui_stop "$@" ;;
         screenshot) cmd_screenshot "$@" ;;
         click) cmd_click "$@" ;;
+        mousemove) cmd_mousemove "$@" ;;
         key) cmd_key "$@" ;;
         -h|--help|help) usage ;;
         *) echo "Unknown command: $cmd" >&2; usage; exit 1 ;;

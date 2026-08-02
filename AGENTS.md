@@ -118,6 +118,10 @@ Instances are tracked by name (default: the config's basename) under
 (the `type = "test"` input) can't be used here — it's `#[cfg(test)]`-gated
 and only exists inside `cargo test` builds; use `canon`/`mesy`/`ge` instead.
 
+Put scratch configs under test/ (untracked, e.g. a "_scratch_*.conf" name)
+if they need to reach the checked-in test/data/* files, since the data files
+are resolved relative to the config file's directory.
+
 ## Config
 
 Runtime config is TOML. Example configs in `test/*.conf`.
