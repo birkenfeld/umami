@@ -1,7 +1,7 @@
 [package]
 name = "umami-derive"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 authors = ["Georg Brandl <g.brandl@fz-juelich.de>",
            "Alexander Zaft <a.zaft@fz-juelich.de>"]
 license = "GPL-3.0-or-later"

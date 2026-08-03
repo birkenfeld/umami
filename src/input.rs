@@ -225,21 +225,21 @@ pub trait Input: Send + HasParams {
                         recipe_params.insert(param.into(), value);
                     }
                 }
-                if !own_params.is_empty()
-                    && let Err(e) = self.update_params(name, own_params)
-                {
-                    lprintln!(ERROR, [name] "Error setting input params: {e:#}");
-                    let _ = rep.send(CommandReply::new_mod_error(
-                        name, format!("Failed to set input params: {e:#}")));
-                    return;
+                if !own_params.is_empty() {
+                    if let Err(e) = self.update_params(name, own_params) {
+                        lprintln!(ERROR, [name] "Error setting input params: {e:#}");
+                        let _ = rep.send(CommandReply::new_mod_error(
+                            name, format!("Failed to set input params: {e:#}")));
+                        return;
+                    }
                 }
-                if !recipe_params.is_empty()
-                    && let Err(e) = common.recipe.update_params(common.recipe_name, recipe_params)
-                {
-                    lprintln!(ERROR, [name] "Error setting recipe params: {e:#}");
-                    let _ = rep.send(CommandReply::new_mod_error(
-                        name, format!("Failed to set recipe params: {e:#}")));
-                    return;
+                if !recipe_params.is_empty() {
+                    if let Err(e) = common.recipe.update_params(common.recipe_name, recipe_params) {
+                        lprintln!(ERROR, [name] "Error setting recipe params: {e:#}");
+                        let _ = rep.send(CommandReply::new_mod_error(
+                            name, format!("Failed to set recipe params: {e:#}")));
+                        return;
+                    }
                 }
                 CommandReply::Ok
             }
