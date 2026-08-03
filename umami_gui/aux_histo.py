@@ -350,7 +350,46 @@ class AuxHistoWindow(QtWidgets.QWidget):
         for name in list(self._shms):
             self._forget(name)
 
-    def _rebuild(self):  # noqa: PLR0915
+    def _create_plot(self, name, spec):
+        """Open the shm segment and build the plot widget for a new histo.
+
+        Returns False (logging a warning) if the shm segment isn't there yet.
+        """
+        shm_name = f'{self.ipc_name}_{self._module}_{name}'
+        try:
+            shm = ShmHistogram(shm_name)
+        except RuntimeError as e:
+            self.log.warning(f'Could not open {shm_name!r}: {e}')
+            return False
+        self._shms[name] = shm
+        self._plot_specs[name] = spec
+        is_2d = shm.ny > 1
+        plot_widget = pg.PlotWidget(title=name, viewBox=ZoomViewBox())
+        plot_item = plot_widget.getPlotItem()
+        plot_item.setLabel('bottom', spec['x']['expr'])
+        if is_2d:
+            plot_item.setLabel('left', spec['y']['expr'])
+            img = pg.ImageItem(border='w', axisOrder='row-major')
+            plot_item.addItem(img)
+            img.setColorMap(pg.colormap.get('viridis'))
+            # real axis values (not bin index) -- setRect() must come after
+            # this histo's first setImage() in _update_plots(), since it
+            # derives its scale from the image's current dimensions, which
+            # are unset (None, falling back to 1) before any image has been
+            # assigned
+            x_lo, x_span = self._axis_extent(spec['x'])
+            y_lo, y_span = self._axis_extent(spec['y'])
+            extent = QtCore.QRectF(x_lo, y_lo, x_span, y_span)
+            self._plots[name] = (plot_widget, img, True, extent)
+        else:
+            curve = step_histogram_curve(plot_item)
+            edges = self._bin_edges(spec['x'])
+            self._plots[name] = (plot_widget, curve, False, edges)
+            connect_hover_tooltip(
+                plot_widget, lambda vx, n=name: self._hover_text(n, vx))
+        return True
+
+    def _rebuild(self):
         # forget anything removed, or whose definition changed since we last
         # opened its shm segment -- the server unlinks and recreates the
         # segment for *any* change (even just a tweaked axis range), so a
@@ -389,46 +428,25 @@ class AuxHistoWindow(QtWidgets.QWidget):
         col_count = 2 if len(self._histos) == 4 else 3
         for i, spec in enumerate(self._histos):
             name = spec['name']
-            if name in self._plots:
+            if name not in self._plots and not self._create_plot(name, spec):
                 continue
-            shm_name = f'{self.ipc_name}_{self._module}_{name}'
-            try:
-                shm = ShmHistogram(shm_name)
-            except RuntimeError as e:
-                self.log.warning(f'Could not open {shm_name!r}: {e}')
-                continue
-            self._shms[name] = shm
-            self._plot_specs[name] = spec
-            is_2d = shm.ny > 1
             row = i // col_count
             while row >= len(self._row_splitters):
                 row_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
                 self._row_splitters.append(row_splitter)
                 self.plot_area.addWidget(row_splitter)
-            plot_widget = pg.PlotWidget(title=name, viewBox=ZoomViewBox())
-            self._row_splitters[row].addWidget(plot_widget)
-            plot_item = plot_widget.getPlotItem()
-            plot_item.setLabel('bottom', spec['x']['expr'])
-            if is_2d:
-                plot_item.setLabel('left', spec['y']['expr'])
-                img = pg.ImageItem(border='w', axisOrder='row-major')
-                plot_item.addItem(img)
-                img.setColorMap(pg.colormap.get('viridis'))
-                # real axis values (not bin index) -- setRect() must come
-                # after this histo's first setImage() in _update_plots(),
-                # since it derives its scale from the image's current
-                # dimensions, which are unset (None, falling back to 1)
-                # before any image has been assigned
-                x_lo, x_span = self._axis_extent(spec['x'])
-                y_lo, y_span = self._axis_extent(spec['y'])
-                extent = QtCore.QRectF(x_lo, y_lo, x_span, y_span)
-                self._plots[name] = (plot_widget, img, True, extent)
-            else:
-                curve = step_histogram_curve(plot_item)
-                edges = self._bin_edges(spec['x'])
-                self._plots[name] = (plot_widget, curve, False, edges)
-                connect_hover_tooltip(
-                    plot_widget, lambda vx, n=name: self._hover_text(n, vx))
+            # insertWidget also relocates a widget that's already placed (in
+            # this or another row splitter), so the grid always matches
+            # self._histos' current order even after an add/remove shifts it
+            self._row_splitters[row].insertWidget(i % col_count, self._plots[name][0])
+
+        # drop now-empty trailing rows (e.g. after removing histos shrank
+        # the grid, or col_count itself changed)
+        needed_rows = -(-len(self._histos) // col_count) if self._histos else 0
+        while len(self._row_splitters) > needed_rows:
+            row_splitter = self._row_splitters.pop()
+            row_splitter.setParent(None)
+            row_splitter.deleteLater()
 
     def _update_plots(self):
         for name, shm in list(self._shms.items()):
