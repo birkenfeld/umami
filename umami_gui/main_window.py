@@ -547,6 +547,7 @@ class MainWindow(QtWidgets.QWidget):
         self.raw_dump_check.toggled.connect(
             lambda checked: self.client.set_raw_dump(checked,
                                                      self.raw_dump_path.text()))
+        self.raw_dump_path.editingFinished.connect(self.raw_dump_path_changed)
 
         browse_btn = QtWidgets.QPushButton('...')
         browse_btn.setMaximumWidth(30)
@@ -584,6 +585,11 @@ class MainWindow(QtWidgets.QWidget):
             self, 'Raw Dump Directory', self.raw_dump_path.text())
         if path:
             self.raw_dump_path.setText(path)
+            self.raw_dump_path_changed()
+
+    def raw_dump_path_changed(self):
+        if self.raw_dump_check.isChecked():
+            self.client.set_raw_dump(True, self.raw_dump_path.text())
 
     def save_histo_dialog(self):
         dialog = QtWidgets.QFileDialog(

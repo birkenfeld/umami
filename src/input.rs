@@ -440,6 +440,9 @@ pub struct DumpHandler {
 impl DumpHandler {
     pub fn configure(&mut self, enable: bool, path: String) -> UResult<()> {
         if enable {
+            if path.is_empty() {
+                Err(anyhow::anyhow!("Raw dump path must not be empty"))?;
+            }
             self.path = Some(PathBuf::from(path));
         } else {
             self.path = None;
