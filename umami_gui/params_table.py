@@ -81,6 +81,35 @@ class ParamsTable(QtWidgets.QTableWidget):
         self._keys = []
         self.params = None
 
+    def _set_value_cell(self, row, key, value, readonly):
+        # rows are repopulated by index each refresh, so a leftover item/widget
+        # from whatever key/type previously occupied this row must be cleared
+        # before switching between the checkbox and text-item representations
+        if isinstance(value, bool):
+            self.takeItem(row, 1)
+            checkbox = QtWidgets.QCheckBox()
+            checkbox.setChecked(value)
+            checkbox.setEnabled(not readonly)
+            checkbox.toggled.connect(lambda checked, k=key: self._send(k, checked))
+            cell = QtWidgets.QWidget()
+            cell_layout = QtWidgets.QHBoxLayout(cell)
+            cell_layout.setContentsMargins(6, 0, 0, 0)
+            cell_layout.addWidget(checkbox)
+            self.setCellWidget(row, 1, cell)
+        else:
+            self.removeCellWidget(row, 1)
+            if isinstance(value, (list, dict)):
+                text = json.dumps(value)
+            elif value is None:
+                text = ''
+            else:
+                text = str(value)
+            value_item = QtWidgets.QTableWidgetItem(text)
+            if readonly:
+                value_item.setFlags(
+                    value_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.setItem(row, 1, value_item)
+
     def refresh(self):
         params = self.client.get_params(full=True)
         if params is None:
@@ -103,28 +132,7 @@ class ParamsTable(QtWidgets.QTableWidget):
             self._keys.append(key)
 
             value = info.get('value')
-            if isinstance(value, bool):
-                checkbox = QtWidgets.QCheckBox()
-                checkbox.setChecked(value)
-                checkbox.setEnabled(not readonly)
-                checkbox.toggled.connect(lambda checked, k=key: self._send(k, checked))
-                cell = QtWidgets.QWidget()
-                cell_layout = QtWidgets.QHBoxLayout(cell)
-                cell_layout.setContentsMargins(6, 0, 0, 0)
-                cell_layout.addWidget(checkbox)
-                self.setCellWidget(row, 1, cell)
-            else:
-                if isinstance(value, (list, dict)):
-                    text = json.dumps(value)
-                elif value is None:
-                    text = ''
-                else:
-                    text = str(value)
-                value_item = QtWidgets.QTableWidgetItem(text)
-                if readonly:
-                    value_item.setFlags(
-                        value_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-                self.setItem(row, 1, value_item)
+            self._set_value_cell(row, key, value, readonly)
 
             if isinstance(value, (list, dict)):
                 edit_btn = icon_button('view' if readonly else 'edit')
