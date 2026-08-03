@@ -46,6 +46,14 @@ pub fn set_debug_params(debug: bool, trace: bool) -> UResult<()> {
 
 #[macro_export]
 macro_rules! ldebug {
+    ([$mod:expr] $($tt:tt)+) => {{
+        if $crate::DEBUG.load(std::sync::atomic::Ordering::Relaxed) {
+            eprint!("{} : DEBUG : [{}] ",
+                    jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.f"),
+                    $mod);
+            eprintln!($($tt)+);
+        }
+    }};
     ($($tt:tt)+) => {{
         if $crate::DEBUG.load(std::sync::atomic::Ordering::Relaxed) {
             eprint!("{} : DEBUG : ", jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.f"));

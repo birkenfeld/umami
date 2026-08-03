@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use zerocopy::{FromBytes, Immutable, IntoBytes, Unaligned};
 use zerocopy::byteorder::little_endian::U16;
 use crate::{ldebug, lprintln};
+use crate::command::ModuleId;
 use crate::config::SourceConfig;
 use crate::error::UResult;
 use crate::util::resolve;
@@ -103,13 +104,13 @@ pub trait MesyCommandHandler: Send + 'static {
 
     /// Returns the module type and transmission-mode capability bitmask
     /// (see [`Self::set_tx_mode`]) of each of the 8 module slots.
-    fn scan(&mut self) -> UResult<([ModType; 8], [u16; 8])> {
+    fn scan(&mut self, name: ModuleId) -> UResult<([ModType; 8], [u16; 8])> {
         let mcpd_ver: [U16; 3] = self.do_command(Cmd::GetMcpdVer, ())?;
         let cpu_major = mcpd_ver[0];
         let cpu_minor = mcpd_ver[1];
         let fpga_major = mcpd_ver[2] >> 8;
         let fpga_minor = mcpd_ver[2] & 0xFF;
-        lprintln!(INFO, "MCPD version: CPU {}.{} FPGA {}.{}",
+        lprintln!(INFO, [name] "MCPD version: CPU {}.{} FPGA {}.{}",
                   cpu_major, cpu_minor, fpga_major, fpga_minor);
 
         let ids: [U16; 8] = self.do_command(Cmd::ReadIds, U16::new(2))?;
@@ -129,13 +130,14 @@ pub trait MesyCommandHandler: Send + 'static {
             let mod_minor = mod_info[3] & 0xFF;
             mod_xmit_caps[i] = mod_xmit_cap.get();
 
-            lprintln!(INFO, "MCPD module {i}: ID {}, xmit cap {}, xmit set {}, firmware {}.{}",
+            lprintln!(INFO, [name] "MCPD module {i}: ID {}, xmit cap {}, xmit set {}, firmware {}.{}",
                       mod_id, mod_xmit_cap, mod_xmit_set, mod_major, mod_minor);
         }
         Ok((mod_types, mod_xmit_caps))
     }
 
-    fn set_up(&mut self, modules: &[ModType; 8], mod_xmit_caps: &[u16; 8], config: &MesyConfig) -> UResult<()> {
+    fn set_up(&mut self, name: ModuleId, modules: &[ModType; 8], mod_xmit_caps: &[u16; 8],
+             config: &MesyConfig) -> UResult<()> {
         // Make sure the MCPD is idle before pushing setup, regardless of
         // what state a previous session left it running in.
         let _ = self.stop();
@@ -149,21 +151,21 @@ pub trait MesyCommandHandler: Send + 'static {
                 U16::new(data_port),
                 U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // cmd ip = self
             ])?;
-            lprintln!(INFO, "Set target data port to {data_port}");
+            lprintln!(INFO, [name] "Set target data port to {data_port}");
         }
 
-        self.set_timing(config.is_master, config.terminate, config.ext_sync)?;
-        self.set_tx_mode(modules, mod_xmit_caps, config.transmit_ampl)?;
+        self.set_timing(name, config.is_master, config.terminate, config.ext_sync)?;
+        self.set_tx_mode(name, modules, mod_xmit_caps, config.transmit_ampl)?;
 
         for i in 0..8 {
             if let Some(cfg) = config.cells.get(&i) {
-                self.set_up_cell(i, cfg)?;
+                self.set_up_cell(name, i, cfg)?;
             }
         }
 
         for (i, modtype) in modules.iter().enumerate() {
             if *modtype != ModType::None {
-                self.set_up_module(i, *modtype, config.modules.get(&i))?;
+                self.set_up_module(name, i, *modtype, config.modules.get(&i))?;
             }
         }
 
@@ -172,7 +174,7 @@ pub trait MesyCommandHandler: Send + 'static {
         // module present.
         for (i, modtype) in modules.iter().enumerate() {
             if matches!(modtype, ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P) {
-                self.set_pulser(i, 0, PulserPos::Middle, 0, false)?;
+                self.set_pulser(name, i, 0, PulserPos::Middle, 0, false)?;
             }
         }
         Ok(())
@@ -181,8 +183,8 @@ pub trait MesyCommandHandler: Send + 'static {
     /// Push this MCPD's sync-bus master/slave role, termination, and external
     /// sync setting to hardware. A master is always terminated regardless of
     /// `terminate`, and `ext_sync` is only meaningful when `master` is set.
-    fn set_timing(&mut self, master: bool, terminate: bool, ext_sync: bool) -> UResult<()> {
-        lprintln!(INFO, "Setting timing setup: master {master}, terminate {terminate}, ext_sync {ext_sync}");
+    fn set_timing(&mut self, name: ModuleId, master: bool, terminate: bool, ext_sync: bool) -> UResult<()> {
+        lprintln!(INFO, [name] "Setting timing setup: master {master}, terminate {terminate}, ext_sync {ext_sync}");
         let term = master || terminate;
         let data0 = master as u16 + 2 * ext_sync as u16;
         let _res: [U16; 2] = self.do_command(Cmd::SetTiming, [U16::new(data0), U16::new(term as u16)])?;
@@ -194,7 +196,7 @@ pub trait MesyCommandHandler: Send + 'static {
     /// every present module, capped at TP if `transmit_ampl` is false
     /// (amplitude data adds per-event processing overhead that can matter
     /// at high count rates). Pushed both MCPD-wide and to each module.
-    fn set_tx_mode(&mut self, modules: &[ModType; 8], mod_xmit_caps: &[u16; 8],
+    fn set_tx_mode(&mut self, name: ModuleId, modules: &[ModType; 8], mod_xmit_caps: &[u16; 8],
                    transmit_ampl: bool) -> UResult<()> {
         let cap_reply: [U16; 2] = self.do_command(Cmd::GetCapabilities, ())?;
         let mut cap = cap_reply[0].get();
@@ -213,7 +215,7 @@ pub trait MesyCommandHandler: Send + 'static {
         } else {
             TX_P
         };
-        lprintln!(INFO, "Setting transmission mode to {mode} (common capability {cap})");
+        lprintln!(INFO, [name] "Setting transmission mode to {mode} (common capability {cap})");
         let _res: [U16; 1] = self.do_command(Cmd::SetCapabilities, [U16::new(mode)])?;
 
         // Update each module's own transmission mode too (peripheral register 1).
@@ -230,8 +232,8 @@ pub trait MesyCommandHandler: Send + 'static {
 
     /// Push one cell's trigger source/compare wiring to hardware. Also used
     /// to apply a live `SetParams` update to a running input.
-    fn set_up_cell(&mut self, idx: usize, cfg: &MesyCellConfig) -> UResult<()> {
-        lprintln!(INFO, "Setting up cell {idx} with source {:?}, compare {}",
+    fn set_up_cell(&mut self, name: ModuleId, idx: usize, cfg: &MesyCellConfig) -> UResult<()> {
+        lprintln!(INFO, [name] "Setting up cell {idx} with source {:?}, compare {}",
                   cfg.source, cfg.compare.get());
         let _res: [U16; 3] = self.do_command(
             Cmd::SetCell,
@@ -243,43 +245,43 @@ pub trait MesyCommandHandler: Send + 'static {
     /// Push one module's threshold/gain to hardware, if `modtype` is a
     /// configurable MPSD-class module. Also used to apply a live
     /// `SetParams` update to a running input.
-    fn set_up_module(&mut self, idx: usize, modtype: ModType,
+    fn set_up_module(&mut self, name: ModuleId, idx: usize, modtype: ModType,
                      cfg: Option<&MesyModuleConfig>) -> UResult<()> {
         match modtype {
             ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P => match cfg {
                 Some(MesyModuleConfig::Mpsd { threshold, gain }) =>
-                    self.set_up_mpsd(idx, *threshold, *gain),
+                    self.set_up_mpsd(name, idx, *threshold, *gain),
                 Some(_) => {
-                    lprintln!(WARN, "Module {idx} is not an MPSD, not configuring");
+                    lprintln!(WARN, [name] "Module {idx} is not an MPSD, not configuring");
                     Ok(())
                 }
                 None => {
-                    lprintln!(WARN, "MPSD {idx} has no assigned config, not configuring");
+                    lprintln!(WARN, [name] "MPSD {idx} has no assigned config, not configuring");
                     Ok(())
                 }
             },
             ModType::Mwpchr => {
-                lprintln!(INFO, "Module {idx} is a MWPCHR, no configuration necessary");
+                lprintln!(INFO, [name] "Module {idx} is a MWPCHR, no configuration necessary");
                 Ok(())
             }
             other => {
-                lprintln!(WARN, "Module {idx} has unsupported type {other:?}, not configuring");
+                lprintln!(WARN, [name] "Module {idx} has unsupported type {other:?}, not configuring");
                 Ok(())
             }
         }
     }
 
-    fn set_up_mpsd(&mut self, num: usize, threshold: u16, gain: MesyGain) -> UResult<()> {
+    fn set_up_mpsd(&mut self, name: ModuleId, num: usize, threshold: u16, gain: MesyGain) -> UResult<()> {
         match gain {
             MesyGain::Uniform(gain) => {
-                lprintln!(INFO, "Setting up MPSD {num} with threshold {threshold}, gain {gain}");
+                lprintln!(INFO, [name] "Setting up MPSD {num} with threshold {threshold}, gain {gain}");
                 let _res: [U16; 3] = self.do_command(
                     Cmd::SetGainMpsd,
                     [U16::new(num as _), U16::new(8), U16::new(gain)],  // chan 8 = all channels
                 )?;
             }
             MesyGain::PerChannel(gains) => {
-                lprintln!(INFO, "Setting up MPSD {num} with threshold {threshold}, \
+                lprintln!(INFO, [name] "Setting up MPSD {num} with threshold {threshold}, \
                                  per-channel gains {gains:?}");
                 for (chan, gain) in gains.into_iter().enumerate() {
                     let _res: [U16; 3] = self.do_command(
@@ -300,9 +302,10 @@ pub trait MesyCommandHandler: Send + 'static {
     /// module's own channel-count convention for "all channels" (e.g. 8 for
     /// an 8-channel MPSD). Purely a runtime hardware command, never persisted
     /// -- also used to apply a live `SetParams` update to a running input.
-    fn set_pulser(&mut self, module: usize, chan: u16, pos: PulserPos, amp: u16, on: bool) -> UResult<()> {
+    fn set_pulser(&mut self, name: ModuleId, module: usize, chan: u16, pos: PulserPos, amp: u16,
+                 on: bool) -> UResult<()> {
         if on {
-            lprintln!(INFO, "Setting pulser on module {module}: chan {chan}, pos {pos:?}, amp {amp}");
+            lprintln!(INFO, [name] "Setting pulser on module {module}: chan {chan}, pos {pos:?}, amp {amp}");
         }
         let _res: [U16; 5] = self.do_command(
             Cmd::SetPulser,
@@ -326,6 +329,7 @@ pub struct CommandSocket {
     buffer: [u8; 2048],
     mcpd_id: u8,
     buf_count: u16,
+    name: ModuleId,
 }
 
 #[repr(C)]
@@ -379,7 +383,7 @@ impl MesyCommandHandler for CommandSocket {
                                       .fold(0, |sum, chunk| sum ^ LE::read_u16(chunk));
         packet.hdr.checksum.set(chksum);
         packet.trailer.set(0xFFFF);
-        ldebug!("Mesytec command: {packet:?}");
+        ldebug!([self.name] "Mesytec command: {packet:?}");
         // ldebug!("Mesytec command buffer: {:?}", packet.as_bytes());
 
         // exchange communication
@@ -398,7 +402,7 @@ impl MesyCommandHandler for CommandSocket {
             .map_err(|_| anyhow!("Reply packet has wrong length (expected {}, got {})",
                                  size_of::<Packet<Dout>>(), nrecv))
             .with_context(|| format!("Sending command {cmd:?}"))?;
-        ldebug!("Mesytec reply: {ret:?}");
+        ldebug!([self.name] "Mesytec reply: {ret:?}");
 
         // consistency checks
         if ret.hdr.buf_len != nrecv as u16 / 2 - 1 {
@@ -431,7 +435,8 @@ fn data_err<T>(msg: &str, got: impl ToString, exp: impl ToString) -> UResult<T> 
     Err(anyhow!("{} (expected {}, got {})", msg, exp.to_string(), got.to_string()))?
 }
 
-pub fn make_command_socket(local_data_addr: SocketAddr, config: &MesyConfig) -> UResult<CommandSocket> {
+pub fn make_command_socket(local_data_addr: SocketAddr, config: &MesyConfig,
+                           name: ModuleId) -> UResult<CommandSocket> {
     let local_ip = local_data_addr.ip();
     let port = local_data_addr.port() + 1;
     let socket = UdpSocket::bind((local_ip, port))
@@ -446,5 +451,6 @@ pub fn make_command_socket(local_data_addr: SocketAddr, config: &MesyConfig) -> 
         buffer: [0; 2048],
         mcpd_id: config.mcpd_id,
         buf_count: 0,
+        name,
     })
 }

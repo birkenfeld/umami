@@ -185,7 +185,7 @@ impl MesyInput<(), ()> {
             SourceConfig::IP(addr) => {
                 let reader = UdpReader::from_config(addr, confdir)?;
                 let local = reader.0.local_addr().context("Getting local address of UDP reader")?;
-                let cmds = cmd::make_command_socket(local, &config)?;
+                let cmds = cmd::make_command_socket(local, &config, common.name)?;
                 MesyInput::start_with_source(reader, cmds, config, common)
             }
             SourceConfig::File(path) => {
@@ -198,8 +198,8 @@ impl MesyInput<(), ()> {
 
 impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
     fn start_with_source(source: S, mut commands: C, config: MesyConfig, common: InputCommon) -> UResult<()> {
-        let (mod_types, mod_xmit_caps) = commands.scan()?;
-        commands.set_up(&mod_types, &mod_xmit_caps, &config)?;
+        let (mod_types, mod_xmit_caps) = commands.scan(common.name)?;
+        commands.set_up(common.name, &mod_types, &mod_xmit_caps, &config)?;
         let input = Self {
             source,
             command_handler: commands,
@@ -222,7 +222,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
 impl<S, C: cmd::MesyCommandHandler> MesyInput<S, C> {
     fn set_cells(&mut self, cells: BTreeMap<usize, MesyCellConfig>) -> UResult<()> {
         for (&idx, cfg) in &cells {
-            self.command_handler.set_up_cell(idx, cfg)?;
+            self.command_handler.set_up_cell(self.name, idx, cfg)?;
         }
         self.cells = cells;
         Ok(())
@@ -231,7 +231,7 @@ impl<S, C: cmd::MesyCommandHandler> MesyInput<S, C> {
     fn set_modules(&mut self, modules: BTreeMap<usize, MesyModuleConfig>) -> UResult<()> {
         for (&idx, cfg) in &modules {
             let modtype = self.mod_types.get(idx).copied().unwrap_or(cmd::ModType::None);
-            self.command_handler.set_up_module(idx, modtype, Some(cfg))?;
+            self.command_handler.set_up_module(self.name, idx, modtype, Some(cfg))?;
         }
         self.modules = modules;
         Ok(())
@@ -239,7 +239,7 @@ impl<S, C: cmd::MesyCommandHandler> MesyInput<S, C> {
 
     fn set_pulser(&mut self, pulser: BTreeMap<usize, PulserConfig>) -> UResult<()> {
         for (&idx, cfg) in &pulser {
-            self.command_handler.set_pulser(idx, cfg.chan, cfg.pos, cfg.amp, cfg.on)?;
+            self.command_handler.set_pulser(self.name, idx, cfg.chan, cfg.pos, cfg.amp, cfg.on)?;
         }
         self.pulser = pulser;
         Ok(())
