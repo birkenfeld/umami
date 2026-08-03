@@ -13,8 +13,8 @@ proc-macro = true
 path = "lib.rs"
 
 [dependencies]
-syn = "2.0"
+syn = "3.0"
 quote = "1.0"
-darling = "0.23.0"
+darling = "0.24.0"
 proc-macro2 = "1.0.106"
 quip = "0.2.0"
