@@ -29,6 +29,8 @@ const TX_P: u16 = 1;   // position only
 const TX_TP: u16 = 2;  // time + position
 const TX_TPA: u16 = 4; // time + position + amplitude
 
+pub const RESET_DATA_PORT: u16 = 54321;
+
 #[repr(u16)]
 #[derive(Clone, Copy, Debug)]
 pub enum Cmd {
@@ -117,6 +119,18 @@ pub trait MesyCommandHandler: Send + 'static {
 
     fn stop(&mut self) -> UResult<()> {
         self.do_noarg_cmd(Cmd::Stop)?;
+        Ok(())
+    }
+
+    /// Points this MCPD's data destination back at factory default port
+    fn default_reset(&mut self) -> UResult<()> {
+        let _: [U16; 14] = self.do_command(Cmd::SetCommPars, [
+            U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // no new mcpd ip
+            U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // data ip = self
+            U16::new(0),  // no new cmd port
+            U16::new(RESET_DATA_PORT),
+            U16::new(0), U16::new(0), U16::new(0), U16::new(0),  // cmd ip = self
+        ])?;
         Ok(())
     }
 

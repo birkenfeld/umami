@@ -2,6 +2,7 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 mod cmd;
+use cmd::MesyCommandHandler;
 
 use std::collections::BTreeMap;
 use std::io;
@@ -66,6 +67,9 @@ pub struct MesyConfig {
     #[serde(default = "default_true")]
     pub transmit_ampl: bool,
     pub mcpd_id: u8,
+    /// If set, on startup set data port to 54321
+    #[serde(default)]
+    pub default_reset: bool,
     #[serde(deserialize_with = "deserialize_usize_map")]
     pub cells: BTreeMap<usize, MesyCellConfig>,
     #[serde(deserialize_with = "deserialize_usize_map")]
@@ -143,8 +147,6 @@ pub enum MstdGain {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum MesyModuleConfig {
-    // TODO better types
-    // TODO amp mode
     Mpsd { threshold: u16, gain: MpsdGain },
     Mstd { threshold: u16, gain: MstdGain },
 }
@@ -197,7 +199,11 @@ impl MesyInput<(), ()> {
             SourceConfig::IP(addr) => {
                 let reader = UdpReader::from_config(addr, confdir)?;
                 let local = reader.0.local_addr().context("Getting local address of UDP reader")?;
-                let cmds = cmd::make_command_socket(local, &config, common.name)?;
+                let mut cmds = cmd::make_command_socket(local, &config, common.name)?;
+                if config.default_reset {
+                    cmds.default_reset()?;
+                    Err(anyhow!("{}: default port reset done", common.name))?;
+                }
                 MesyInput::start_with_source(reader, cmds, config, common)
             }
             SourceConfig::File(path) => {
