@@ -250,7 +250,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self._aliases = []   # its available_aliases, as last seen from get_params
         self._shms = {}      # histo_name -> ShmHistogram
         self._plots = {}     # histo_name -> (PlotItem, ImageItem|PlotDataItem, is_2d)
-        self._plot_specs = {}  # histo_name -> the spec last used to build its shm/plot
+        self._last_seen_histos = None  # the whole histos list as of the last rebuild
 
         self.table = QtWidgets.QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(['Name', 'X', 'Y', 'Filter', ''])
@@ -338,15 +338,14 @@ class AuxHistoWindow(QtWidgets.QWidget):
         plot_widget, _, _, _ = self._plots.pop(name)
         plot_widget.setParent(None)
         plot_widget.deleteLater()
-        self._plot_specs.pop(name, None)
 
     def invalidate_all(self):
         """Force every cached shm segment to be reopened on the next refresh.
 
         Needed after the umami process itself restarts: same-named segments
         are recreated from scratch with a new backing shm object, which
-        _rebuild()'s own before/after spec comparison has no way to notice
-        on its own (the specs it fetches via get_params look identical).
+        _rebuild()'s own before/after list comparison has no way to notice
+        on its own (the histos list it fetches via get_params looks identical).
         """
         for name in list(self._shms):
             self._forget(name)
@@ -363,7 +362,6 @@ class AuxHistoWindow(QtWidgets.QWidget):
             self.log.warning(f'Could not open {shm_name!r}: {e}')
             return False
         self._shms[name] = shm
-        self._plot_specs[name] = spec
         is_2d = shm.ny > 1
         plot_widget = pg.PlotWidget(title=html.escape(name), viewBox=ZoomViewBox())
         plot_item = plot_widget.getPlotItem()
@@ -391,14 +389,13 @@ class AuxHistoWindow(QtWidgets.QWidget):
         return True
 
     def _rebuild(self):
-        # forget anything removed, or whose definition changed since we last
-        # opened its shm segment -- the server unlinks and recreates the
-        # segment for *any* change (even just a tweaked axis range), so a
-        # pure name-based diff would keep reading a now-orphaned mapping
-        current = {h['name']: h for h in self._histos}
-        for name in list(self._shms):
-            if current.get(name) != self._plot_specs.get(name):
+        # the server recreates every histogram's shm segment whenever the
+        # histos list is replaced, even for an untouched entry -- so forget
+        # everything whenever the list as a whole differs from last time
+        if self._histos != self._last_seen_histos:
+            for name in list(self._shms):
                 self._forget(name)
+            self._last_seen_histos = list(self._histos)
 
         self.table.setRowCount(len(self._histos))
         for row, spec in enumerate(self._histos):
