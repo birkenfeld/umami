@@ -16,18 +16,11 @@ use crate::pipeline::PipeItem;
 
 pub type ModuleId = internment::Intern<String>;
 
-/// Datagram receive buffer size, for both the server (this module) and
-/// clients (`client.rs`, `umami_gui/client.py`). Sized to comfortably fit a
-/// SetParams/GetParams reply carrying a `time_bins` array up to the GUI's
-/// 4096-channel cap, with headroom -- well under the default 208 KiB
-/// Unix-socket buffer, so no setsockopt is needed.
+/// Datagram receive buffer size, for both the server and clients,
+/// Needs to fit SetParams/GetParams carrying a large `time_bins` array.
 pub const RECV_BUFFER_SIZE: usize = 131_072;
 
 /// Cap on how long a single command waits for replies from inputs/postprocessor.
-/// A wedged component is a data-integrity problem that needs a human to look at
-/// it regardless; this timeout's only job is to keep the command socket itself
-/// responsive (so unrelated commands like `Ping` aren't collateral damage) and
-/// to report the failure instead of hanging forever.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Builds the standard "gave up waiting" reply, also logging it locally since
