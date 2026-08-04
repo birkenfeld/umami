@@ -77,29 +77,35 @@ class HistoDefDialog(QtWidgets.QDialog):
     hand-writing the equivalent JSON.
     """
 
-    @staticmethod
-    def _make_range_row(bins_default, min_default, max_default):
+    RANGE_BOX_WIDTH = 80
+
+    @classmethod
+    def _range_spinbox(cls, value, lo=-2_147_483_648, hi=2_147_483_647):
+        box = QtWidgets.QSpinBox()
+        box.setRange(lo, hi)
+        box.setValue(value)
+        box.setFixedWidth(cls.RANGE_BOX_WIDTH)
+        return box
+
+    @classmethod
+    def _make_range_row(cls, bins_default, min_default, max_default):
         """One line combining an axis's Bins/Min/Max fields, for space economy.
 
-        Returns (row_widget, bins_spinbox, min_edit, max_edit).
+        Returns (row_widget, bins_spinbox, min_spinbox, max_spinbox).
         """
         row = QtWidgets.QWidget()
         row_layout = QtWidgets.QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.addWidget(QtWidgets.QLabel('Bins:'))
-        bins = QtWidgets.QSpinBox()
-        bins.setRange(1, 65535)
-        bins.setValue(bins_default)
+        bins = cls._range_spinbox(bins_default, 1, 65535)
         row_layout.addWidget(bins)
-        row_layout.addWidget(QtWidgets.QLabel('Min:'))
-        min_edit = QtWidgets.QLineEdit(str(min_default))
-        min_edit.setMinimumWidth(70)
-        row_layout.addWidget(min_edit)
-        row_layout.addWidget(QtWidgets.QLabel('Max:'))
-        max_edit = QtWidgets.QLineEdit(str(max_default))
-        max_edit.setMinimumWidth(70)
-        row_layout.addWidget(max_edit)
-        return row, bins, min_edit, max_edit
+        row_layout.addWidget(QtWidgets.QLabel('bins from'))
+        min_box = cls._range_spinbox(min_default)
+        row_layout.addWidget(min_box)
+        row_layout.addWidget(QtWidgets.QLabel('to'))
+        max_box = cls._range_spinbox(max_default)
+        row_layout.addWidget(max_box)
+        row_layout.addStretch()
+        return row, bins, min_box, max_box
 
     def __init__(self, parent=None, spec=None, aliases=None):
         super().__init__(parent)
@@ -161,25 +167,14 @@ class HistoDefDialog(QtWidgets.QDialog):
         layout.addWidget(help_scroll)
         layout.addWidget(buttons)
 
-    def _int(self, field, label):
-        try:
-            return int(field.text().strip())
-        except ValueError:
-            QtWidgets.QMessageBox.warning(
-                self, 'Invalid', f'{label} must be an integer.')
-            return None
-
-    def _validate_and_accept(self):   # noqa: PLR0911
+    def _validate_and_accept(self):
         if not self.name_edit.text().strip():
             QtWidgets.QMessageBox.warning(self, 'Invalid', 'Name is required.')
             return
         if not self.x_expr.text().strip():
             QtWidgets.QMessageBox.warning(self, 'Invalid', 'X expression is required.')
             return
-        x_min, x_max = self._int(self.x_min, 'X min'), self._int(self.x_max, 'X max')
-        if x_min is None or x_max is None:
-            return
-        if x_max <= x_min:
+        if self.x_max.value() <= self.x_min.value():
             QtWidgets.QMessageBox.warning(
                 self, 'Invalid', 'X max must be greater than X min.')
             return
@@ -188,11 +183,7 @@ class HistoDefDialog(QtWidgets.QDialog):
                 QtWidgets.QMessageBox.warning(
                     self, 'Invalid', 'Y expression is required.')
                 return
-            y_min, y_max = (self._int(self.y_min, 'Y min'),
-                            self._int(self.y_max, 'Y max'))
-            if y_min is None or y_max is None:
-                return
-            if y_max <= y_min:
+            if self.y_max.value() <= self.y_min.value():
                 QtWidgets.QMessageBox.warning(
                     self, 'Invalid', 'Y max must be greater than Y min.')
                 return
@@ -206,8 +197,8 @@ class HistoDefDialog(QtWidgets.QDialog):
             'name': self.name_edit.text().strip(),
             'x': {'expr': self.x_expr.text().strip(),
                   'bins': self.x_bins.value(),
-                  'min': int(self.x_min.text().strip()),
-                  'max': int(self.x_max.text().strip())},
+                  'min': self.x_min.value(),
+                  'max': self.x_max.value()},
         }
         filt = self.filter_edit.text().strip()
         if filt:
@@ -215,8 +206,8 @@ class HistoDefDialog(QtWidgets.QDialog):
         if self.y_check.isChecked():
             result['y'] = {'expr': self.y_expr.text().strip(),
                            'bins': self.y_bins.value(),
-                           'min': int(self.y_min.text().strip()),
-                           'max': int(self.y_max.text().strip())}
+                           'min': self.y_min.value(),
+                           'max': self.y_max.value()}
         return result
 
 
