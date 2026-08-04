@@ -519,7 +519,9 @@ class MainWindow(QtWidgets.QWidget):
             self.cursor_label.setText('')
             return
         view_pos = self.plot.vb.mapSceneToView(scene_pos)
-        x, y = int(np.floor(view_pos.x())), int(np.floor(view_pos.y()))
+        # the image is drawn shifted by (-0.5, -0.5) (see _build_main_plot)
+        x = int(np.floor(view_pos.x() + 0.5))
+        y = int(np.floor(view_pos.y() + 0.5))
         if (self.last_buf is not None
             and 0 <= y < self.last_buf.shape[0]
             and 0 <= x < self.last_buf.shape[1]
