@@ -7,6 +7,7 @@ A form-based add/edit dialog and the window that discovers a running
 `aux_histo` output and live-plots its histograms.
 """
 
+import html
 from pathlib import Path
 
 import numpy as np
@@ -364,11 +365,11 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self._shms[name] = shm
         self._plot_specs[name] = spec
         is_2d = shm.ny > 1
-        plot_widget = pg.PlotWidget(title=name, viewBox=ZoomViewBox())
+        plot_widget = pg.PlotWidget(title=html.escape(name), viewBox=ZoomViewBox())
         plot_item = plot_widget.getPlotItem()
-        plot_item.setLabel('bottom', spec['x']['expr'])
+        plot_item.setLabel('bottom', html.escape(spec['x']['expr']))
         if is_2d:
-            plot_item.setLabel('left', spec['y']['expr'])
+            plot_item.setLabel('left', html.escape(spec['y']['expr']))
             img = pg.ImageItem(border='w', axisOrder='row-major')
             plot_item.addItem(img)
             img.setColorMap(pg.colormap.get('viridis'))
