@@ -79,6 +79,23 @@ pub enum PulserPos {
     Middle = 2,
 }
 
+/// What was discovered about one MCPD peripheral slot during [`MesyCommandHandler::scan`].
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct FoundModule {
+    pub mod_type: ModType,
+    /// (major, minor); zero for an empty slot.
+    pub fw_version: (u8, u8),
+}
+
+/// MCPD firmware version discovered during [`MesyCommandHandler::scan`].
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct McpdVersion {
+    /// (major, minor)
+    pub cpu: (u8, u8),
+    /// (major, minor)
+    pub fpga: (u8, u8),
+}
+
 /// Abstraction for the Mesytec command handler.
 ///
 /// When reading from a dump file, no commands can be sent (or are required).
@@ -102,23 +119,24 @@ pub trait MesyCommandHandler: Send + 'static {
         Ok(())
     }
 
-    /// Returns the module type and transmission-mode capability bitmask
-    /// (see [`Self::set_tx_mode`]) of each of the 8 module slots.
-    fn scan(&mut self, name: ModuleId) -> UResult<([ModType; 8], [u16; 8])> {
+    /// Returns the MCPD's own firmware version, the module type/firmware
+    /// version found in each of the 8 module slots, and each slot's
+    /// transmission-mode capability bitmask (see [`Self::set_tx_mode`]).
+    fn scan(&mut self, name: ModuleId) -> UResult<(McpdVersion, [FoundModule; 8], [u16; 8])> {
         let mcpd_ver: [U16; 3] = self.do_command(Cmd::GetMcpdVer, ())?;
-        let cpu_major = mcpd_ver[0];
-        let cpu_minor = mcpd_ver[1];
-        let fpga_major = mcpd_ver[2] >> 8;
-        let fpga_minor = mcpd_ver[2] & 0xFF;
+        let version = McpdVersion {
+            cpu: (mcpd_ver[0].get() as u8, mcpd_ver[1].get() as u8),
+            fpga: ((mcpd_ver[2].get() >> 8) as u8, (mcpd_ver[2].get() & 0xFF) as u8),
+        };
         lprintln!(INFO, [name] "MCPD version: CPU {}.{} FPGA {}.{}",
-                  cpu_major, cpu_minor, fpga_major, fpga_minor);
+                  version.cpu.0, version.cpu.1, version.fpga.0, version.fpga.1);
 
         let ids: [U16; 8] = self.do_command(Cmd::ReadIds, U16::new(2))?;
-        let mut mod_types = [ModType::None; 8];
+        let mut found = [FoundModule { mod_type: ModType::None, fw_version: (0, 0) }; 8];
         let mut mod_xmit_caps = [0u16; 8];
 
         for (i, mod_id) in ids.into_iter().enumerate() {
-            mod_types[i] = ModType::from(mod_id.get());
+            found[i].mod_type = ModType::from(mod_id.get());
             if mod_id == 0 {
                 continue;
             }
@@ -126,17 +144,18 @@ pub trait MesyCommandHandler: Send + 'static {
             let mod_info: [U16; 4] = self.do_command(Cmd::GetModInfo, [U16::new(i as _)])?;
             let mod_xmit_cap = mod_info[1];
             let mod_xmit_set = mod_info[2];
-            let mod_major = mod_info[3] >> 8;
-            let mod_minor = mod_info[3] & 0xFF;
+            let mod_major = mod_info[3].get() >> 8;
+            let mod_minor = mod_info[3].get() & 0xFF;
+            found[i].fw_version = (mod_major as u8, mod_minor as u8);
             mod_xmit_caps[i] = mod_xmit_cap.get();
 
             lprintln!(INFO, [name] "MCPD module {i}: ID {}, xmit cap {}, xmit set {}, firmware {}.{}",
                       mod_id, mod_xmit_cap, mod_xmit_set, mod_major, mod_minor);
         }
-        Ok((mod_types, mod_xmit_caps))
+        Ok((version, found, mod_xmit_caps))
     }
 
-    fn set_up(&mut self, name: ModuleId, modules: &[ModType; 8], mod_xmit_caps: &[u16; 8],
+    fn set_up(&mut self, name: ModuleId, found: &[FoundModule; 8], mod_xmit_caps: &[u16; 8],
              config: &MesyConfig) -> UResult<()> {
         // Make sure the MCPD is idle before pushing setup, regardless of
         // what state a previous session left it running in.
@@ -155,7 +174,7 @@ pub trait MesyCommandHandler: Send + 'static {
         }
 
         self.set_timing(name, config.is_master, config.terminate, config.ext_sync)?;
-        self.set_tx_mode(name, modules, mod_xmit_caps, config.transmit_ampl)?;
+        self.set_tx_mode(name, found, mod_xmit_caps, config.transmit_ampl)?;
 
         for i in 0..8 {
             if let Some(cfg) = config.cells.get(&i) {
@@ -163,17 +182,17 @@ pub trait MesyCommandHandler: Send + 'static {
             }
         }
 
-        for (i, modtype) in modules.iter().enumerate() {
-            if *modtype != ModType::None {
-                self.set_up_module(name, i, *modtype, config.modules.get(&i))?;
+        for (i, module) in found.iter().enumerate() {
+            if module.mod_type != ModType::None {
+                self.set_up_module(name, i, module.mod_type, config.modules.get(&i))?;
             }
         }
 
         // Pulser state is never persisted, so a previous session's setting
         // could otherwise still be active; force it off on every MPSD-class
         // module present.
-        for (i, modtype) in modules.iter().enumerate() {
-            if matches!(modtype, ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P) {
+        for (i, module) in found.iter().enumerate() {
+            if matches!(module.mod_type, ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P) {
                 self.set_pulser(name, i, 0, PulserPos::Middle, 0, false)?;
             }
         }
@@ -196,12 +215,12 @@ pub trait MesyCommandHandler: Send + 'static {
     /// every present module, capped at TP if `transmit_ampl` is false
     /// (amplitude data adds per-event processing overhead that can matter
     /// at high count rates). Pushed both MCPD-wide and to each module.
-    fn set_tx_mode(&mut self, name: ModuleId, modules: &[ModType; 8], mod_xmit_caps: &[u16; 8],
+    fn set_tx_mode(&mut self, name: ModuleId, found: &[FoundModule; 8], mod_xmit_caps: &[u16; 8],
                    transmit_ampl: bool) -> UResult<()> {
         let cap_reply: [U16; 2] = self.do_command(Cmd::GetCapabilities, ())?;
         let mut cap = cap_reply[0].get();
-        for (i, modtype) in modules.iter().enumerate() {
-            if *modtype != ModType::None {
+        for (i, module) in found.iter().enumerate() {
+            if module.mod_type != ModType::None {
                 cap &= mod_xmit_caps[i];
             }
         }
@@ -219,8 +238,8 @@ pub trait MesyCommandHandler: Send + 'static {
         let _res: [U16; 1] = self.do_command(Cmd::SetCapabilities, [U16::new(mode)])?;
 
         // Update each module's own transmission mode too (peripheral register 1).
-        for (i, modtype) in modules.iter().enumerate() {
-            if *modtype != ModType::None {
+        for (i, module) in found.iter().enumerate() {
+            if module.mod_type != ModType::None {
                 let _res: [U16; 3] = self.do_command(
                     Cmd::WritePeriReg,
                     [U16::new(i as _), U16::new(1), U16::new(mode)],

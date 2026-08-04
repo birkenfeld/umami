@@ -160,9 +160,12 @@ where
     dump: DumpHandler,
     // configuration
     name: ModuleId,
-    #[param(readonly = true, datatype = "array of detected module types",
-            help = "Module type detected per MCPD slot at startup")]
-    mod_types: [cmd::ModType; 8],
+    #[param(readonly = true, datatype = "MCPD firmware version: {cpu: (major, minor), fpga: (major, minor)}",
+            help = "MCPD CPU/FPGA firmware version detected at startup")]
+    mcpd_version: cmd::McpdVersion,
+    #[param(readonly = true, datatype = "array of detected module type/firmware version",
+            help = "Module type and firmware version detected per MCPD slot at startup")]
+    found: [cmd::FoundModule; 8],
     #[param(has_setter = true, datatype = "map of cell index to (source, compare)",
             help = "Per-cell trigger source/compare setting")]
     cells: BTreeMap<usize, MesyCellConfig>,
@@ -198,14 +201,15 @@ impl MesyInput<(), ()> {
 
 impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
     fn start_with_source(source: S, mut commands: C, config: MesyConfig, common: InputCommon) -> UResult<()> {
-        let (mod_types, mod_xmit_caps) = commands.scan(common.name)?;
-        commands.set_up(common.name, &mod_types, &mod_xmit_caps, &config)?;
+        let (mcpd_version, found, mod_xmit_caps) = commands.scan(common.name)?;
+        commands.set_up(common.name, &found, &mod_xmit_caps, &config)?;
         let input = Self {
             source,
             command_handler: commands,
             dump: Default::default(),
             name: common.name,
-            mod_types,
+            mcpd_version,
+            found,
             cells: config.cells,
             modules: config.modules,
             pulser: BTreeMap::new(),
@@ -230,7 +234,7 @@ impl<S, C: cmd::MesyCommandHandler> MesyInput<S, C> {
 
     fn set_modules(&mut self, modules: BTreeMap<usize, MesyModuleConfig>) -> UResult<()> {
         for (&idx, cfg) in &modules {
-            let modtype = self.mod_types.get(idx).copied().unwrap_or(cmd::ModType::None);
+            let modtype = self.found.get(idx).map(|f| f.mod_type).unwrap_or(cmd::ModType::None);
             self.command_handler.set_up_module(self.name, idx, modtype, Some(cfg))?;
         }
         self.modules = modules;
@@ -537,7 +541,8 @@ mod tests {
             command_handler: (),
             dump: Default::default(),
             name: ModuleId::new("mesy".into()),
-            mod_types: [cmd::ModType::Mpsd8; 8],
+            mcpd_version: cmd::McpdVersion::default(),
+            found: [cmd::FoundModule { mod_type: cmd::ModType::Mpsd8, fw_version: (0, 0) }; 8],
             cells: BTreeMap::new(),
             modules: BTreeMap::new(),
             pulser: BTreeMap::new(),
@@ -620,26 +625,26 @@ mod tests {
     }
 
     #[test]
-    fn test_get_params_reports_detected_mod_types_readonly() {
+    fn test_get_params_reports_detected_found_readonly() {
         let input = make_input();
         let params = input.get_params(false).unwrap();
-        let types = params["mod_types"]["value"].as_array().unwrap();
-        assert_eq!(types.len(), 8);
-        assert!(types.iter().all(|t| t == "mpsd8"));
+        let found = params["found"]["value"].as_array().unwrap();
+        assert_eq!(found.len(), 8);
+        assert!(found.iter().all(|m| m["mod_type"] == "mpsd8"));
     }
 
     #[test]
-    fn test_update_params_rejects_setting_mod_types() {
+    fn test_update_params_rejects_setting_found() {
         let mut input = make_input();
         let mut set = ParamMap::new();
-        set.insert("mod_types".into(), serde_json::json!(vec!["mpsd8"; 8]));
+        set.insert("found".into(), serde_json::json!(vec!["mpsd8"; 8]));
         assert!(input.update_params(ModuleId::new("mesy".into()), set).is_err());
     }
 
     #[test]
     fn test_update_params_wrong_module_type_is_only_a_warning() {
         let mut input = make_input();
-        input.mod_types[2] = cmd::ModType::Mwpchr;
+        input.found[2].mod_type = cmd::ModType::Mwpchr;
         let mut set = ParamMap::new();
         set.insert("modules".into(), serde_json::json!({
             "2": {"type": "mpsd", "threshold": 1, "gain": 1},

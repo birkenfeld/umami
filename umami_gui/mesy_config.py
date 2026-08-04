@@ -123,7 +123,7 @@ class MesyModulesTable(QtWidgets.QTableWidget):
     `{"3": {"type": "mpsd", "threshold": 42, "gain": [1,2,3,4,5,6,7,8]}}` --
     "Configure" means umami manages that slot, not that the module is
     enabled; unset rows are omitted. "Detected" is read-only, from
-    `mod_types`. `gain` from get-params can be a single number (loaded into
+    `found`. `gain` from get-params can be a single number (loaded into
     all 8 spinboxes) or an already-per-channel array; `current()` always
     reports a full 8-element array (functionally identical to a uniform
     value on the wire, just explicit). Edits are local until read via
@@ -177,10 +177,14 @@ class MesyModulesTable(QtWidgets.QTableWidget):
                 row_gains.append(gain)
             self._gains.append(row_gains)
 
-    def set_detected_types(self, mod_types):
-        """`mod_types`: the 8 strings from the read-only `mod_types` param."""
-        for row, name in enumerate(mod_types):
-            self._detected[row].setText(name)
+    def set_detected_types(self, found):
+        """Load the 8 `{mod_type, fw_version}` entries from the `found` param."""
+        for row, entry in enumerate(found):
+            major, minor = entry['fw_version']
+            text = entry['mod_type']
+            if major or minor:
+                text += f' (v{major}.{minor})'
+            self._detected[row].setText(text)
 
     def set_modules(self, modules):
         """Load from a get-params `modules` value: `{"<idx>": {type, ...}}`."""
@@ -360,6 +364,9 @@ class McpdConfigWindow(QtWidgets.QWidget):
         page = QtWidgets.QWidget()
         page_layout = QtWidgets.QVBoxLayout(page)
 
+        version_label = QtWidgets.QLabel('MCPD firmware: -')
+        page_layout.addWidget(version_label)
+
         modules_box = QtWidgets.QGroupBox('Modules')
         modules_table = MesyModulesTable()
         QtWidgets.QVBoxLayout(modules_box).addWidget(modules_table)
@@ -379,12 +386,13 @@ class McpdConfigWindow(QtWidgets.QWidget):
         page_layout.addWidget(modules_box)
         page_layout.addLayout(bottom_row)
         self.tabs.addTab(page, name)
-        return cells_table, modules_table, pulser_table
+        return cells_table, modules_table, pulser_table, version_label
 
     def _apply_all(self):
         """Push every tab's cells/modules/pulser edits live, in one set_params call."""
         params = {}
-        for name, (cells_table, modules_table, pulser_table) in self._tables.items():
+        for name, tables in self._tables.items():
+            cells_table, modules_table, pulser_table, _version_label = tables
             params[f'{name}.cells'] = cells_table.current()
             params[f'{name}.modules'] = modules_table.current()
             params[f'{name}.pulser'] = pulser_table.current()
@@ -393,7 +401,7 @@ class McpdConfigWindow(QtWidgets.QWidget):
             self.applied.emit()
 
     def refresh(self):
-        """Re-pull cells/modules/mod_types/pulser for every detected mesy input."""
+        """Re-pull cells/modules/found/mcpd_version/pulser for every mesy input."""
         params = self.client.get_params(full=True)
         if params is None:
             return
@@ -404,13 +412,22 @@ class McpdConfigWindow(QtWidgets.QWidget):
             self._names = names
             self._tables = {name: self._add_tab(name) for name in names}
 
-        for name, (cells_table, modules_table, pulser_table) in self._tables.items():
+        for name, tables in self._tables.items():
+            cells_table, modules_table, pulser_table, version_label = tables
             cells = (params.get(f'{name}.cells') or {}).get('value') or {}
             modules = (params.get(f'{name}.modules') or {}).get('value') or {}
             pulser = (params.get(f'{name}.pulser') or {}).get('value') or {}
-            mod_types = ((params.get(f'{name}.mod_types') or {}).get('value')
-                         or ['-'] * N_SLOTS)
+            found = ((params.get(f'{name}.found') or {}).get('value')
+                     or [{'mod_type': '-', 'fw_version': (0, 0)}] * N_SLOTS)
+            mcpd_version = (params.get(f'{name}.mcpd_version') or {}).get('value')
             cells_table.set_cells(cells)
             modules_table.set_modules(modules)
-            modules_table.set_detected_types(mod_types)
+            modules_table.set_detected_types(found)
             pulser_table.set_pulser(pulser)
+            if mcpd_version:
+                cpu = mcpd_version['cpu']
+                fpga = mcpd_version['fpga']
+                version_label.setText(
+                    f'MCPD firmware: CPU {cpu[0]}.{cpu[1]}, FPGA {fpga[0]}.{fpga[1]}')
+            else:
+                version_label.setText('MCPD firmware: -')
