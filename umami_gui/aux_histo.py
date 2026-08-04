@@ -120,7 +120,7 @@ class HistoDefDialog(QtWidgets.QDialog):
         self.x_expr = QtWidgets.QLineEdit(x.get('expr', ''))
         form.addRow('  Expr:', self.x_expr)
         x_row, self.x_bins, self.x_min, self.x_max = self._make_range_row(
-            x.get('bins', 256), x.get('min', 0), x.get('max', 256))
+            x.get('bins', 256), x.get('min', 0), x.get('max', 255))
         form.addRow('  Range:', x_row)
 
         self.y_check = QtWidgets.QCheckBox('2-D (add Y axis)')
@@ -131,7 +131,7 @@ class HistoDefDialog(QtWidgets.QDialog):
         form.addRow('  Expr:', self.y_expr)
         y_row, self.y_bins, self.y_min, self.y_max = self._make_range_row(
             (y or {}).get('bins', 256), (y or {}).get('min', 0),
-            (y or {}).get('max', 256))
+            (y or {}).get('max', 255))
         form.addRow('  Range:', y_row)
 
         def sync_y_enabled(checked):
