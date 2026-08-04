@@ -236,10 +236,10 @@ impl Input for JumiomInput {
     }
 
     fn handle(&mut self, cmd: Command) -> UResult<CommandReply> {
-        if let Command::SetRawDump { enable, path } = cmd {
-            if let Some(shared) = SHARED.lock().unwrap().as_mut() {
-                shared.dump.configure(enable, path)?;
-            }
+        if let Command::SetRawDump { enable, path } = cmd
+            && let Some(shared) = SHARED.lock().unwrap().as_mut()
+        {
+            shared.dump.configure(enable, path)?;
         }
         Ok(CommandReply::Ok)
     }

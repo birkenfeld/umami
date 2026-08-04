@@ -317,11 +317,9 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
             lprintln!(WARN, [self.name] "Got event buffer but daq stopped");
             return Ok(vec![]);
         }
-        if let Some(prev) = self.buf_serial {
-            if buf_serial != prev.wrapping_add(1) {
-                lprintln!(WARN, [self.name] "Skipped {} buffer(s): serial {} -> {}",
-                          buf_serial.wrapping_sub(prev + 1), prev, buf_serial);
-            }
+        if let Some(prev) = self.buf_serial && buf_serial != prev.wrapping_add(1) {
+            lprintln!(WARN, [self.name] "Skipped {} buffer(s): serial {} -> {}",
+                      buf_serial.wrapping_sub(prev + 1), prev, buf_serial);
         }
         self.buf_serial = Some(buf_serial);
         //lprintln!(DEBUG, [self.name] "Got a data buffer");
@@ -445,10 +443,10 @@ impl MesySource for ReplayFile {
                         // this line should contain the number of header lines
                         if let Some(pos) = buffer.windows(15).position(|w| w == b"header length: ") {
                             let start_num = pos + 15;
-                            if let Some(end_num) = buffer[start_num..].windows(6).position(|w| w == b" lines") {
-                                if let Some(num) = parse_int(&buffer[start_num..][..end_num]) {
-                                    header_lines = num;
-                                }
+                            if let Some(end_num) = buffer[start_num..].windows(6).position(|w| w == b" lines")
+                                && let Some(num) = parse_int(&buffer[start_num..][..end_num])
+                            {
+                                header_lines = num;
                             }
                         }
                     }

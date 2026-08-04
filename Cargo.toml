@@ -3,7 +3,7 @@
 [package]
 name = "umami"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["Georg Brandl <g.brandl@fz-juelich.de>",
            "Alexander Zaft <a.zaft@fz-juelich.de>",
            "Enrico Faulhaber <enrico.faulhaber@frm2.tum.de>"]

@@ -37,7 +37,7 @@ cargo build --features trace
   linker search path, point `JUMPSD_LIB_DIR` at its directory (or the .so
   file itself)
 - **jemalloc** linked at compile time (global allocator in `src/bin/umami.rs`)
-- Rust edition 2021, MSRV currently 1.88
+- Rust edition 2024, MSRV currently 1.88
 
 ## Architecture
 

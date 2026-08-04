@@ -180,10 +180,10 @@ impl CommandHandler {
                 PipeItem::SaveHisto(path, max_nt, rep_send), &rep_recv, deadline),
             Command::Start { .. } | Command::Stop | Command::SetRawDump { .. } |
             Command::Reset => {
-                if let Command::Start { run_id } = &cmd {
-                    if self.post_send.send_deadline(PipeItem::StartOfRun(run_id.into()), deadline).is_err() {
-                        return unresponsive("Postprocessor");
-                    }
+                if let Command::Start { run_id } = &cmd
+                    && self.post_send.send_deadline(PipeItem::StartOfRun(run_id.into()), deadline).is_err()
+                {
+                    return unresponsive("Postprocessor");
                 }
                 let cmd_and_send = (cmd, rep_send);
                 for (name, sender) in &self.input_send {
