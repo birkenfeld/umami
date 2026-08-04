@@ -74,6 +74,9 @@ impl PostProcessor {
 
         while let Ok(mut item) = self.input.recv() {
             match item {
+                // Possible future optimization: coalesce small batches into
+                // fewer, larger ones before forwarding, to cut per-output
+                // channel overhead without affecting the sorter's latency.
                 PipeItem::Events(evs) => {
                     let evs = self.recipes[recipe].process(evs);
                     ltrace!("Processed events: {:?}", evs);
