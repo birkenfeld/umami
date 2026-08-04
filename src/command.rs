@@ -27,7 +27,7 @@ pub const RECV_BUFFER_SIZE: usize = 131_072;
 /// A wedged component is a data-integrity problem that needs a human to look at
 /// it regardless; this timeout's only job is to keep the command socket itself
 /// responsive (so unrelated commands like `Ping` aren't collateral damage) and
-/// to report the failure clearly instead of hanging forever.
+/// to report the failure instead of hanging forever.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Builds the standard "gave up waiting" reply, also logging it locally since

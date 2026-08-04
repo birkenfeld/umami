@@ -49,7 +49,7 @@ fn unpack_adc(raw: (u32, u32)) -> [i32; 4] {
 
 /// The "adchelper" value used to index the limit table: each ADC value
 /// (shifted down 3 more bits) is summed only when non-negative, then the
-/// sum is divided by 4 regardless of how many terms were actually added.
+/// sum is divided by 4 regardless of how many terms were added.
 fn adchelper(adc: [i32; 4]) -> i32 {
     let sum: i32 = adc.iter().map(|v| v >> 3).filter(|&v| v >= 0).sum();
     sum >> 2

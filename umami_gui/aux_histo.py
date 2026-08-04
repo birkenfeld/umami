@@ -296,7 +296,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(splitter)
 
-        # Only ticks while the window is actually visible (see showEvent /
+        # Only ticks while the window is visible (see showEvent /
         # hideEvent) -- no point polling params or shm segments for a window
         # the user has never opened.
         self._timer = QtCore.QTimer(self)

@@ -294,9 +294,9 @@ mod tests {
 
     #[test]
     fn test_tof1_monitor_event_immediately_followed_by_next_frame() {
-        // Monitor/Chopper events are only 2 words on the wire; the very next
-        // word is already the next event's word0, and framing must resync
-        // correctly without needing to see word2/word3 first.
+        // Monitor/Chopper events are only 2 words on the wire; the next word
+        // is already the next event's word0, and framing must resync without
+        // needing to see word2/word3 first.
         let mut dec = JumiomDecoder::new(JumiomMode::Tof1);
         let monitor_word0 = 0x8000_0000 | 0x1000_0000;
         let next = tof1_words(true, 2, 2, 1, [8, 8, 8, 8]);
