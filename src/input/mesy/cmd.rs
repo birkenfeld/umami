@@ -16,7 +16,7 @@ use crate::command::ModuleId;
 use crate::config::SourceConfig;
 use crate::error::UResult;
 use crate::util::resolve;
-use super::{MesyCellConfig, MesyConfig, MesyGain, MesyModuleConfig};
+use super::{MesyCellConfig, MesyConfig, MesyModuleConfig, MpsdGain, MstdGain};
 
 const HEADER_WORDS: u16 = 10;
 const BUFFERTYPE: u16 = 0x8000;
@@ -44,6 +44,7 @@ pub enum Cmd {
     GetCapabilities = 22,
     SetCapabilities = 23,
     GetModInfo = 24,
+    SetGainMstd = 26,
     ReadIds = 36,
     GetMcpdVer = 51,
     // ReadPeriReg = 52,
@@ -147,6 +148,10 @@ pub trait MesyCommandHandler: Send + 'static {
             let mod_major = mod_info[3].get() >> 8;
             let mod_minor = mod_info[3].get() & 0xFF;
             found[i].fw_version = (mod_major as u8, mod_minor as u8);
+            // treat MSTD one whose firmware has reached 6.0 as the newer variant
+            if found[i].mod_type == ModType::Mstd16 && found[i].fw_version >= (6, 0) {
+                found[i].mod_type = ModType::Mstd16P;
+            }
             mod_xmit_caps[i] = mod_xmit_cap.get();
 
             lprintln!(INFO, [name] "MCPD module {i}: ID {}, xmit cap {}, xmit set {}, firmware {}.{}",
@@ -155,8 +160,8 @@ pub trait MesyCommandHandler: Send + 'static {
         Ok((version, found, mod_xmit_caps))
     }
 
-    fn set_up(&mut self, name: ModuleId, found: &[FoundModule; 8], mod_xmit_caps: &[u16; 8],
-             config: &MesyConfig) -> UResult<()> {
+    fn set_up(&mut self, name: ModuleId, mcpd_version: McpdVersion, found: &[FoundModule; 8],
+              mod_xmit_caps: &[u16; 8], config: &MesyConfig) -> UResult<()> {
         // Make sure the MCPD is idle before pushing setup, regardless of
         // what state a previous session left it running in.
         let _ = self.stop();
@@ -184,15 +189,16 @@ pub trait MesyCommandHandler: Send + 'static {
 
         for (i, module) in found.iter().enumerate() {
             if module.mod_type != ModType::None {
-                self.set_up_module(name, i, module.mod_type, config.modules.get(&i))?;
+                self.set_up_module(name, i, module.mod_type, mcpd_version, config.modules.get(&i))?;
             }
         }
 
         // Pulser state is never persisted, so a previous session's setting
-        // could otherwise still be active; force it off on every MPSD-class
+        // could otherwise still be active; force it off on every MPSD/MSTD-class
         // module present.
         for (i, module) in found.iter().enumerate() {
-            if matches!(module.mod_type, ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P) {
+            if matches!(module.mod_type, ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P
+                                        | ModType::Mstd16 | ModType::Mstd16P) {
                 self.set_pulser(name, i, 0, PulserPos::Middle, 0, false)?;
             }
         }
@@ -262,10 +268,10 @@ pub trait MesyCommandHandler: Send + 'static {
     }
 
     /// Push one module's threshold/gain to hardware, if `modtype` is a
-    /// configurable MPSD-class module. Also used to apply a live
+    /// configurable MPSD- or MSTD-class module. Also used to apply a live
     /// `SetParams` update to a running input.
     fn set_up_module(&mut self, name: ModuleId, idx: usize, modtype: ModType,
-                     cfg: Option<&MesyModuleConfig>) -> UResult<()> {
+                     mcpd_version: McpdVersion, cfg: Option<&MesyModuleConfig>) -> UResult<()> {
         match modtype {
             ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P => match cfg {
                 Some(MesyModuleConfig::Mpsd { threshold, gain }) =>
@@ -276,6 +282,24 @@ pub trait MesyCommandHandler: Send + 'static {
                 }
                 None => {
                     lprintln!(WARN, [name] "MPSD {idx} has no assigned config, not configuring");
+                    Ok(())
+                }
+            },
+            ModType::Mstd16 | ModType::Mstd16P => match cfg {
+                Some(MesyModuleConfig::Mstd { threshold, gain }) => {
+                    // Original MSTD-16 modules only gained a dedicated gain
+                    // command once the MCPD's own firmware reached 9.8; below
+                    // that, gain has to go through the MPSD-8 gain command,
+                    // which can only address this module's channels in pairs.
+                    let mstd16p = matches!(modtype, ModType::Mstd16P) || mcpd_version.cpu >= (9, 8);
+                    self.set_up_mstd(name, idx, mstd16p, *threshold, *gain)
+                }
+                Some(_) => {
+                    lprintln!(WARN, [name] "Module {idx} is not an MSTD, not configuring");
+                    Ok(())
+                }
+                None => {
+                    lprintln!(WARN, [name] "MSTD {idx} has no assigned config, not configuring");
                     Ok(())
                 }
             },
@@ -290,22 +314,57 @@ pub trait MesyCommandHandler: Send + 'static {
         }
     }
 
-    fn set_up_mpsd(&mut self, name: ModuleId, num: usize, threshold: u16, gain: MesyGain) -> UResult<()> {
+    fn set_up_mpsd(&mut self, name: ModuleId, num: usize, threshold: u16, gain: MpsdGain) -> UResult<()> {
         match gain {
-            MesyGain::Uniform(gain) => {
+            MpsdGain::Uniform(gain) => {
                 lprintln!(INFO, [name] "Setting up MPSD {num} with threshold {threshold}, gain {gain}");
                 let _res: [U16; 3] = self.do_command(
                     Cmd::SetGainMpsd,
                     [U16::new(num as _), U16::new(8), U16::new(gain)],  // chan 8 = all channels
                 )?;
             }
-            MesyGain::PerChannel(gains) => {
+            MpsdGain::PerChannel(gains) => {
                 lprintln!(INFO, [name] "Setting up MPSD {num} with threshold {threshold}, \
                                  per-channel gains {gains:?}");
                 for (chan, gain) in gains.into_iter().enumerate() {
                     let _res: [U16; 3] = self.do_command(
                         Cmd::SetGainMpsd,
                         [U16::new(num as _), U16::new(chan as _), U16::new(gain)],
+                    )?;
+                }
+            }
+        }
+        let _res: [U16; 2] = self.do_command(
+            Cmd::SetThreshold,
+            [U16::new(num as _), U16::new(threshold)],
+        )?;
+        Ok(())
+    }
+
+    /// Push one MSTD-16's threshold/gain to hardware. `mstd16p` selects the
+    /// dedicated MSTD gain command; otherwise gain falls back to the MPSD-8
+    /// gain command, which can only address this module's 16 channels in
+    /// pairs -- a requested channel index (including the all-channels
+    /// sentinel, 16) above 7 is halved to compensate.
+    fn set_up_mstd(&mut self, name: ModuleId, num: usize, mstd16p: bool, threshold: u16,
+                   gain: MstdGain) -> UResult<()> {
+        let gain_cmd = if mstd16p { Cmd::SetGainMstd } else { Cmd::SetGainMpsd };
+        let halve = |chan: u16| if !mstd16p && chan > 7 { chan / 2 } else { chan };
+        match gain {
+            MstdGain::Uniform(gain) => {
+                lprintln!(INFO, [name] "Setting up MSTD {num} with threshold {threshold}, gain {gain}");
+                let _res: [U16; 3] = self.do_command(
+                    gain_cmd,
+                    [U16::new(num as _), U16::new(halve(16)), U16::new(gain)],  // 16 = all channels
+                )?;
+            }
+            MstdGain::PerChannel(gains) => {
+                lprintln!(INFO, [name] "Setting up MSTD {num} with threshold {threshold}, \
+                                 per-channel gains {gains:?}");
+                for (chan, gain) in gains.into_iter().enumerate() {
+                    let _res: [U16; 3] = self.do_command(
+                        gain_cmd,
+                        [U16::new(num as _), U16::new(halve(chan as u16)), U16::new(gain)],
                     )?;
                 }
             }
@@ -472,4 +531,134 @@ pub fn make_command_socket(local_data_addr: SocketAddr, config: &MesyConfig,
         buf_count: 0,
         name,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use super::*;
+
+    /// Records every `do_command` call, and replies to them in order from a
+    /// pre-scripted queue (falling back to a zeroed reply once exhausted).
+    #[derive(Default)]
+    struct Scripted {
+        calls: RefCell<Vec<(u16, Vec<u8>)>>,
+        replies: RefCell<VecDeque<Vec<u8>>>,
+    }
+
+    impl Scripted {
+        fn reply(&self, vals: &[u16]) {
+            self.replies.borrow_mut().push_back(vals.iter().flat_map(|v| v.to_le_bytes()).collect());
+        }
+    }
+
+    impl MesyCommandHandler for Scripted {
+        fn do_command<Din, Dout>(&mut self, cmd: Cmd, data: Din) -> UResult<Dout>
+            where Din: IntoBytes + Immutable + Unaligned + Debug, Dout: FromBytes + Debug
+        {
+            self.calls.borrow_mut().push((cmd as u16, data.as_bytes().to_vec()));
+            let bytes = self.replies.borrow_mut().pop_front()
+                .unwrap_or_else(|| vec![0u8; size_of::<Dout>()]);
+            Ok(Dout::read_from_prefix(&bytes).expect("reply size mismatch").0)
+        }
+    }
+
+    /// (addr, chan, value) triples for every call to a 3-word gain command.
+    fn gain_calls(rec: &Scripted, cmd: Cmd) -> Vec<(u16, u16, u16)> {
+        let cmd = cmd as u16;
+        rec.calls.borrow().iter()
+            .filter(|(c, _)| *c == cmd)
+            .map(|(_, data)| (LE::read_u16(&data[0..2]), LE::read_u16(&data[2..4]), LE::read_u16(&data[4..6])))
+            .collect()
+    }
+
+    #[test]
+    fn test_set_up_mstd_uses_dedicated_gain_command_with_full_channel_index_when_mstd16p() {
+        let mut rec = Scripted::default();
+        rec.set_up_mstd(ModuleId::new("m".into()), 3, true, 42, MstdGain::Uniform(7)).unwrap();
+        assert_eq!(gain_calls(&rec, Cmd::SetGainMstd), vec![(3, 16, 7)]);
+        assert!(gain_calls(&rec, Cmd::SetGainMpsd).is_empty());
+    }
+
+    #[test]
+    fn test_set_up_mstd_falls_back_to_mpsd_gain_command_and_halves_channel_when_not_mstd16p() {
+        let mut rec = Scripted::default();
+        rec.set_up_mstd(ModuleId::new("m".into()), 3, false, 42, MstdGain::Uniform(7)).unwrap();
+        // 16 = all channels for MSTD-16, halved to 8 = all channels for MPSD-8
+        assert_eq!(gain_calls(&rec, Cmd::SetGainMpsd), vec![(3, 8, 7)]);
+        assert!(gain_calls(&rec, Cmd::SetGainMstd).is_empty());
+    }
+
+    #[test]
+    fn test_set_up_mstd_per_channel_gain_halves_only_channels_above_7_when_not_mstd16p() {
+        let mut rec = Scripted::default();
+        let gains: [u16; 16] = std::array::from_fn(|i| i as u16);
+        rec.set_up_mstd(ModuleId::new("m".into()), 0, false, 0, MstdGain::PerChannel(gains)).unwrap();
+        let chans: Vec<u16> = gain_calls(&rec, Cmd::SetGainMpsd).iter().map(|&(_, chan, _)| chan).collect();
+        assert_eq!(chans, vec![0, 1, 2, 3, 4, 5, 6, 7, 4, 4, 5, 5, 6, 6, 7, 7]);
+    }
+
+    #[test]
+    fn test_set_up_module_uses_mstd_gain_command_once_mcpd_firmware_reaches_9_8() {
+        let mut rec = Scripted::default();
+        let cfg = MesyModuleConfig::Mstd { threshold: 1, gain: MstdGain::Uniform(5) };
+        rec.set_up_module(ModuleId::new("m".into()), 2, ModType::Mstd16,
+                           McpdVersion { cpu: (9, 8), fpga: (0, 0) }, Some(&cfg)).unwrap();
+        assert_eq!(gain_calls(&rec, Cmd::SetGainMstd), vec![(2, 16, 5)]);
+    }
+
+    #[test]
+    fn test_set_up_module_falls_back_below_mcpd_firmware_9_8() {
+        let mut rec = Scripted::default();
+        let cfg = MesyModuleConfig::Mstd { threshold: 1, gain: MstdGain::Uniform(5) };
+        rec.set_up_module(ModuleId::new("m".into()), 2, ModType::Mstd16,
+                           McpdVersion { cpu: (9, 7), fpga: (0, 0) }, Some(&cfg)).unwrap();
+        assert_eq!(gain_calls(&rec, Cmd::SetGainMpsd), vec![(2, 8, 5)]);
+    }
+
+    #[test]
+    fn test_set_up_module_promoted_mstd16p_always_uses_dedicated_gain_command() {
+        let mut rec = Scripted::default();
+        let cfg = MesyModuleConfig::Mstd { threshold: 1, gain: MstdGain::Uniform(5) };
+        rec.set_up_module(ModuleId::new("m".into()), 2, ModType::Mstd16P,
+                           McpdVersion { cpu: (0, 0), fpga: (0, 0) }, Some(&cfg)).unwrap();
+        assert_eq!(gain_calls(&rec, Cmd::SetGainMstd), vec![(2, 16, 5)]);
+    }
+
+    #[test]
+    fn test_set_up_module_warns_instead_of_erroring_on_mismatched_mstd_config() {
+        let mut rec = Scripted::default();
+        let cfg = MesyModuleConfig::Mpsd { threshold: 1, gain: MpsdGain::Uniform(5) };
+        rec.set_up_module(ModuleId::new("m".into()), 2, ModType::Mstd16,
+                           McpdVersion::default(), Some(&cfg)).unwrap();
+        assert!(gain_calls(&rec, Cmd::SetGainMpsd).is_empty());
+        assert!(gain_calls(&rec, Cmd::SetGainMstd).is_empty());
+    }
+
+    #[test]
+    fn test_scan_promotes_mstd16_to_mstd16p_once_module_firmware_reaches_6_0() {
+        let mut rec = Scripted::default();
+        rec.reply(&[1, 0, 0]);                    // GetMcpdVer: cpu 1.0, fpga 0.0
+        let mut ids = [0u16; 8];
+        ids[0] = ModType::Mstd16 as u16;
+        rec.reply(&ids);                          // ReadIds
+        rec.reply(&[0, 0xF, 0, 6 << 8]);           // GetModInfo slot 0: firmware 6.0
+        let (_, found, _) = rec.scan(ModuleId::new("m".into())).unwrap();
+        assert_eq!(found[0].mod_type, ModType::Mstd16P);
+        assert_eq!(found[0].fw_version, (6, 0));
+    }
+
+    #[test]
+    fn test_scan_keeps_mstd16_type_below_module_firmware_6_0() {
+        let mut rec = Scripted::default();
+        rec.reply(&[1, 0, 0]);
+        let mut ids = [0u16; 8];
+        ids[0] = ModType::Mstd16 as u16;
+        rec.reply(&ids);
+        rec.reply(&[0, 0xF, 0, (5 << 8) | 9]);     // firmware 5.9
+        let (_, found, _) = rec.scan(ModuleId::new("m".into())).unwrap();
+        assert_eq!(found[0].mod_type, ModType::Mstd16);
+        assert_eq!(found[0].fw_version, (5, 9));
+    }
 }

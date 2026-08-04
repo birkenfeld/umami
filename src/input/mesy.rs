@@ -126,9 +126,18 @@ pub struct MesyCellConfig {
 /// (one value per tube).
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(untagged)]
-pub enum MesyGain {
+pub enum MpsdGain {
     Uniform(u16),
     PerChannel([u16; 8]),
+}
+
+/// An MSTD-16's gain, either the same for every channel or given per channel
+/// (one value per channel, 16 channels total).
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum MstdGain {
+    Uniform(u16),
+    PerChannel([u16; 16]),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -136,8 +145,8 @@ pub enum MesyGain {
 pub enum MesyModuleConfig {
     // TODO better types
     // TODO amp mode
-    Mpsd { threshold: u16, gain: MesyGain },
-    Mstd { threshold: u16, gain: u16 },
+    Mpsd { threshold: u16, gain: MpsdGain },
+    Mstd { threshold: u16, gain: MstdGain },
 }
 
 /// One module's test-pulse injection setting.
@@ -202,7 +211,7 @@ impl MesyInput<(), ()> {
 impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
     fn start_with_source(source: S, mut commands: C, config: MesyConfig, common: InputCommon) -> UResult<()> {
         let (mcpd_version, found, mod_xmit_caps) = commands.scan(common.name)?;
-        commands.set_up(common.name, &found, &mod_xmit_caps, &config)?;
+        commands.set_up(common.name, mcpd_version, &found, &mod_xmit_caps, &config)?;
         let input = Self {
             source,
             command_handler: commands,
@@ -235,7 +244,7 @@ impl<S, C: cmd::MesyCommandHandler> MesyInput<S, C> {
     fn set_modules(&mut self, modules: BTreeMap<usize, MesyModuleConfig>) -> UResult<()> {
         for (&idx, cfg) in &modules {
             let modtype = self.found.get(idx).map(|f| f.mod_type).unwrap_or(cmd::ModType::None);
-            self.command_handler.set_up_module(self.name, idx, modtype, Some(cfg))?;
+            self.command_handler.set_up_module(self.name, idx, modtype, self.mcpd_version, Some(cfg))?;
         }
         self.modules = modules;
         Ok(())
@@ -517,7 +526,7 @@ mod tests {
         assert!(matches!(cfg.cells[&1].source, CellTrigger::Aux2));
         assert_eq!(cfg.cells[&1].compare.get(), 5);
         assert!(matches!(cfg.modules[&3],
-                MesyModuleConfig::Mpsd { threshold: 42, gain: MesyGain::Uniform(7) }));
+                MesyModuleConfig::Mpsd { threshold: 42, gain: MpsdGain::Uniform(7) }));
     }
 
     struct NoSource;
@@ -572,7 +581,7 @@ mod tests {
         input.update_params(ModuleId::new("mesy".into()), set).unwrap();
 
         assert!(matches!(input.modules[&3],
-                MesyModuleConfig::Mpsd { threshold: 42, gain: MesyGain::Uniform(7) }));
+                MesyModuleConfig::Mpsd { threshold: 42, gain: MpsdGain::Uniform(7) }));
         assert!(matches!(input.cells[&1].source, CellTrigger::Aux2));
         assert_eq!(input.cells[&1].compare.get(), 5);
     }
@@ -597,7 +606,7 @@ mod tests {
         input.update_params(ModuleId::new("mesy".into()), set).unwrap();
 
         assert!(matches!(input.modules[&3],
-                MesyModuleConfig::Mpsd { threshold: 42, gain: MesyGain::PerChannel(
+                MesyModuleConfig::Mpsd { threshold: 42, gain: MpsdGain::PerChannel(
                     [1, 2, 3, 4, 5, 6, 7, 8]) }));
     }
 

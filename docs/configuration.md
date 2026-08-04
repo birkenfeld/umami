@@ -78,7 +78,12 @@ Each module entry:
 * `type = "mpsd"` or `type = "mstd"`
 * `threshold`
 * `gain`: either a single number (same gain for every channel/tube) or an
-  array of 8 numbers (one per channel) -- MPSD modules only
+  array of per-channel numbers -- 8 for `mpsd`, 16 for `mstd`
+
+An original MSTD-16 whose own firmware has reached 6.0 is treated like an
+MSTD-16+ (reported as such in `found`); below that, per-channel gain can only
+address channels in pairs on hardware whose MCPD firmware is also below 9.8
+-- unavoidable hardware limitations, not something to configure.
 
 `pulser` (runtime-settable via `set_params` only): map of module index ->
 `{ chan, pos, amp, on }`, injects a test pulse into an MPSD-class module
