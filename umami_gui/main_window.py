@@ -123,6 +123,11 @@ class MainWindow(QtWidgets.QWidget):
         self.refresh_params()
         self.poll_state()
 
+    def closeEvent(self, event):  # noqa: N802
+        # other top-level windows may still be open (see _quick_setup_window)
+        super().closeEvent(event)
+        QtWidgets.QApplication.instance().quit()
+
     # ---- main image plot ----
 
     def _build_main_plot(self):
