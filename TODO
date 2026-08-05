@@ -8,9 +8,13 @@
 - Total counts (in add. to slice counts)?
 - tooltip/toolbar for 2d plots
 - do not dump packets without neutrons
-
+- show chopper/monitor rate
+- add monitor number in monitor events
+- mcpdid in channel for AuxSignal
 - pulser amplitude units?
 - tof signal?
-- cps integration time
+- cps integration time 1s
 - colorscale linear with pulser?
 - pulser channel 8 = all doesn't work
+- fix readin of non-swapped mesy file
+- option to skip emitting empty packets in raw dump
