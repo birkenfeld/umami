@@ -4,5 +4,6 @@
 - More custom aliases (raw -> y pre calib etc)
 - Test input errors with real hw
 - Save config: only if val changed in session
+- Close app when closing main window
 - Total counts (in add. to slice counts)?
 - tooltip/toolbar for 2d plots
