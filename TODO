@@ -7,3 +7,10 @@
 - Close app when closing main window
 - Total counts (in add. to slice counts)?
 - tooltip/toolbar for 2d plots
+- do not dump packets without neutrons
+
+- pulser amplitude units?
+- tof signal?
+- cps integration time
+- colorscale linear with pulser?
+- pulser channel 8 = all doesn't work
