@@ -38,9 +38,9 @@ pub struct Mpsd {
     /// Maps Edge channel to event type mapping; a channel not listed here
     /// will stay as Edge.
     #[serde(default, deserialize_with = "crate::util::deserialize_map_with_key")]
-    #[param(help = "Maps interesting MCPD digital input channels to event type \
-                    (\"tzero\"/\"monitor=num\"/\"aux=num\")")]
-    edge_channels: BTreeMap<u32, EdgeMapping>,
+    #[param(help = "Maps interesting MCPD digital input channels to event type",
+            datatype = "{{\"number\" = (\"tzero\"/\"monitor=num\"/\"aux=num\")}}")]
+    inputs: BTreeMap<u32, EdgeMapping>,
 }
 
 impl Recipe for Mpsd {
@@ -60,7 +60,7 @@ impl Recipe for Mpsd {
                     event.histo.y = event.raw.0 as u16; // TODO: calibration
                 }
                 EventType::Edge { up: true } => {
-                    if let Some(mapped) = self.edge_channels.get(&event.channel.0) {
+                    if let Some(mapped) = self.inputs.get(&event.channel.0) {
                         event.evtype = mapped.to_evtype();
                     }
                 }
@@ -155,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mpsd_unmapped_edge_channel_is_left_alone() {
+    fn test_mpsd_unmapped_input_is_left_alone() {
         for up in [true, false] {
             let mut recipe = Mpsd::from_config(toml::Table::new(), &empty_recipes()).unwrap();
             let ev = test_utils::edge(100, 5, up);
@@ -165,9 +165,9 @@ mod tests {
     }
 
     #[test]
-    fn test_mpsd_edge_channel_mapping() {
+    fn test_mpsd_input_mapping() {
         let cfg: toml::Table = toml::from_str(r#"
-            [edge_channels]
+            [inputs]
             3 = "tzero"
             5 = { monitor = 1 }
             7 = { aux = 2 }
