@@ -284,8 +284,8 @@ class MesyPulserTable(QtWidgets.QTableWidget):
             self._ons.append(on)
 
             chan = QtWidgets.QSpinBox()
-            chan.setRange(0, N_SLOTS)
-            chan.setToolTip(f'Channel to pulse, or {N_SLOTS} for all channels')
+            chan.setRange(0, N_SLOTS - 1)
+            chan.setToolTip('Channel to pulse')
             self.setCellWidget(row, 2, chan)
             self._chans.append(chan)
 
