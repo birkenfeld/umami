@@ -16,13 +16,7 @@ from .icons import ICON_SIZE, icon_button, load_icon
 
 
 class ReplayWindow(QtWidgets.QWidget):
-    """Pick a run subdirectory and load its files into matching inputs.
-
-    "Load" only pushes the `replay_file` param of every input that has a
-    matching file in the selected run directory -- it never starts anything
-    itself. Follows the same "closing just hides" pattern as the other
-    quick-setup windows.
-    """
+    """Pick a run subdirectory and load its files into matching inputs."""
 
     applied = QtCore.pyqtSignal()
 
@@ -47,15 +41,15 @@ class ReplayWindow(QtWidgets.QWidget):
 
         self.run_list = QtWidgets.QListWidget()
         self.run_list.setIconSize(ICON_SIZE)
+        self.run_list.itemDoubleClicked.connect(lambda: self._load(start=True))
 
-        load_btn = icon_button('file_open', 'Load')
+        load_btn = icon_button('file_open', 'Prepare replay')
         load_btn.setToolTip('Set replay_file on every input with a matching '
                              'file in the selected run directory.')
         load_btn.clicked.connect(lambda: self._load(start=False))
-        load_start_btn = icon_button('start', 'Load and start cleared', tint=False)
+        load_start_btn = icon_button('start', 'Clear and replay', tint=False)
         load_start_btn.setStyleSheet(
             'background-color: rgb(140, 205, 140); color: black;')
-        load_start_btn.setToolTip('Load, then Clear and Start the new run.')
         load_start_btn.clicked.connect(lambda: self._load(start=True))
 
         close_btn = QtWidgets.QPushButton('Close')

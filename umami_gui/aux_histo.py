@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
+from pyqtgraph import exporters
 from pyqtgraph.Qt import QtCore, QtWidgets
 
 from .axis_items import ZoomViewBox
@@ -482,8 +483,13 @@ class AuxHistoWindow(QtWidgets.QWidget):
         menu = QtWidgets.QMenu(self)
         for spec in self._histos:
             name = spec['name']
-            menu.addAction(
-                name, lambda _=False, n=name: self._save_histogram_to_file(n))
+            submenu = menu.addMenu(name)
+            submenu.addAction(
+                'ASCII text...',
+                lambda _=False, n=name: self._save_histogram_to_file(n))
+            submenu.addAction(
+                'Image...',
+                lambda _=False, n=name: self._save_histogram_image(n))
         button = self.sender()
         menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
 
@@ -551,6 +557,22 @@ class AuxHistoWindow(QtWidgets.QWidget):
             np.savetxt(path, np.column_stack([x, counts]), fmt=['%g', '%d'],
                        header='x y', comments='')
         self.log.info(f'Saved aux histogram {name!r} to {path}')
+
+    def _save_histogram_image(self, name):
+        if name not in self._plots:
+            QtWidgets.QMessageBox.warning(
+                self, 'Not available', f'Histogram {name!r} is not currently open.')
+            return
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, f'Save Histogram {name!r} Image', '',
+            'PNG files (*.png);;All files (*)')
+        if not path:
+            return
+        if not Path(path).suffix:
+            path += '.png'
+        plot_widget, *_ = self._plots[name]
+        exporters.ImageExporter(plot_widget.getPlotItem()).export(path)
+        self.log.info(f'Saved aux histogram {name!r} image to {path}')
 
     def _add_histogram(self):
         if self._module is None:

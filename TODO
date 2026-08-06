@@ -6,6 +6,3 @@ Later:
 - Save config: only if val changed in session
 - Tooltip/toolbar for 2d plots?
 - Mesy pulser smoke test
-
-Now:
-- Show chopper/monitor rate
