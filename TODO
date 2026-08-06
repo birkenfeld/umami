@@ -13,5 +13,4 @@ Now:
 - Add monitor number in monitor events
 - mcpdid in channel for AuxSignal
 - pulser amplitude units?
-- tof signal?
 - pulser channel 8 = all doesn't work

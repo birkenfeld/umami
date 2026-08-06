@@ -212,9 +212,10 @@ class TofConfigWindow(QtWidgets.QWidget):
 
     applied = QtCore.pyqtSignal()
 
-    def __init__(self, client):
+    def __init__(self, client, get_nt_capacity):
         super().__init__()
         self.client = client
+        self.get_nt_capacity = get_nt_capacity
         self.setWindowTitle('UMAMI TOF setup')
         self.resize(500, 500)
 
@@ -248,10 +249,23 @@ class TofConfigWindow(QtWidgets.QWidget):
     def _apply_all(self):
         """Push every tab's currently valid bins live, in one set_params call."""
         params = {}
+        capacity = self.get_nt_capacity()
+        over_capacity = []
         for name, widget in self._tabs_by_name.items():
             bins = widget.current()
             if bins is not None:
                 params[f'{name}.time_bins'] = bins
+                needed = len(bins) + 1  # umami appends one more (overflow) bin
+                if capacity is not None and needed > capacity:
+                    over_capacity.append((name, needed))
+        if over_capacity:
+            lines = '\n'.join(f'- {name}: needs {needed} time slices'
+                               for name, needed in over_capacity)
+            QtWidgets.QMessageBox.warning(
+                self, 'Not enough histogram capacity',
+                'The histogram buffer only has room for '
+                f'{capacity} time slice(s) (max_nt in the config):\n\n{lines}\n\n'
+                'Extra bins will be dropped until max_nt is increased.')
         if params:
             self.client.set_params(params)
             self.applied.emit()

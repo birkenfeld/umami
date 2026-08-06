@@ -211,6 +211,10 @@ class MainWindow(QtWidgets.QWidget):
         if self.t_proj_window is not None:
             edges_ns = self.t_proj_window.bin_edges_ns
             n = len(edges_ns) if edges_ns is not None else self.histo.nt
+            # read_time_projection() clamps to self.histo.nt internally, so n
+            # must match that clamp too, or the returned y is shorter than
+            # the edges array setData() expects.
+            n = min(n, self.histo.nt)
             self.t_proj_window.update_data(n, self.histo.read_time_projection(n))
 
         total = int(buf.sum())
@@ -452,7 +456,8 @@ class MainWindow(QtWidgets.QWidget):
 
     def show_tof_config_window(self):
         window = self._quick_setup_window(
-            'tof_config_window', lambda: TofConfigWindow(self.client),
+            'tof_config_window',
+            lambda: TofConfigWindow(self.client, lambda: self.histo.nt),
             on_applied=self.refresh_params)
         window.show()
         window.raise_()
