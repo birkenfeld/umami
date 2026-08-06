@@ -8,14 +8,27 @@ use std::ops::{Deref, DerefMut};
 use std::ptr::{self, NonNull};
 use anyhow::{anyhow, Context};
 use nix::{fcntl::OFlag, unistd::ftruncate};
-use nix::sys::{mman::{shm_open, mmap, MapFlags, ProtFlags},
-               stat::Mode};
+use nix::sys::{mman::{shm_open, mmap, MapFlags, ProtFlags}, stat::Mode};
 use crate::config::HistoConfig;
 use crate::error::UResult;
-use crate::event::EventHisto;
+use crate::event::{EventHisto, EventTime};
 
-pub const MAX_INPUTS: usize = 128;
-pub const MAX_HISTO_SIZE: usize = 1024 * 1024 * 1024;  // 1 GB shmem
+/// Maximum number of histogram bins (nx * ny * nt) that can be allocated in
+/// shared memory.  This is a sanity check.
+pub const MAX_HISTO_SIZE: usize = 1024 * 1024 * 1024;  // 4 GB shmem
+
+/// "UMAMI" + a two-digit ASCII version, lets a reader detect a layout version
+/// mismatch by comparing against `SHM_MAGIC`.
+pub const SHM_MAGIC: [u8; 8] = *b"UMAMI01 ";
+
+/// Size of the `ShmInterface` header.  Changing this must change SHM_MAGIC, and
+/// also be reflected in the client code.
+#[allow(unused)]
+const SHM_HEADER_SIZE: usize = 224;
+
+/// Number of `Monitor {num}` counter slots reserved in the header (indices
+/// 0..MONITOR_COUNTERS); a `num` outside this range is silently ignored.
+const MONITOR_COUNTERS: usize = 5;
 
 /// `global_state` bit set while a run is active (between `StartOfRun` and
 /// `EndOfRun`) -- lets a client freeze its `run_start`-derived elapsed-time
@@ -66,6 +79,7 @@ impl ShmBox {
                 let place_ptr = histo_ptr.add(off);
                 ptr::write(place_ptr, place_ptr.read() + 1);
             }
+            self.total_neutrons += 1;
         }
     }
 
@@ -115,6 +129,7 @@ impl ShmBox {
 // the SHM does not create undefined behavior.
 #[derive(zerocopy::FromBytes)]
 pub struct ShmInterface {
+    pub magic: [u8; 8],
     pub run_id: [u8; 128],
     pub global_state: u32,
     pub nx: u16,
@@ -122,6 +137,11 @@ pub struct ShmInterface {
     pub nt: u16,
     pub ni: u16,
     pub run_start: u32,
+    pub total_events: u64,
+    pub total_neutrons: u64,
+    pub lifetime_ns: i64,
+    pub tzero_count: u64,
+    pub monitor_counts: [u64; MONITOR_COUNTERS],
 }
 
 impl ShmInterface {
@@ -148,13 +168,40 @@ impl ShmInterface {
         }
     }
 
+    pub fn add_events(&mut self, n: usize) {
+        self.total_events += n as u64;
+    }
+
+    pub fn add_tzero(&mut self) {
+        self.tzero_count += 1;
+    }
+
+    pub fn add_monitor(&mut self, num: u8) {
+        if let Some(count) = self.monitor_counts.get_mut(num as usize) {
+            *count += 1;
+        }
+    }
+
+    pub fn set_lifetime(&mut self, ns: EventTime) {
+        self.lifetime_ns = ns.0;
+    }
+
+    pub fn clear_counters(&mut self) {
+        self.total_events = 0;
+        self.total_neutrons = 0;
+        self.lifetime_ns = 0;
+        self.tzero_count = 0;
+        self.monitor_counts = [0; MONITOR_COUNTERS];
+    }
+
     pub fn create(name: &str, config: &HistoConfig) -> UResult<ShmBox> {
         let max_size = config.nx * config.ny * config.max_nt;
         if max_size == 0 {
             Err(anyhow!("Requested histogram size is zero"))?;
         }
         if max_size > MAX_HISTO_SIZE {
-            Err(anyhow!("Requested histogram size {max_size} exceeds maximum of {MAX_HISTO_SIZE}"))?;
+            Err(anyhow!("Requested histogram size {max_size} exceeds maximum of \
+                         {MAX_HISTO_SIZE} bins"))?;
         }
 
         let total_size = size_of::<ShmInterface>() + max_size * size_of::<u32>();
@@ -168,12 +215,19 @@ impl ShmInterface {
                 .context("Mapping shared memory block")?
         };
         let mut shmbox = ShmBox { ptr: ptr.cast() };
+        shmbox.magic = SHM_MAGIC;
         shmbox.run_id.fill(0);
         shmbox.global_state = 0;
         shmbox.nx = config.nx as u16;
         shmbox.ny = config.ny as u16;
         shmbox.nt = config.max_nt as u16;
         shmbox.ni = config.max_ni as u16;
+        shmbox.run_start = 0;
+        shmbox.total_events = 0;
+        shmbox.total_neutrons = 0;
+        shmbox.lifetime_ns = 0;
+        shmbox.tzero_count = 0;
+        shmbox.monitor_counts = [0; MONITOR_COUNTERS];
         Ok(shmbox)
     }
 
@@ -234,9 +288,19 @@ mod tests {
     }
 
     #[test]
+    fn test_shm_interface_size() {
+        // pins the header size, so a future field addition/reordering can't
+        // silently shift the histogram's starting offset unnoticed
+        assert_eq!(size_of::<ShmInterface>(), SHM_HEADER_SIZE);
+    }
+
+    #[test]
     fn test_shm_create_and_basic_ops() {
         let shm_guard = ShmGuard::unique();
         let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
+
+        // create() stamps the magic value
+        assert_eq!(shm.magic, SHM_MAGIC);
 
         // set_run_id
         shm.set_run_id("run_001");
@@ -262,6 +326,40 @@ mod tests {
         assert_eq!(histo[0], 2);
         // bin (1,2,3) → offset 3*16 + 2*4 + 1 = 57
         assert_eq!(histo[57], 1);
+    }
+
+    #[test]
+    fn test_shm_counters() {
+        let shm_guard = ShmGuard::unique();
+        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
+
+        shm.add_events(3);
+        shm.add_events(2);
+        assert_eq!(shm.total_events, 5);
+
+        shm.add_histo(EventHisto { x: 0, y: 0, t: 0, i: 0 }); // in bounds
+        shm.add_histo(EventHisto { x: 10, y: 10, t: 10, i: 0 }); // out of bounds
+        assert_eq!(shm.total_neutrons, 1);
+
+        shm.add_tzero();
+        shm.add_tzero();
+        assert_eq!(shm.tzero_count, 2);
+
+        shm.add_monitor(0);
+        shm.add_monitor(4);
+        shm.add_monitor(4);
+        shm.add_monitor(100); // out of range, silently ignored
+        assert_eq!(shm.monitor_counts, [1, 0, 0, 0, 2]);
+
+        shm.set_lifetime(EventTime(12345));
+        assert_eq!(shm.lifetime_ns, 12345);
+
+        shm.clear_counters();
+        assert_eq!(shm.total_events, 0);
+        assert_eq!(shm.total_neutrons, 0);
+        assert_eq!(shm.lifetime_ns, 0);
+        assert_eq!(shm.tzero_count, 0);
+        assert_eq!(shm.monitor_counts, [0; 5]);
     }
 
     #[test]

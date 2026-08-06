@@ -9,7 +9,7 @@ use crate::{lprintln, ltrace};
 use crate::channel::{Receiver, Sender};
 use crate::command::{CommandReply, ModuleId};
 use crate::error::{UResult};
-use crate::event::EventType;
+use crate::event::{EventTime, EventType};
 use crate::input::InputState;
 use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
@@ -24,6 +24,7 @@ pub struct PostProcessor {
     input_state: BTreeMap<ModuleId, InputState>,
     shm: ShmBox,
     instance_name: Option<String>,
+    first_ev_time: Option<EventTime>,
 }
 
 impl PostProcessor {
@@ -51,6 +52,7 @@ impl PostProcessor {
             input_state: BTreeMap::new(),
             shm: data,
             instance_name,
+            first_ev_time: None,
         }
     }
 
@@ -80,9 +82,17 @@ impl PostProcessor {
                 PipeItem::Events(evs) => {
                     let evs = self.recipes[recipe].process(evs);
                     ltrace!("Processed events: {:?}", evs);
+                    self.shm.add_events(evs.len());
+                    if let Some(last) = evs.last() {
+                        let first = *self.first_ev_time.get_or_insert(last.time);
+                        self.shm.set_lifetime(last.time - first);
+                    }
                     for ev in &evs {
-                        if let EventType::Neutron = ev.evtype {
-                            self.shm.add_histo(ev.histo);
+                        match ev.evtype {
+                            EventType::Neutron => self.shm.add_histo(ev.histo),
+                            EventType::Tzero => self.shm.add_tzero(),
+                            EventType::Monitor { num } => self.shm.add_monitor(num),
+                            _ => {}
                         }
                     }
                     item = PipeItem::Events(evs);
@@ -106,6 +116,8 @@ impl PostProcessor {
                 PipeItem::Clear => {
                     lprintln!(INFO, "Clearing histogram");
                     self.shm.clear_histo();
+                    self.shm.clear_counters();
+                    self.first_ev_time = None;
                 }
 
                 // Meta items, sent on to outputs
@@ -404,6 +416,9 @@ mod tests {
             test_utils::neutron_xy(100, 0, 1, 2),
             test_utils::neutron_xy(200, 0, 1, 2),
             test_utils::edge(300, 0, true), // not a neutron, shouldn't be histogrammed
+            test_utils::tzero(400),
+            test_utils::monitor(500, 1),
+            test_utils::monitor(600, 1),
         ];
         input.send(PipeItem::Events(events)).unwrap();
         sync_barrier(&input);
@@ -413,11 +428,31 @@ mod tests {
         assert_eq!(histo.iter().sum::<u32>(), 2);
         assert_eq!(histo[2 * 4 + 1], 2); // offset for (x=1, y=2, t=0)
 
+        // counters: total_events counts every event in the batch, total_neutrons
+        // only the two in-bounds neutrons, tzero/monitor per their own type.
+        // lifetime is 0 here: this is the very first batch since start/Clear,
+        // so first_event_time is seeded from this same batch's last event (600)
+        assert_eq!(shm_read.total_events, 6);
+        assert_eq!(shm_read.total_neutrons, 2);
+        assert_eq!(shm_read.tzero_count, 1);
+        assert_eq!(shm_read.monitor_counts, [0, 2, 0, 0, 0]);
+        assert_eq!(shm_read.lifetime_ns, 0);
+
         input.send(PipeItem::Clear).unwrap();
         sync_barrier(&input);
         assert!(shm_read.histo_data().iter().all(|&v| v == 0));
+        assert_eq!(shm_read.total_events, 0);
+        assert_eq!(shm_read.total_neutrons, 0);
+        assert_eq!(shm_read.tzero_count, 0);
+        assert_eq!(shm_read.monitor_counts, [0; 5]);
+        assert_eq!(shm_read.lifetime_ns, 0);
 
+        // lifetime tracking restarts from this next event, not from time 100 again
         input.send(PipeItem::Events(vec![test_utils::neutron_xy(100, 0, 0, 0)])).unwrap();
+        sync_barrier(&input);
+        assert_eq!(shm_read.lifetime_ns, 0);
+        assert_eq!(shm_read.total_events, 1);
+
         let path = format!("/tmp/umami_postproc_test_histo_{}", std::process::id());
         let (send, recv) = channel::bounded(1);
         input.send(PipeItem::SaveHisto(path.clone(), 1, send)).unwrap();

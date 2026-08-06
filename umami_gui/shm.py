@@ -7,14 +7,20 @@ Shared-memory segment layout:
 
     Offset  Size  Field
     ------  ----  -----
-       0     128  run_id (ASCII, NUL-padded)
-     128       4  global_state (u32, bit 0: initialized, bit 1: run active)
-     132       2  nx (u16)
-     134       2  ny (u16)
-     136       2  nt (u16)
-     138       2  ni (u16, unused -- not implemented on the UMAMI side)
-     140       4  run_start (u32, Unix timestamp of the last StartOfRun, 0 if none yet)
-     144    nx*ny*nt x 4  histogram bins (u32, LE)
+       0       8  magic (ASCII "UMAMI" + 2-digit version + a space, e.g. "UMAMI01 ")
+       8     128  run_id (ASCII, NUL-padded)
+     136       4  global_state (u32, bit 0: initialized, bit 1: run active)
+     140       2  nx (u16)
+     142       2  ny (u16)
+     144       2  nt (u16)
+     146       2  ni (u16, unused -- not implemented on the UMAMI side)
+     148       4  run_start (u32, Unix timestamp of the last StartOfRun, 0 if none yet)
+     152       8  total_events (u64, all events since the last Clear)
+     160       8  total_neutrons (u64, neutrons landed in-bounds since last Clear)
+     168       8  lifetime_ns (u64, last event time - first event time since last Clear)
+     176       8  tzero_count (u64, Tzero events since the last Clear)
+     184      40  monitor_counts (5 x u64, indexed by Monitor{num}, since last Clear)
+     224    nx*ny*nt x 4  histogram bins (u32, LE)
 """
 
 import mmap
@@ -29,8 +35,8 @@ int shm_open(const char *name, int flags, unsigned int mode);
 int shm_unlink(const char *name);
 ''')
 
-# run_id(128) + global_state(u32) + nx,ny,nt,ni(u16 x4) + run_start(u32)
-HEADER_SIZE = 128 + 4 * 4
+MAGIC = b'UMAMI01 '
+HEADER_SIZE = 224
 
 RUNNING_BIT = 1 << 1
 
@@ -52,7 +58,14 @@ class ShmHistogram:
             raise RuntimeError(msg)
         self.fd = fd
         header_map = mmap.mmap(fd, HEADER_SIZE, prot=mmap.PROT_READ)
-        header = np.frombuffer(header_map, '<u2', count=4, offset=132)
+        magic = np.frombuffer(header_map, 'S8', count=1, offset=0)[0]
+        if magic != MAGIC:
+            header_map.close()
+            os.close(fd)
+            msg = (f'Shared memory {shm_name!r} has magic {magic!r}, '
+                   f'expected {MAGIC!r} -- incompatible umami version?')
+            raise RuntimeError(msg)
+        header = np.frombuffer(header_map, '<u2', count=4, offset=140)
         self.nx = int(header[0])
         self.ny = int(header[1])
         self.nt = int(header[2])
@@ -67,7 +80,7 @@ class ShmHistogram:
         os.close(self.fd)
 
     def read_run_id(self):
-        return np.frombuffer(self.mapp, 'S128', 1)[0].decode('ascii').rstrip('\x00')
+        return np.frombuffer(self.mapp, 'S128', 1, 8)[0].decode('ascii').rstrip('\x00')
 
     def read_run_start(self):
         """Unix timestamp of the last StartOfRun, or 0 if none yet.
@@ -76,11 +89,11 @@ class ShmHistogram:
         new run starts, unlike nx/ny/nt which are cached once at construction
         since they're fixed for the lifetime of this shm segment.
         """
-        return int(np.frombuffer(self.mapp, '<u4', 1, 140)[0])
+        return int(np.frombuffer(self.mapp, '<u4', 1, 148)[0])
 
     def read_running(self):
         """Whether a run is currently active (between StartOfRun and EndOfRun)."""
-        global_state = int(np.frombuffer(self.mapp, '<u4', 1, 128)[0])
+        global_state = int(np.frombuffer(self.mapp, '<u4', 1, 136)[0])
         return bool(global_state & RUNNING_BIT)
 
     def read_plane(self, t=0):

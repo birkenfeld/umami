@@ -41,8 +41,9 @@ from entangle.lib.shm import SharedMemory
 # Unit: 32-bit
 EL_SIZE = 4
 
-# Shared memory header length in bytes
-SHM_HEAD_LEN = 128 + 4*4
+# Shared memory header length in bytes; this is only used to offset into the
+# histogram array, individual header fields aren't read here.
+SHM_HEAD_LEN = 224
 
 # Measure modes (numbers for compatibility with older devices)
 MODE_NAMES = {
