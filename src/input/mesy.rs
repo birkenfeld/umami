@@ -33,25 +33,6 @@ fn default_true() -> bool {
     true
 }
 
-/// Deserializes a `BTreeMap<usize, T>` from a string-keyed map, as TOML (and
-/// JSON) always represent it on the wire -- the `toml` crate can't
-/// deserialize a non-string-keyed map directly.
-fn deserialize_usize_map<'de, D, T>(deserializer: D) -> Result<BTreeMap<usize, T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    let string_keyed: BTreeMap<String, T> = BTreeMap::deserialize(deserializer)?;
-    string_keyed.into_iter()
-        .map(|(k, v)| {
-            k.parse::<usize>()
-                .map(|idx| (idx, v))
-                .map_err(|_| serde::de::Error::custom(
-                    format!("Invalid index key {k:?}, expected a number")))
-        })
-        .collect()
-}
-
 #[derive(Debug, Deserialize)]
 pub struct MesyConfig {
     pub local: SourceConfig,
@@ -73,9 +54,9 @@ pub struct MesyConfig {
     /// If set, don't raw-dump data buffers that contain no events.
     #[serde(default)]
     pub skip_empty_dump: bool,
-    #[serde(deserialize_with = "deserialize_usize_map")]
+    #[serde(deserialize_with = "crate::util::deserialize_map_with_key")]
     pub cells: BTreeMap<usize, MesyCellConfig>,
-    #[serde(deserialize_with = "deserialize_usize_map")]
+    #[serde(deserialize_with = "crate::util::deserialize_map_with_key")]
     pub modules: BTreeMap<usize, MesyModuleConfig>,
 }
 

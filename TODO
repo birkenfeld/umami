@@ -6,9 +6,9 @@ Later:
 - Save config: only if val changed in session
 - Total counts (in add. to slice counts)?
 - Tooltip/toolbar for 2d plots?
+- Mesy pulser smoke test
 
 Now:
 - On-the-fly run with file source from raw dump?
 - Show chopper/monitor rate
 - pulser amplitude units?
-- pulser smoke test

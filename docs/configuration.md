@@ -130,7 +130,7 @@ Available recipe types:
 | `histo_std` | process mode | `bin_x`, `bin_y` (default 1), `use_gate` (default false) |
 | `histo_tof` | process mode | as `histo_std`, plus `aux_mode` (aux-signal number to use as T0, or omit to use explicit T0 events), `time_bins` (array of nanosecond bin-end times, runtime-settable) |
 | `mesy_mdll` | input | (none) |
-| `mesy_mpsd` | input | (none) |
+| `mesy_mpsd` | input | `edge_channels` (map of digital-input channel number -> `"tzero"` \| `{ monitor = num }` \| `{ aux = num }`, runtime-settable) |
 | `canon` | input | (none) |
 | `kws_gedet` | input | `reso_1024`, `rebin_8x8`, `invert_ts` (all bool, default false) |
 | `jumiom` | input (requires `--features jumiom`) | `mode` (`fpga`\|`linear`\|`distortion`\|`formula0`\|`formula2`, default `fpga`), `offset_x`/`offset_y`, `factor_x`/`factor_y`, `a`/`b`/`c` (distortion-mode coefficients), `cutoff` (distortion radius cutoff, no cutoff if <= 0), `limits_file` (optional per-pixel accept-window file path), `use_fpga_for_limit_index` |

@@ -2,7 +2,8 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use std::collections::BTreeMap;
-use serde::Deserialize;
+use anyhow::Context;
+use serde::{Deserialize, Serialize};
 use crate::config::RecipeConfig;
 use crate::error::UResult;
 use crate::event::{Event, EventType};
@@ -12,13 +13,39 @@ use super::Recipe;
 
 // TODO: amplitude modes
 
+/// What a rising edge on a given channel should be reinterpreted as.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EdgeMapping {
+    Tzero,
+    Monitor(u8),
+    Aux(u8),
+}
+
+impl EdgeMapping {
+    fn to_evtype(self) -> EventType {
+        match self {
+            EdgeMapping::Tzero => EventType::Tzero,
+            EdgeMapping::Monitor(num) => EventType::Monitor { num },
+            EdgeMapping::Aux(num) => EventType::AuxSignal { num },
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone, HasParams)]
 #[params(kind = "recipe", type = "mesy_mpsd")]
-pub struct Mpsd {}
+pub struct Mpsd {
+    /// Maps Edge channel to event type mapping; a channel not listed here
+    /// will stay as Edge.
+    #[serde(default, deserialize_with = "crate::util::deserialize_map_with_key")]
+    #[param(help = "Maps interesting MCPD digital input channels to event type \
+                    (\"tzero\"/\"monitor=num\"/\"aux=num\")")]
+    edge_channels: BTreeMap<u32, EdgeMapping>,
+}
 
 impl Recipe for Mpsd {
-    fn from_config(_: toml::Table, _: &BTreeMap<String, RecipeConfig>) -> UResult<Self> {
-        Ok(Self {})
+    fn from_config(cfg: toml::Table, _: &BTreeMap<String, RecipeConfig>) -> UResult<Self> {
+        Ok(cfg.try_into().context("Configuring MPSD recipe")?)
     }
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
@@ -33,7 +60,9 @@ impl Recipe for Mpsd {
                     event.histo.y = event.raw.0 as u16; // TODO: calibration
                 }
                 EventType::Edge { up: true } => {
-                    event.evtype = EventType::Tzero;
+                    if let Some(mapped) = self.edge_channels.get(&event.channel.0) {
+                        event.evtype = mapped.to_evtype();
+                    }
                 }
                 _ => ()
             }
@@ -126,13 +155,39 @@ mod tests {
     }
 
     #[test]
-    fn test_mpsd_edge_mapping() {
-        for (up, expected) in [(true, EventType::Tzero), (false, EventType::Edge { up: false })] {
+    fn test_mpsd_unmapped_edge_channel_is_left_alone() {
+        for up in [true, false] {
             let mut recipe = Mpsd::from_config(toml::Table::new(), &empty_recipes()).unwrap();
             let ev = test_utils::edge(100, 5, up);
             let out = recipe.process(vec![ev]);
-            assert_eq!(out[0].evtype, expected, "up={up}");
+            assert_eq!(out[0].evtype, EventType::Edge { up }, "up={up}");
         }
+    }
+
+    #[test]
+    fn test_mpsd_edge_channel_mapping() {
+        let cfg: toml::Table = toml::from_str(r#"
+            [edge_channels]
+            3 = "tzero"
+            5 = { monitor = 1 }
+            7 = { aux = 2 }
+        "#).unwrap();
+        let mut recipe = Mpsd::from_config(cfg, &empty_recipes()).unwrap();
+
+        let events = vec![
+            test_utils::edge(100, 3, true),
+            test_utils::edge(200, 5, true),
+            test_utils::edge(300, 7, true),
+            // down-edges and unmapped channels are untouched
+            test_utils::edge(400, 3, false),
+            test_utils::edge(500, 9, true),
+        ];
+        let out = recipe.process(events);
+        assert_eq!(out[0].evtype, EventType::Tzero);
+        assert_eq!(out[1].evtype, EventType::Monitor { num: 1 });
+        assert_eq!(out[2].evtype, EventType::AuxSignal { num: 2 });
+        assert_eq!(out[3].evtype, EventType::Edge { up: false });
+        assert_eq!(out[4].evtype, EventType::Edge { up: true });
     }
 
     #[test]
