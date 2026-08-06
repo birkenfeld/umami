@@ -70,6 +70,9 @@ pub struct MesyConfig {
     /// If set, on startup set data port to 54321
     #[serde(default)]
     pub default_reset: bool,
+    /// If set, don't raw-dump data buffers that contain no events.
+    #[serde(default)]
+    pub skip_empty_dump: bool,
     #[serde(deserialize_with = "deserialize_usize_map")]
     pub cells: BTreeMap<usize, MesyCellConfig>,
     #[serde(deserialize_with = "deserialize_usize_map")]
@@ -171,6 +174,8 @@ where
     dump: DumpHandler,
     // configuration
     name: ModuleId,
+    #[param(help = "Don't raw-dump data buffers that contain no events")]
+    skip_empty_dump: bool,
     #[param(readonly = true, datatype = "MCPD firmware version: {cpu: (major, minor), fpga: (major, minor)}",
             help = "MCPD CPU/FPGA firmware version detected at startup")]
     mcpd_version: cmd::McpdVersion,
@@ -223,6 +228,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
             command_handler: commands,
             dump: Default::default(),
             name: common.name,
+            skip_empty_dump: config.skip_empty_dump,
             mcpd_version,
             found,
             cells: config.cells,
@@ -310,22 +316,26 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(UError::NoMoreData),
             Err(e) => Err(e).context("Reading packet from source")?,
         };
-        self.dump.write(&buffer[..n])?;
-        self.dump.write(PKT_MARKER)?;
-
         let buf_length = LE::read_u16(&buffer) as usize * 2;
+        let btype = LE::read_u16(&buffer[2..4]);
+        let nevents = n.saturating_sub(HEADER_LEN) / EVENT_SIZE;
+
         if buf_length != n {
             lprintln!(WARN, [self.name] "Got packet of size {n}, expected {buf_length}");
             return Ok(vec![]);
         }
-        let btype = LE::read_u16(&buffer[2..4]);
         if btype >> 15 != 0 {
             // not a data buffer
             lprintln!(WARN, [self.name] "Got an unexpected command buffer");
             return Ok(vec![]);
         }
 
-        let nevents = (n - HEADER_LEN) / EVENT_SIZE;
+        // dump but omit empty packets if skip_empty_dump is active
+        if !self.skip_empty_dump || nevents != 0 {
+            self.dump.write(&buffer[..n])?;
+            self.dump.write(PKT_MARKER)?;
+        }
+
         let buf_serial = LE::read_u16(&buffer[6..]);
         let id_status = LE::read_u16(&buffer[10..]);
         let status = id_status & 0xFF;
@@ -591,6 +601,7 @@ mod tests {
             command_handler: (),
             dump: Default::default(),
             name: ModuleId::new("mesy".into()),
+            skip_empty_dump: false,
             mcpd_version: cmd::McpdVersion::default(),
             found: [cmd::FoundModule { mod_type: cmd::ModType::Mpsd8, fw_version: (0, 0) }; 8],
             cells: BTreeMap::new(),
