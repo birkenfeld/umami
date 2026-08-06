@@ -14,5 +14,4 @@ Now:
 - mcpdid in channel for AuxSignal
 - pulser amplitude units?
 - tof signal?
-- cps integration time 1s
 - pulser channel 8 = all doesn't work

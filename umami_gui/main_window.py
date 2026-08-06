@@ -29,6 +29,7 @@ from .tof_config import TofConfigWindow, discover_tof_recipes
 
 IMAGE_REFRESH_MS = 250
 STATE_POLL_MS = 1000
+RATE_SAMPLES = 4  # ~1 sec of history at IMAGE_REFRESH_MS
 
 # display name -> pyqtgraph colormap name; pyqtgraph has no plain 'grey'/'gray'
 # map, so this points at CET-L1, its linear (grayscale) perceptual map
@@ -86,7 +87,7 @@ class MainWindow(QtWidgets.QWidget):
 
         self.current_mode = None
         self.instance_name = None
-        self.prev = {}
+        self.rate_samples = []  # trailing (time, total) samples, up to RATE_SAMPLES
         self.last_t = None
         self.last_buf = None
         self.was_connected = False
@@ -184,7 +185,7 @@ class MainWindow(QtWidgets.QWidget):
         if t != self.last_t:
             # switching slices jumps the total to an unrelated bin's count;
             # drop the old baseline so the rate isn't computed across that jump
-            self.prev.clear()
+            self.rate_samples.clear()
             self.last_t = t
         run_id = self.histo.read_run_id()
         buf = self.histo.read_plane(t)
@@ -214,14 +215,17 @@ class MainWindow(QtWidgets.QWidget):
 
         total = int(buf.sum())
         now = time.monotonic()
+        self.rate_samples.append((now, total))
+        if len(self.rate_samples) > RATE_SAMPLES:
+            self.rate_samples.pop(0)
         rate = None
-        if self.prev and total >= self.prev['total']:
-            rate = (total - self.prev['total']) / (now - self.prev['time'])
+        if len(self.rate_samples) > 1:
+            old_time, old_total = self.rate_samples[0]
+            if total >= old_total:
+                rate = (total - old_total) / (now - old_time)
         elapsed_s = self._compute_elapsed_s()
         self.status_panel.update_run_info(run_id, elapsed_s=elapsed_s, total=total,
                                           rate=rate)
-        self.prev['total'] = total
-        self.prev['time'] = now
 
     def _compute_elapsed_s(self):
         """Seconds since the last StartOfRun, frozen once the run has ended.
@@ -254,7 +258,7 @@ class MainWindow(QtWidgets.QWidget):
             return
         self.histo.close()
         self.histo = new_histo
-        self.prev.clear()
+        self.rate_samples.clear()
         self.plot.enableAutoRange('xy', True)
         self.t_spin.setRange(0, max(self.histo.nt - 1, 0))
 
