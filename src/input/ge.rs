@@ -172,21 +172,27 @@ impl<S: Source> Input for GeInput<S> {
 
         for _ in 0..nevents {
             let detid = LE::read_u32(&buffer[offset+8..]);
-            let (evtype, channel, ampl) = if self.is_ts {
-                (EventType::Edge { up: detid & 0x8000_0000 != 0 }, detid & 0xFFFF, 0)
+            let event = if self.is_ts {
+                Event::new(EventType::Edge { up: detid & 0x8000_0000 != 0 })
+                    .with_abs_time(read_time(&buffer[offset..]))
+                    .with_channel(detid & 0xFFFF)
+                    .with_flags(flags)
             } else if pktype == PACKET_DIAG || pktype == PACKET_DIAG_FAKE {
                 // let max_heights = LE::read_u32(&buffer[offset+12..]);
                 let a_integrated = LE::read_u32(&buffer[offset+16..]);
                 let b_integrated = LE::read_u32(&buffer[offset+20..]);
-                (EventType::Neutron, detid, a_integrated + b_integrated)
+                Event::new(EventType::Neutron)
+                    .with_abs_time(read_time(&buffer[offset..]))
+                    .with_channel(detid)
+                    .with_flags(flags)
+                    .with_raw(a_integrated, b_integrated)
+                    .with_ampl(a_integrated + b_integrated)
             } else {
-                (EventType::Neutron, detid, 0)
+                Event::new(EventType::Neutron)
+                    .with_abs_time(read_time(&buffer[offset..]))
+                    .with_channel(detid)
+                    .with_flags(flags)
             };
-            let event = Event::new(evtype)
-                .with_channel(channel)
-                .with_abs_time(read_time(&buffer[offset..]))
-                .with_flags(flags)
-                .with_ampl(ampl);
 
             // Use the packet header timestamp as a criterion - we know any events before
             // this timestamp have been sent in this or a previous packet.  Any events
