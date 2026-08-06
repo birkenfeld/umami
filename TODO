@@ -17,5 +17,4 @@ Now:
 - cps integration time 1s
 - Colorscale linear with pulser?
 - pulser channel 8 = all doesn't work
-- Fix readin of non-swapped mesy file
 - Option to skip emitting empty packets in raw dump

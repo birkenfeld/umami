@@ -310,16 +310,15 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(UError::NoMoreData),
             Err(e) => Err(e).context("Reading packet from source")?,
         };
-        // TODO: byte swap
         self.dump.write(&buffer[..n])?;
         self.dump.write(PKT_MARKER)?;
 
-        let buf_length = S::E::read_u16(&buffer) as usize * 2;
+        let buf_length = LE::read_u16(&buffer) as usize * 2;
         if buf_length != n {
             lprintln!(WARN, [self.name] "Got packet of size {n}, expected {buf_length}");
             return Ok(vec![]);
         }
-        let btype = S::E::read_u16(&buffer[2..4]);
+        let btype = LE::read_u16(&buffer[2..4]);
         if btype >> 15 != 0 {
             // not a data buffer
             lprintln!(WARN, [self.name] "Got an unexpected command buffer");
@@ -327,11 +326,11 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
         }
 
         let nevents = (n - HEADER_LEN) / EVENT_SIZE;
-        let buf_serial = S::E::read_u16(&buffer[6..]);
-        let id_status = S::E::read_u16(&buffer[10..]);
+        let buf_serial = LE::read_u16(&buffer[6..]);
+        let id_status = LE::read_u16(&buffer[10..]);
         let status = id_status & 0xFF;
         let mcpd_id = u64::from(id_status) >> 8;
-        let pkt_ts = read_48bit::<S::E>(&buffer[12..]);
+        let pkt_ts = read_48bit(&buffer[12..]);
         if status & 1 != 1 {
             lprintln!(WARN, [self.name] "Got event buffer but daq stopped");
             return Ok(vec![]);
@@ -358,7 +357,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
         }
 
         for i in 0..nevents {
-            let data = read_48bit::<S::E>(&buffer[HEADER_LEN + i*EVENT_SIZE..]);
+            let data = read_48bit(&buffer[HEADER_LEN + i*EVENT_SIZE..]);
             let ts = pkt_ts + (data & 0x7ffff);    // 19bit
             let event = if data >> 47 == 1 {
                 // trigger event
@@ -391,13 +390,11 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
 }
 
 /// Read an 48-bit value (header timestamp or event) from the buffer.
-///
-/// Endianness of individual words can change, but the least significant
-/// word is always first.
-fn read_48bit<E: ByteOrder>(buf: &[u8]) -> u64 {
-    let s1 = u64::from(E::read_u16(&buf[0..2]));
-    let s2 = u64::from(E::read_u16(&buf[2..4]));
-    let s3 = u64::from(E::read_u16(&buf[4..6]));
+/// The least significant word is always first.
+fn read_48bit(buf: &[u8]) -> u64 {
+    let s1 = u64::from(LE::read_u16(&buf[0..2]));
+    let s2 = u64::from(LE::read_u16(&buf[2..4]));
+    let s3 = u64::from(LE::read_u16(&buf[4..6]));
     s3 << 32 | s2 << 16 | s1
 }
 
@@ -405,21 +402,16 @@ fn read_48bit<E: ByteOrder>(buf: &[u8]) -> u64 {
 /// Abstraction for reading Mesytec event packets from either the network
 /// or a dump file.
 ///
-/// In the dump file, additional markers are present, and the file header
-/// must be skipped.
+/// In the dump file, additional markers are present, and the file header must
+/// be skipped. `get_packet` always hands back multi-byte numeric fields in
+/// little-endian order.
 pub trait MesySource: Source {
-    /// The Mesytec on-wire data format is little-endian while the dump file format
-    /// is big-endian.  There doesn't appear to be a good reason for this.
-    type E: ByteOrder;
-
     /// Read one packet into the provided buffer, returning the number of bytes
     /// read.
     fn get_packet(&mut self, buffer: &mut [u8]) -> io::Result<usize>;
 }
 
 impl MesySource for UdpReader {
-    type E = LE;
-
     /// On the wire, every packet just comes in as a datagram.
     fn get_packet(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         let n = self.0.recv(buffer)?;
@@ -433,9 +425,15 @@ impl MesySource for UdpReader {
     }
 }
 
-impl MesySource for ReplayFile {
-    type E = BE;
+/// Swaps the two bytes of every 16-bit word in `buf` in place. `buf`'s
+/// length must be even, matching the word-based Mesytec wire format.
+fn swap_words(buf: &mut [u8]) {
+    for word in buf.chunks_exact_mut(2) {
+        word.swap(0, 1);
+    }
+}
 
+impl MesySource for ReplayFile {
     /// The Mesytec listmode data format is structured like this:
     ///
     /// - File header: some lines of ASCII text (usually 2)
@@ -485,7 +483,13 @@ impl MesySource for ReplayFile {
             // nothing more to read here
             Ok(0)
         } else {
-            let n = 2 * BE::read_u16(&buffer[..2]) as usize;
+            // the header-length field (word index 2, i.e. bytes 4-5) is
+            // always a small constant that fits in a single byte, so its
+            // high byte is zero unless this packet's words are byte-swapped
+            // (which some tools do)
+            let swapped = buffer[5] != 0;
+            let len_field = if swapped { BE::read_u16(&buffer[..2]) } else { LE::read_u16(&buffer[..2]) };
+            let n = 2 * len_field as usize;
             if n > buffer.len() || n < HEADER_LEN {
                 return Err(io::Error::new(io::ErrorKind::InvalidData,
                                           "Packet size too small or too large"));
@@ -496,6 +500,9 @@ impl MesySource for ReplayFile {
             self.read_exact(&mut pkt_end)?;
             if pkt_end != PKT_MARKER {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid packet end marker"));
+            }
+            if swapped {
+                swap_words(&mut buffer[..n]);
             }
             Ok(n)
         }
@@ -535,6 +542,35 @@ mod tests {
                 MesyModuleConfig::Mpsd { threshold: 42, gain: MpsdGain::Uniform(7) }));
     }
 
+    #[test]
+    fn test_mesy_replay_file_detects_native_little_endian_byte_order() {
+        // A bare packet + end marker is enough to exercise detection --
+        // get_packet only special-cases the very first 8 bytes matching
+        // FILE_START/END_MARKER, so no ASCII file header is needed here.
+        let mut packet = vec![0u8; HEADER_LEN];
+        LE::write_u16(&mut packet[0..2], (HEADER_LEN / 2) as u16); // buf_len, in words
+        LE::write_u16(&mut packet[2..4], 0); // buf_type: data buffer
+        LE::write_u16(&mut packet[4..6], (HEADER_LEN / 2) as u16); // header length, in words
+        for (i, b) in packet[6..].iter_mut().enumerate() {
+            *b = i as u8 + 1;
+        }
+        let mut file_bytes = packet.clone();
+        file_bytes.extend_from_slice(PKT_MARKER);
+
+        let dir = std::env::temp_dir();
+        let name = format!("umami_test_mesy_native_endian_{}.mdat", std::process::id());
+        std::fs::write(dir.join(&name), &file_bytes).unwrap();
+
+        let mut source = ReplayFile::from_config(&name, &dir).unwrap();
+        let mut buffer = [0u8; MAX_PACKET_SIZE];
+        let n = source.get_packet(&mut buffer).unwrap();
+
+        assert_eq!(n, HEADER_LEN);
+        assert_eq!(&buffer[..HEADER_LEN], &packet[..]);
+
+        std::fs::remove_file(dir.join(&name)).ok();
+    }
+
     struct NoSource;
 
     impl Source for NoSource {
@@ -546,7 +582,6 @@ mod tests {
     }
 
     impl MesySource for NoSource {
-        type E = LE;
         fn get_packet(&mut self, _buffer: &mut [u8]) -> io::Result<usize> { unreachable!() }
     }
 
