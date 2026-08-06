@@ -23,6 +23,7 @@ from .logo_widget import LogoBuildupWidget
 from .mesy_config import McpdConfigWindow, discover_mesy_inputs
 from .params_table import ParamsTable
 from .projection_windows import DiffractogramWindow, TofSpectrumWindow
+from .replay_window import ReplayWindow
 from .shm import ShmHistogram
 from .status_panel import StatusPanel
 from .tof_config import TofConfigWindow, discover_tof_recipes
@@ -83,6 +84,7 @@ class MainWindow(QtWidgets.QWidget):
         # `_quick_setup_window()` -- since there's an ever-growing set of
         # them and most instances only ever need a few.
         self.aux_histo_window = self.mcpd_config_window = self.tof_config_window = None
+        self.replay_window = None
         self.proj_window = self.t_proj_window = None
 
         self.current_mode = None
@@ -364,6 +366,10 @@ class MainWindow(QtWidgets.QWidget):
 
         frame.layout().addStretch()
 
+        replay_btn = icon_button('replay', 'Replay')
+        replay_btn.clicked.connect(self.show_replay_window)
+        frame.layout().addWidget(replay_btn)
+
         self.log_toggle = icon_button('show_log', 'Show Log')
         self.log_toggle.setCheckable(True)
         self.log_toggle.setShortcut(QtGui.QKeySequence('Ctrl+L'))
@@ -461,6 +467,18 @@ class MainWindow(QtWidgets.QWidget):
             on_applied=self.refresh_params)
         window.show()
         window.raise_()
+
+    def show_replay_window(self):
+        window = self._quick_setup_window(
+            'replay_window', lambda: ReplayWindow(self.client),
+            on_applied=self._on_replay_applied)
+        window.show()
+        window.raise_()
+
+    def _on_replay_applied(self):
+        self.refresh_params()
+        # avoid re-dumping already-captured data back to disk
+        self.raw_dump_check.setChecked(False)
 
     # ---- display controls: scale, colormap, levels, cursor readout ----
 

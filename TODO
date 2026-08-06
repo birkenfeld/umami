@@ -10,4 +10,4 @@ Later:
 
 Now:
 - Show chopper/monitor rate
-- restructure SHM: magic value + chop/mon values
+- restructure SHM: magic value + chop/mon values + abs time?

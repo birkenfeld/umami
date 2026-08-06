@@ -115,6 +115,14 @@ class UmamiClient:
     def set_params(self, params):
         return self._call('set_params', params=params)
 
+    def set_replay_files(self, mapping):
+        """Point each named input's `replay_file` param at a new dump file.
+
+        `mapping` is `{input_name: path}`.
+        """
+        return self.set_params({f'{name}.replay_file': path
+                                 for name, path in mapping.items()})
+
     def save_histo(self, path, max_nt):
         return self._call('save_histo', path=path, max_nt=max_nt)
 
