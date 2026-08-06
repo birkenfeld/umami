@@ -90,6 +90,7 @@ class MainWindow(QtWidgets.QWidget):
         self.current_mode = None
         self.instance_name = None
         self.rate_samples = []  # trailing (time, total) samples, up to RATE_SAMPLES
+        self.counter_samples = []  # trailing (time, (events, neutrons, tzero, *mon))
         self.last_t = None
         self.last_buf = None
         self.was_connected = False
@@ -182,7 +183,7 @@ class MainWindow(QtWidgets.QWidget):
         if self.tof_config_window is not None and self.tof_config_window.isVisible():
             self.tof_config_window.refresh()
 
-    def update_buffer(self):
+    def update_buffer(self):  # noqa: C901, PLR0912
         t = self.t_spin.value()
         if t != self.last_t:
             # switching slices jumps the total to an unrelated bin's count;
@@ -233,6 +234,22 @@ class MainWindow(QtWidgets.QWidget):
         self.status_panel.update_run_info(run_id, elapsed_s=elapsed_s, total=total,
                                           rate=rate)
 
+        total_events, total_neutrons, lifetime_ns, tzero_count, monitor_counts = \
+            self.histo.read_counters()
+        counters = (total_events, total_neutrons, tzero_count, *monitor_counts)
+        self.counter_samples.append((now, counters))
+        if len(self.counter_samples) > RATE_SAMPLES:
+            self.counter_samples.pop(0)
+        counter_rates = [None] * len(counters)
+        if len(self.counter_samples) > 1:
+            old_time, old_counters = self.counter_samples[0]
+            for i, (cur, old) in enumerate(zip(counters, old_counters)):
+                if cur >= old:
+                    counter_rates[i] = (cur - old) / (now - old_time)
+        self.status_panel.update_counters(
+            total_events, total_neutrons, tzero_count, monitor_counts,
+            lifetime_ns, counter_rates)
+
     def _compute_elapsed_s(self):
         """Seconds since the last StartOfRun, frozen once the run has ended.
 
@@ -265,6 +282,7 @@ class MainWindow(QtWidgets.QWidget):
         self.histo.close()
         self.histo = new_histo
         self.rate_samples.clear()
+        self.counter_samples.clear()
         self.plot.enableAutoRange('xy', True)
         self.t_spin.setRange(0, max(self.histo.nt - 1, 0))
 

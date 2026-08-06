@@ -11,6 +11,7 @@ from .icons import is_dark_mode, load_icon
 
 CONN_ICON_SIZE = QtCore.QSize(16, 16)
 THIN_SPACE = '\u2009'
+NBSP = '\u00a0'
 
 
 class StatusPanel(QtWidgets.QFrame):
@@ -35,50 +36,53 @@ class StatusPanel(QtWidgets.QFrame):
         self.connected_color = self.CONNECTED_COLOR[dark]
         self.error_color = self.ERROR_COLOR[dark]
         self.default_text_color = self.DEFAULT_TEXT[dark]
-        self.setLayout(QtWidgets.QHBoxLayout())
+        self.setLayout(QtWidgets.QVBoxLayout())
         self.layout().setContentsMargins(8, 2, 13, 2)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
                            QtWidgets.QSizePolicy.Policy.Fixed)
+
+        top_row = QtWidgets.QHBoxLayout()
+        self.layout().addLayout(top_row)
 
         value_font = self.font()
         value_font.setPointSize(
             int(value_font.pointSize() * self.VALUE_FONT_SIZE_FACTOR))
 
         self.conn_icon = QtWidgets.QLabel()
-        self.layout().addWidget(self.conn_icon)
+        top_row.addWidget(self.conn_icon)
         self.conn_label = QtWidgets.QLabel()
-        self.layout().addWidget(self.conn_label)
-        self.layout().addSpacing(20)
+        top_row.addWidget(self.conn_label)
+        top_row.addSpacing(20)
 
         self.mode_label = QtWidgets.QLabel('mode: <b>-</b>')
         self.mode_label.setFont(value_font)
-        self.layout().addWidget(self.mode_label)
-        self.layout().addSpacing(20)
+        top_row.addWidget(self.mode_label)
+        top_row.addSpacing(20)
 
         self.run_label = QtWidgets.QLabel('run: <b>-</b>')
         self.run_label.setFont(value_font)
-        self.layout().addWidget(self.run_label)
-        self.layout().addSpacing(20)
+        top_row.addWidget(self.run_label)
+        top_row.addSpacing(20)
 
         self.time_label = QtWidgets.QLabel('time: <b>-</b>')
         self.time_label.setFont(value_font)
         self.time_label.setMinimumWidth(
             self._rich_text_width(value_font, f'time: {self._format_elapsed(659)}'))
-        self.layout().addWidget(self.time_label)
-        self.layout().addSpacing(20)
+        top_row.addWidget(self.time_label)
+        top_row.addSpacing(20)
 
         self.total_label = QtWidgets.QLabel('in slice: <b>-</b>')
         self.total_label.setFont(value_font)
         self.total_label.setMinimumWidth(
             self._rich_text_width(value_font,
                                   f'in slice: <b>10,000</b>{THIN_SPACE}cts'))
-        self.layout().addWidget(self.total_label)
-        self.layout().addSpacing(20)
+        top_row.addWidget(self.total_label)
+        top_row.addSpacing(20)
 
         self.rate_label = QtWidgets.QLabel('rate: <b>-</b>')
         self.rate_label.setFont(value_font)
-        self.layout().addWidget(self.rate_label)
-        self.layout().addSpacing(20)
+        top_row.addWidget(self.rate_label)
+        top_row.addSpacing(20)
 
         # a config can have many inputs; one LED-style dot per input, wrapping
         # to a new row every LEDS_PER_ROW
@@ -88,8 +92,13 @@ class StatusPanel(QtWidgets.QFrame):
         self.inputs_layout.setSpacing(6)
         self.inputs_layout.setAlignment(
             QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-        self.layout().addWidget(inputs_widget, stretch=1)
+        top_row.addWidget(inputs_widget, stretch=1)
         self._input_leds = {}
+
+        # second row: lifetime counters (events/neutrons/tzero/monitors) and
+        # elapsed lifetime
+        self.counters_label = QtWidgets.QLabel()
+        self.layout().addWidget(self.counters_label)
 
         self.set_connected(False)
 
@@ -194,3 +203,28 @@ class StatusPanel(QtWidgets.QFrame):
         else:
             rate_text = 'rate: <b>-</b>'
         self.rate_label.setText(rate_text)
+
+    def update_counters(self, total_events, total_neutrons, tzero_count,  # noqa: PLR0913, PLR0917
+                        monitor_counts, lifetime_ns, rates):
+        """Update the events/neutrons/tzero/monitors/lifetime counters line.
+
+        `rates` is `(events_rate, neutrons_rate, tzero_rate, *monitor_rates)`,
+        each `None` where not enough samples are available yet or the
+        underlying counter decreased (e.g. a Clear happened mid-window).
+        """
+        def fmt(value, rate):
+            rate_text = f'{rate:,.1f}' if rate is not None else '-'
+            return f'<b>{value:,}</b> ({rate_text}/s)'
+
+        ev_rate, neu_rate, tz_rate, *mon_rates = rates
+        # mon_counts = '/'.join(f'{c:,}' for c in monitor_counts)
+        # mon_rate_text = '/'.join(
+        #     f'{r:,.1f}' if r is not None else '-' for r in mon_rates)
+        lifetime_s = int(lifetime_ns / 1_000_000_000)
+        self.counters_label.setText(
+            f'total ev: {fmt(total_events, ev_rate)}'
+            f'{NBSP * 3}neutrons: {fmt(total_neutrons, neu_rate)}'
+            f'{NBSP * 3}chopper: {fmt(tzero_count, tz_rate)}'
+            f'{NBSP * 3}monitor: {fmt(monitor_counts[0], mon_rates[0])}'
+            f'{NBSP * 3}lifetime: {self._format_elapsed(lifetime_s)}',
+        )

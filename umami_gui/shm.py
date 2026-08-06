@@ -96,6 +96,15 @@ class ShmHistogram:
         global_state = int(np.frombuffer(self.mapp, '<u4', 1, 136)[0])
         return bool(global_state & RUNNING_BIT)
 
+    def read_counters(self):
+        """Read the events/neutrons/lifetime/tzero/monitors counters.
+
+        Returns `(total_events, total_neutrons, lifetime_ns, tzero_count,
+        monitor_counts)`, all accumulated since the last Clear.
+        """
+        v = np.frombuffer(self.mapp, '<u8', 9, 152)
+        return int(v[0]), int(v[1]), int(v[2]), int(v[3]), v[4:9].tolist()
+
     def read_plane(self, t=0):
         offset = HEADER_SIZE + t * self.nx * self.ny * 4
         return np.frombuffer(self.mapp, '<u4', self.nx * self.ny, offset) \
