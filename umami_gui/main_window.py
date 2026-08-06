@@ -422,7 +422,7 @@ class MainWindow(QtWidgets.QWidget):
 
     def on_start_clicked(self):
         self.client.start(self.run_id_field.text() or
-                          time.strftime('%Y-%m-%d_%H:%M:%S'))
+                          time.strftime('%Y-%m-%d_%H-%M-%S'))
 
     def _quick_setup_window(self, attr, factory, on_applied=None):
         """Get (creating on first use) one of the optional quick-setup windows.

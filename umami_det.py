@@ -323,7 +323,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         self.Clear()
 
     def Start(self):
-        self._send_cmd('start', run_id=time.strftime('%Y-%m-%d_%H:%M:%S'))
+        self._send_cmd('start', run_id=time.strftime('%Y-%m-%d_%H-%M-%S'))
         self._started = True
 
     def Stop(self):
