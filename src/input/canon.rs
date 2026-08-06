@@ -27,7 +27,10 @@ pub struct CanonConfig {
 
 #[derive(HasParams)]
 #[params(kind = "input", type = "canon")]
-pub struct CanonInput<S> {
+pub struct CanonInput<S>
+where
+    S: CanonSource,
+{
     source: S,
     name: ModuleId,
     dump: DumpHandler,
@@ -35,6 +38,10 @@ pub struct CanonInput<S> {
     #[param(name = "channel_offset", datatype = "integer",
             help = "Added to the decoded PSD channel to form the final pixel id")]
     channel_ofs: u32,
+    #[param(has_setter = true, runtime_only = true,
+            help = "Path of the dump file currently being replayed (file-backed \
+                    inputs only); switching it takes effect on the next Start")]
+    replay_file: String,
     time_ofs: EventTime,
     buffer: Vec<u8>,
 }
@@ -45,29 +52,38 @@ const EVENT_SIZE: usize = 8;
 // 01/01/2008 00:00:00 UTC, the epoch for Canon device time
 const EPOCH: EventTime = EventTime::from_sec_nsec(1199145600, 0);
 
-impl CanonInput<()> {
-    pub fn start(config: CanonConfig, confdir: &Path, common: InputCommon) -> UResult<()> {
-        match &config.source {
-            SourceConfig::IP(addr) => CanonInput::start_with_source(
-                TcpStream::from_config(addr, confdir)?, config, common),
-            SourceConfig::File(path) => CanonInput::start_with_source(
-                ReplayFile::from_config(path, confdir)?, config, common),
-        }
+pub fn start(config: CanonConfig, confdir: &Path, common: InputCommon) -> UResult<()> {
+    match &config.source {
+        SourceConfig::IP(addr) => CanonInput::start_with_source(
+            TcpStream::from_config(addr, confdir)?, config, common),
+        SourceConfig::File(path) => CanonInput::start_with_source(
+            ReplayFile::from_config(path, confdir)?, config, common),
     }
 }
 
 impl<S: CanonSource> CanonInput<S> {
     pub fn start_with_source(source: S, config: CanonConfig, common: InputCommon) -> UResult<()> {
+        let replay_file = match &config.source {
+            SourceConfig::File(path) => path.clone(),
+            SourceConfig::IP(_) => "<live>".into(),
+        };
         let input = Self {
             source,
             name: common.name,
             dump: Default::default(),
             channel_ofs: config.channel_offset,
+            replay_file,
             is_gate: config.gatenet,
             time_ofs: EventTime::zero(),
             buffer: vec![0; EVENT_SIZE * MAX_EVENTS],
         };
         input.start_main_loop(common)?;
+        Ok(())
+    }
+
+    fn set_replay_file(&mut self, path: String) -> UResult<()> {
+        self.source.switch_file(Path::new(&path))?;
+        self.replay_file = path;
         Ok(())
     }
 }
@@ -397,6 +413,7 @@ mod tests {
             dump: Default::default(),
             is_gate: false,
             channel_ofs: 100,
+            replay_file: "<live>".into(),
             time_ofs: EventTime::zero(),
             buffer: vec![0; EVENT_SIZE * MAX_EVENTS],
         }
@@ -416,5 +433,40 @@ mod tests {
         set.insert("channel_offset".into(), serde_json::json!(500));
         input.update_params(ModuleId::new("canon".into()), set).unwrap();
         assert_eq!(input.channel_ofs, 500);
+    }
+
+    #[test]
+    fn test_update_params_switches_replay_file_for_file_source() {
+        let dir = std::env::temp_dir();
+        let name = format!("umami_test_canon_replay_switch_{}.dat", std::process::id());
+        let path = dir.join(&name);
+        std::fs::write(&path, b"hello").unwrap();
+
+        let mut input = CanonInput {
+            source: ReplayFile::from_config(&name, &dir).unwrap(),
+            name: ModuleId::new("canon".into()),
+            dump: Default::default(),
+            is_gate: false,
+            channel_ofs: 100,
+            replay_file: name.clone(),
+            time_ofs: EventTime::zero(),
+            buffer: vec![0; EVENT_SIZE * MAX_EVENTS],
+        };
+
+        let other_name = format!("umami_test_canon_replay_switch_other_{}.dat", std::process::id());
+        let other_path = dir.join(&other_name);
+        std::fs::write(&other_path, b"world!").unwrap();
+
+        let mut set = ParamMap::new();
+        set.insert("replay_file".into(), serde_json::json!(other_path.to_str().unwrap()));
+        input.update_params(ModuleId::new("canon".into()), set).unwrap();
+        assert_eq!(input.replay_file, other_path.to_str().unwrap());
+
+        let mut buffer = [0u8; 6];
+        input.source.read_exact(&mut buffer).unwrap();
+        assert_eq!(&buffer, b"world!");
+
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&other_path).ok();
     }
 }

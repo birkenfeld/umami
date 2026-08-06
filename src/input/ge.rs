@@ -31,12 +31,19 @@ pub struct GEConfig {
 
 #[derive(HasParams)]
 #[params(kind = "input", type = "ge")]
-pub struct GeInput<S> {
+pub struct GeInput<S>
+where
+    S: Source,
+{
     source: S,
     name: ModuleId,
     dump: DumpHandler,
     queue: Vec<Event>,
     is_ts: bool,
+    #[param(has_setter = true, runtime_only = true,
+            help = "Path of the dump file currently being replayed (file-backed \
+                    inputs only); switching it takes effect on the next Start")]
+    replay_file: String,
 }
 
 fn read_time(buf: &[u8]) -> EventTime {
@@ -45,27 +52,36 @@ fn read_time(buf: &[u8]) -> EventTime {
     EventTime::from_sec_nsec(sec, nsec)
 }
 
-impl GeInput<()> {
-    pub fn start(config: GEConfig, confdir: &Path, common: InputCommon) -> UResult<()> {
-        match &config.source {
-            SourceConfig::IP(addr) => GeInput::start_with_source(
-                TcpStream::from_config(addr, confdir)?, config, common),
-            SourceConfig::File(path) => GeInput::start_with_source(
-                ReplayFile::from_config(path, confdir)?, config, common),
-        }
+pub fn start(config: GEConfig, confdir: &Path, common: InputCommon) -> UResult<()> {
+    match &config.source {
+        SourceConfig::IP(addr) => GeInput::start_with_source(
+            TcpStream::from_config(addr, confdir)?, config, common),
+        SourceConfig::File(path) => GeInput::start_with_source(
+            ReplayFile::from_config(path, confdir)?, config, common),
     }
 }
 
 impl<S: Source> GeInput<S> {
     fn start_with_source(source: S, config: GEConfig, common: InputCommon) -> UResult<()> {
+        let replay_file = match &config.source {
+            SourceConfig::File(path) => path.clone(),
+            SourceConfig::IP(_) => "<live>".into(),
+        };
         let input = Self {
             source,
             dump: Default::default(),
             name: common.name,
             queue: Vec::with_capacity(1024),
             is_ts: config.timestamper,
+            replay_file,
         };
         input.start_main_loop(common)?;
+        Ok(())
+    }
+
+    fn set_replay_file(&mut self, path: String) -> UResult<()> {
+        self.source.switch_file(Path::new(&path))?;
+        self.replay_file = path;
         Ok(())
     }
 }
@@ -187,5 +203,44 @@ impl<S: Source> Input for GeInput<S> {
         self.dump.write(&buffer[..16+len])?;
 
         Ok(events)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::params::ParamMap;
+
+    #[test]
+    fn test_update_params_switches_replay_file_for_file_source() {
+        let dir = std::env::temp_dir();
+        let name = format!("umami_test_ge_replay_switch_{}.dat", std::process::id());
+        let path = dir.join(&name);
+        std::fs::write(&path, b"hello").unwrap();
+
+        let mut input = GeInput {
+            source: ReplayFile::from_config(&name, &dir).unwrap(),
+            name: ModuleId::new("ge".into()),
+            dump: Default::default(),
+            queue: Vec::new(),
+            is_ts: false,
+            replay_file: name.clone(),
+        };
+
+        let other_name = format!("umami_test_ge_replay_switch_other_{}.dat", std::process::id());
+        let other_path = dir.join(&other_name);
+        std::fs::write(&other_path, b"world!").unwrap();
+
+        let mut set = ParamMap::new();
+        set.insert("replay_file".into(), serde_json::json!(other_path.to_str().unwrap()));
+        input.update_params(ModuleId::new("ge".into()), set).unwrap();
+        assert_eq!(input.replay_file, other_path.to_str().unwrap());
+
+        let mut buffer = [0u8; 6];
+        input.source.read_exact(&mut buffer).unwrap();
+        assert_eq!(&buffer, b"world!");
+
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&other_path).ok();
     }
 }

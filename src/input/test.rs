@@ -29,20 +29,18 @@ pub struct TestInput {
     remaining: Option<Vec<Event>>,
 }
 
-impl TestInput {
-    pub fn start(config: TestInputConfig, common: InputCommon) -> UResult<()> {
-        let mut template = Vec::with_capacity(config.nx as usize * config.ny as usize);
-        for y in 0..config.ny {
-            for x in 0..config.nx {
-                let mut ev = Event::new(EventType::Neutron);
-                ev.histo = EventHisto { x, y, t: 0, i: 0 };
-                template.push(ev);
-            }
+pub fn start(config: TestInputConfig, common: InputCommon) -> UResult<()> {
+    let mut template = Vec::with_capacity(config.nx as usize * config.ny as usize);
+    for y in 0..config.ny {
+        for x in 0..config.nx {
+            let mut ev = Event::new(EventType::Neutron);
+            ev.histo = EventHisto { x, y, t: 0, i: 0 };
+            template.push(ev);
         }
-        let input = TestInput { name: common.name, template, remaining: None };
-        input.start_main_loop(common)?;
-        Ok(())
     }
+    let input = TestInput { name: common.name, template, remaining: None };
+    input.start_main_loop(common)?;
+    Ok(())
 }
 
 impl Input for TestInput {

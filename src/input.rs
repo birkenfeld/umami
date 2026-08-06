@@ -82,13 +82,13 @@ impl InputCommon {
 
 pub fn start(config: SpecificInputConfig, confdir: &Path, common: InputCommon) -> UResult<()> {
     match config {
-        SpecificInputConfig::GE(cfg) => ge::GeInput::start(cfg, confdir, common)?,
-        SpecificInputConfig::Canon(cfg) => canon::CanonInput::start(cfg, confdir, common)?,
-        SpecificInputConfig::Mesy(cfg) => mesy::MesyInput::start(cfg, confdir, common)?,
+        SpecificInputConfig::GE(cfg) => ge::start(cfg, confdir, common)?,
+        SpecificInputConfig::Canon(cfg) => canon::start(cfg, confdir, common)?,
+        SpecificInputConfig::Mesy(cfg) => mesy::start(cfg, confdir, common)?,
         #[cfg(feature = "jumiom")]
-        SpecificInputConfig::Jumiom(cfg) => jumiom::JumiomInput::start(cfg, confdir, common)?,
+        SpecificInputConfig::Jumiom(cfg) => jumiom::start(cfg, confdir, common)?,
         #[cfg(test)]
-        SpecificInputConfig::Test(cfg) => test::TestInput::start(cfg, common)?,
+        SpecificInputConfig::Test(cfg) => test::start(cfg, common)?,
     }
     Ok(())
 }
@@ -320,6 +320,11 @@ pub trait Source: Send + 'static {
     fn rewind(&mut self) -> UResult<()> {
         Ok(())
     }
+    /// Reopens this source against a different file. Only meaningful for
+    /// file-backed sources; other source kinds report an error.
+    fn switch_file(&mut self, _path: &Path) -> UResult<()> {
+        Err(anyhow::anyhow!("This input's source cannot be switched to a different file"))?
+    }
 }
 
 pub struct ReplayFile {
@@ -355,6 +360,13 @@ impl Source for ReplayFile {
         self.file
             .seek(std::io::SeekFrom::Start(0))
             .context("Resetting file source")?;
+        Ok(())
+    }
+
+    fn switch_file(&mut self, path: &Path) -> UResult<()> {
+        self.file = std::fs::File::open(path)
+            .with_context(|| format!("Opening source file {path:?}"))?;
+        self.name = path.display().to_string();
         Ok(())
     }
 }
@@ -502,7 +514,7 @@ mod tests {
             ModuleId::new("in1".into()), state_send, events_send, command_recv,
             recipe, ModuleId::new(recipe_name.into()),
         );
-        test::TestInput::start(TestInputConfig { nx: 1, ny: 1 }, common).unwrap();
+        test::start(TestInputConfig { nx: 1, ny: 1 }, common).unwrap();
         (command_send, state_recv, events_recv)
     }
 

@@ -184,35 +184,35 @@ pub struct JumiomInput {
     thread: Option<JoinHandle<()>>,
 }
 
-impl JumiomInput {
-    pub fn start(config: JumiomConfig, _confdir: &Path, common: InputCommon) -> UResult<()> {
-        let (sender, receiver) = crate::channel::unbounded();
-        {
-            let mut guard = SHARED.lock().unwrap();
-            if guard.is_some() {
-                return Err(UError::Other(anyhow!(
-                    "Only one Jumiom input can be active per umami process")));
-            }
-            *guard = Some(Shared {
-                mode: config.mode,
-                calibration: config.calibration,
-                decoder: decode::JumiomDecoder::new(config.mode),
-                dump: DumpHandler::default(),
-                sender,
-            });
+pub fn start(config: JumiomConfig, _confdir: &Path, common: InputCommon) -> UResult<()> {
+    let (sender, receiver) = crate::channel::unbounded();
+    {
+        let mut guard = SHARED.lock().unwrap();
+        if guard.is_some() {
+            return Err(UError::Other(anyhow!(
+                "Only one Jumiom input can be active per umami process")));
         }
-        let input = Self {
-            name: common.name,
-            device: config.device,
+        *guard = Some(Shared {
             mode: config.mode,
             calibration: config.calibration,
-            receiver,
-            thread: None,
-        };
-        input.start_main_loop(common)?;
-        Ok(())
+            decoder: decode::JumiomDecoder::new(config.mode),
+            dump: DumpHandler::default(),
+            sender,
+        });
     }
+    let input = JumiomInput {
+        name: common.name,
+        device: config.device,
+        mode: config.mode,
+        calibration: config.calibration,
+        receiver,
+        thread: None,
+    };
+    input.start_main_loop(common)?;
+    Ok(())
+}
 
+impl JumiomInput {
     fn set_mode(&mut self, mode: JumiomMode) -> UResult<()> {
         self.mode = mode;
         if let Some(shared) = SHARED.lock().unwrap().as_mut() {

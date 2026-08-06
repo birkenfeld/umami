@@ -108,6 +108,13 @@ Jumiom PSD input, using `libjumpsd.so`.
 If a source string (for `ge`/`canon`/`mesy`'s `local`) contains `:`, UMAMI
 treats it as a network endpoint; otherwise it's opened as a replay file.
 
+`ge`/`canon`/`mesy` also report `replay_file` via `get-params`: the path of
+the dump file currently being replayed, or `"<live>"` for a network-backed
+input. It's runtime-settable via `set-params` on a file-backed input, to
+point it at a different dump file -- the switch takes effect on the next
+`start` (with a fresh `run_id`); setting it on a network-backed input is
+rejected.
+
 ## Input recipes and processing modes
 
 `[input_recipes]` is a pool of named recipe configurations referenced by inputs

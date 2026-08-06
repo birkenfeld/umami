@@ -9,6 +9,5 @@ Later:
 - Mesy pulser smoke test
 
 Now:
-- On-the-fly run with file source from raw dump?
 - Show chopper/monitor rate
-- pulser amplitude units?
+- restructure SHM: magic value + chop/mon values

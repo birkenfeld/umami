@@ -148,6 +148,7 @@ pub struct PulserConfig {
 #[params(kind = "input", type = "mesy")]
 pub struct MesyInput<S, C>
 where
+    S: MesySource,
     C: cmd::MesyCommandHandler,
 {
     source: S,
@@ -174,28 +175,30 @@ where
             datatype = "map of module index to (chan, pos, amp, on)",
             help = "Per-module test-pulse injection")]
     pulser: BTreeMap<usize, PulserConfig>,
+    #[param(has_setter = true, runtime_only = true,
+            help = "Path of the dump file currently being replayed (file-backed \
+                    inputs only); switching it takes effect on the next Start")]
+    replay_file: String,
     // run-time
     buf_serial: Option<u16>,
     no_event_buffers: usize,
 }
 
-impl MesyInput<(), ()> {
-    pub fn start(config: MesyConfig, confdir: &Path, common: InputCommon) -> UResult<()> {
-        match &config.local {
-            SourceConfig::IP(addr) => {
-                let reader = UdpReader::from_config(addr, confdir)?;
-                let local = reader.0.local_addr().context("Getting local address of UDP reader")?;
-                let mut cmds = cmd::make_command_socket(local, &config, common.name)?;
-                if config.default_reset {
-                    cmds.default_reset()?;
-                    Err(anyhow!("{}: default port reset done", common.name))?;
-                }
-                MesyInput::start_with_source(reader, cmds, config, common)
+pub fn start(config: MesyConfig, confdir: &Path, common: InputCommon) -> UResult<()> {
+    match &config.local {
+        SourceConfig::IP(addr) => {
+            let reader = UdpReader::from_config(addr, confdir)?;
+            let local = reader.0.local_addr().context("Getting local address of UDP reader")?;
+            let mut cmds = cmd::make_command_socket(local, &config, common.name)?;
+            if config.default_reset {
+                cmds.default_reset()?;
+                Err(anyhow!("{}: default port reset done", common.name))?;
             }
-            SourceConfig::File(path) => {
-                MesyInput::start_with_source(
-                    ReplayFile::from_config(path, confdir)?, (), config, common)
-            }
+            MesyInput::start_with_source(reader, cmds, config, common)
+        }
+        SourceConfig::File(path) => {
+            MesyInput::start_with_source(
+                ReplayFile::from_config(path, confdir)?, (), config, common)
         }
     }
 }
@@ -204,6 +207,10 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
     fn start_with_source(source: S, mut commands: C, config: MesyConfig, common: InputCommon) -> UResult<()> {
         let (mcpd_version, found, mod_xmit_caps) = commands.scan(common.name)?;
         commands.set_up(common.name, mcpd_version, &found, &mod_xmit_caps, &config)?;
+        let replay_file = match &config.local {
+            SourceConfig::File(path) => path.clone(),
+            SourceConfig::IP(_) => "<live>".into(),
+        };
         let input = Self {
             source,
             command_handler: commands,
@@ -215,17 +222,20 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
             cells: config.cells,
             modules: config.modules,
             pulser: BTreeMap::new(),
+            replay_file,
             buf_serial: None,
             no_event_buffers: 0,
         };
         input.start_main_loop(common)?;
         Ok(())
     }
-}
 
-// Bounded only on C (not S), matching the struct's own `where` clause, so
-// these are also callable from the HasParams impl the derive generates.
-impl<S, C: cmd::MesyCommandHandler> MesyInput<S, C> {
+    fn set_replay_file(&mut self, path: String) -> UResult<()> {
+        self.source.switch_file(Path::new(&path))?;
+        self.replay_file = path;
+        Ok(())
+    }
+
     fn set_cells(&mut self, cells: BTreeMap<usize, MesyCellConfig>) -> UResult<()> {
         for (&idx, cfg) in &cells {
             self.command_handler.set_up_cell(self.name, idx, cfg)?;
@@ -352,10 +362,13 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
             let ts = pkt_ts + (data & 0x7ffff);    // 19bit
             let event = if data >> 47 == 1 {
                 // trigger event
+                // let trig_id = (data >> 44) as u32 & 0b111;
                 let data_id = (data >> 40) as u32 & 0b1111;
+                let data = (data >> 19) as u32 & 0x1fffff;
                 Event::new(EventType::Edge { up: true })
                     .with_channel(mcpd_id << 7 | data_id)
                     .with_abs_time(EventTime::from_ticks(TIME_BASE, ts as i64))
+                    .with_raw(data, 0)
             } else {
                 // neutron event
                 let mod_id = (data >> 44) as u32 & 0b111;
@@ -588,9 +601,59 @@ mod tests {
             cells: BTreeMap::new(),
             modules: BTreeMap::new(),
             pulser: BTreeMap::new(),
+            replay_file: "<live>".into(),
             buf_serial: None,
             no_event_buffers: 0,
         }
+    }
+
+    #[test]
+    fn test_update_params_rejects_replay_file_for_non_file_source() {
+        let mut input = make_input();
+        let mut set = ParamMap::new();
+        set.insert("replay_file".into(), serde_json::json!("/some/path"));
+        assert!(input.update_params(ModuleId::new("mesy".into()), set).is_err());
+        assert_eq!(input.replay_file, "<live>");
+    }
+
+    #[test]
+    fn test_update_params_switches_replay_file_for_file_source() {
+        let dir = std::env::temp_dir();
+        let name = format!("umami_test_mesy_replay_switch_{}.mdat", std::process::id());
+        let path = dir.join(&name);
+        std::fs::write(&path, b"hello").unwrap();
+
+        let mut input = MesyInput {
+            source: ReplayFile::from_config(&name, &dir).unwrap(),
+            command_handler: (),
+            dump: Default::default(),
+            name: ModuleId::new("mesy".into()),
+            skip_empty_dump: false,
+            mcpd_version: cmd::McpdVersion::default(),
+            found: [cmd::FoundModule { mod_type: cmd::ModType::Mpsd8, fw_version: (0, 0) }; 8],
+            cells: BTreeMap::new(),
+            modules: BTreeMap::new(),
+            pulser: BTreeMap::new(),
+            replay_file: name.clone(),
+            buf_serial: None,
+            no_event_buffers: 0,
+        };
+
+        let other_name = format!("umami_test_mesy_replay_switch_other_{}.mdat", std::process::id());
+        let other_path = dir.join(&other_name);
+        std::fs::write(&other_path, b"world!").unwrap();
+
+        let mut set = ParamMap::new();
+        set.insert("replay_file".into(), serde_json::json!(other_path.to_str().unwrap()));
+        input.update_params(ModuleId::new("mesy".into()), set).unwrap();
+        assert_eq!(input.replay_file, other_path.to_str().unwrap());
+
+        let mut buffer = [0u8; 6];
+        input.source.read_exact(&mut buffer).unwrap();
+        assert_eq!(&buffer, b"world!");
+
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&other_path).ok();
     }
 
     #[test]
