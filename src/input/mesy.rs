@@ -339,7 +339,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
         let buf_serial = LE::read_u16(&buffer[6..]);
         let id_status = LE::read_u16(&buffer[10..]);
         let status = id_status & 0xFF;
-        let mcpd_id = u64::from(id_status) >> 8;
+        let mcpd_id = u32::from(id_status) >> 8;
         let pkt_ts = read_48bit(&buffer[12..]);
         if status & 1 != 1 {
             lprintln!(WARN, [self.name] "Got event buffer but daq stopped");
@@ -373,23 +373,23 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
                 // trigger event
                 let data_id = (data >> 40) & 0b1111;
                 Event::new(EventType::Edge { up: true })
-                    .with_channel(data_id as u32)
+                    .with_channel(mcpd_id << 4 | data_id as u32)
                     .with_abs_time(EventTime::from_ticks(TIME_BASE, ts as i64))
             } else {
                 // neutron event
-                let mod_id = (data >> 44) & 0b111;
-                let slot_id = (data >> 39) & 0b11111;
+                let mod_id = (data >> 44) as u32 & 0b111;
+                let slot_id = (data >> 39) as u32 & 0b11111;
 
-                let ampl = (data >> 29) & 0x3ff;
-                let ypos = (data >> 19) & 0x3ff;
+                let ampl = (data >> 29) as u32 & 0x3ff;
+                let ypos = (data >> 19) as u32 & 0x3ff;
                 // Most general setup, needs correction for MPSD.
                 let xpos = mcpd_id << 7 | mod_id << 4 | slot_id;
 
                 Event::new(EventType::Neutron)
-                    .with_channel(xpos as u32)
+                    .with_channel(xpos)
                     .with_abs_time(EventTime::from_ticks(TIME_BASE, ts as i64))
-                    .with_ampl(ampl as u32)
-                    .with_raw(ypos as u32, 0)
+                    .with_ampl(ampl)
+                    .with_raw(ypos, 0)
             };
             events.push(event);
         }

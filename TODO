@@ -10,7 +10,5 @@ Later:
 Now:
 - On-the-fly run with file source from raw dump?
 - Show chopper/monitor rate
-- Add monitor number in monitor events
-- mcpdid in channel for AuxSignal
 - pulser amplitude units?
 - pulser smoke test
