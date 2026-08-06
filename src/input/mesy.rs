@@ -371,9 +371,9 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
             let ts = pkt_ts + (data & 0x7ffff);    // 19bit
             let event = if data >> 47 == 1 {
                 // trigger event
-                let data_id = (data >> 40) & 0b1111;
+                let data_id = (data >> 40) as u32 & 0b1111;
                 Event::new(EventType::Edge { up: true })
-                    .with_channel(mcpd_id << 4 | data_id as u32)
+                    .with_channel(mcpd_id << 7 | data_id)
                     .with_abs_time(EventTime::from_ticks(TIME_BASE, ts as i64))
             } else {
                 // neutron event
