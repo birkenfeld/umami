@@ -138,10 +138,10 @@ where
     D: serde::Deserializer<'de>,
 {
     let s = String::deserialize(deserializer)?;
-    if s.contains(':') {
+    if !s.contains('/') && s.chars().filter(|&c| c == ':').count() == 1 {
         Ok(s)
     } else {
-        Err(serde::de::Error::custom("Expected an IP address (string containing ':')"))
+        Err(serde::de::Error::custom("Expected an IP address (string containing one ':')"))
     }
 }
 
@@ -281,12 +281,22 @@ modules = {}
     fn test_source_config_deserialize() {
         let tbl: toml::Table = toml::from_str(r#"
             val1 = "localhost:50001"
-            val2 = "/path/to/file"
+            val2 = "file"
+            val3 = "/data:archive/file.dump"
+            val4 = "fe80::1:50001"
         "#).unwrap();
         let cfg: SourceConfig = tbl["val1"].clone().try_into().unwrap();
         assert!(matches!(cfg, SourceConfig::IP(s) if s == "localhost:50001"));
         let cfg: SourceConfig = tbl["val2"].clone().try_into().unwrap();
-        assert!(matches!(cfg, SourceConfig::File(s) if s == "/path/to/file"));
+        assert!(matches!(cfg, SourceConfig::File(s) if s == "file"));
+        // a file path containing a colon (a legal Unix filename character)
+        // must not be misdetected as a network address
+        let cfg: SourceConfig = tbl["val3"].clone().try_into().unwrap();
+        assert!(matches!(cfg, SourceConfig::File(s) if s == "/data:archive/file.dump"));
+        // multiple colons (e.g. an IPv6-ish address) isn't a supported
+        // "host:port" form either, and falls back to File
+        let cfg: SourceConfig = tbl["val4"].clone().try_into().unwrap();
+        assert!(matches!(cfg, SourceConfig::File(s) if s == "fe80::1:50001"));
     }
 
     #[test]
