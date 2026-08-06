@@ -108,7 +108,7 @@ primary := int | ident | "(" expr ")"
 
 Fields: `time`, `rel_time` (nanoseconds), `raw_0`, `raw_1` (the event's raw
 data fields), `channel`, `ampl`, `x`, `y`, `t`, `i` (the event's computed
-histogram coordinates), `flags`, `evtype`, `auxnum`, `gateup`.
+histogram coordinates), `flags`, `evtype`, `auxnum`, `monnum`, `gateup`.
 
 Named constants (for `evtype` comparisons): `neutron`, `monitor`, `edge`,
 `gate`, `tzero`, `auxsignal`, `heartbeat`, `void`.

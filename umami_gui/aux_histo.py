@@ -23,7 +23,7 @@ from .shm import ShmHistogram
 # src/expr.rs -- there is no machine-readable source for this on the wire.
 EXPR_SYNTAX_HELP = '''\
 Fields: time, rel_time, raw_0, raw_1, channel, ampl, x, y, t, i, \
-flags, evtype, auxnum, gateup
+flags, evtype, auxnum, monnum, gateup
 
 Named constants (for evtype comparisons): neutron, monitor, edge, gate, \
 tzero, auxsignal, heartbeat, void

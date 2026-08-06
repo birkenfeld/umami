@@ -110,7 +110,7 @@ impl JumiomDecoder {
                 self.tof_counter = counter as i64;
                 let rel_time = EventTime::from_ticks(NS_PER_TICK, self.tof_counter);
                 if self.ignore_w2w3 & 0x1000_0000 != 0 {
-                    Some(Event::new(EventType::Monitor).with_rel_time(rel_time))
+                    Some(Event::new(EventType::Monitor { num: 0 }).with_rel_time(rel_time))
                 } else if self.ignore_w2w3 & 0x0800_0000 != 0 {
                     Some(Event::new(EventType::Tzero).with_rel_time(rel_time))
                 } else {
@@ -281,7 +281,7 @@ mod tests {
         let monitor_word0 = 0x8000_0000 | 0x1000_0000;
         let events = dec.feed(&[monitor_word0, 500]);
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].evtype, EventType::Monitor);
+        assert_eq!(events[0].evtype, EventType::Monitor { num: 0 });
         assert_eq!(events[0].rel_time, EventTime::from_ticks(NS_PER_TICK, 500i64));
 
         let mut dec = JumiomDecoder::new(JumiomMode::Tof1);
@@ -304,7 +304,7 @@ mod tests {
         stream.extend_from_slice(&next);
         let events = dec.feed(&stream);
         assert_eq!(events.len(), 3);
-        assert_eq!(events[0].evtype, EventType::Monitor);
+        assert_eq!(events[0].evtype, EventType::Monitor { num: 0 });
         assert_eq!(events[1].evtype, EventType::Gate { up: true });
         assert_eq!(events[2].evtype, EventType::Neutron);
         assert_eq!(events[2].channel.0 & 0xFF, 2); // x

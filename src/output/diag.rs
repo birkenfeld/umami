@@ -39,7 +39,7 @@ impl EventMask {
             EventType::Neutron => EventMask::NEUTRON,
             EventType::Edge { .. } => EventMask::EDGE,
             EventType::Heartbeat => EventMask::HEARTBEAT,
-            EventType::Monitor => EventMask::MONITOR,
+            EventType::Monitor { .. } => EventMask::MONITOR,
             EventType::Tzero => EventMask::TZERO,
             EventType::Gate { .. } => EventMask::GATE,
             EventType::AuxSignal { .. } => EventMask::AUX,
@@ -341,7 +341,7 @@ mod tests {
         assert_eq!(EventMask::for_event(&EventType::Neutron), EventMask::NEUTRON);
         assert_eq!(EventMask::for_event(&EventType::Edge { up: true }), EventMask::EDGE);
         assert_eq!(EventMask::for_event(&EventType::Heartbeat), EventMask::HEARTBEAT);
-        assert_eq!(EventMask::for_event(&EventType::Monitor), EventMask::MONITOR);
+        assert_eq!(EventMask::for_event(&EventType::Monitor { num: 0 }), EventMask::MONITOR);
         assert_eq!(EventMask::for_event(&EventType::Tzero), EventMask::TZERO);
         assert_eq!(EventMask::for_event(&EventType::Gate { up: false }), EventMask::GATE);
         assert_eq!(EventMask::for_event(&EventType::AuxSignal { num: 1 }), EventMask::AUX);

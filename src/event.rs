@@ -83,7 +83,7 @@ pub enum EventType {
     /// Neutron event.
     Neutron = 0x01,
     /// Monitor count.
-    Monitor = 0x02,
+    Monitor { num: u8 } = 0x02,
     /// Signal edge without further meaning.
     Edge { up: bool } = 0x10,
     /// Gate signal.
@@ -255,8 +255,8 @@ impl Display for DumpEvent<'_> {
                 write!(f, "Edge      {}", if up { "up" } else { "down" }),
             EventType::Heartbeat =>
                 write!(f, "Heartbeat"),
-            EventType::Monitor =>
-                write!(f, "Monitor"),
+            EventType::Monitor { num } =>
+                write!(f, "Monitor   {num}"),
             EventType::Tzero =>
                 write!(f, "T-zero"),
             EventType::Gate { up } =>
@@ -290,6 +290,10 @@ pub(crate) mod test_utils {
 
     pub fn aux(time_ns: i64, num: u8) -> Event {
         Event::new(EventType::AuxSignal { num }).with_abs_time(EventTime(time_ns))
+    }
+
+    pub fn monitor(time_ns: i64, num: u8) -> Event {
+        Event::new(EventType::Monitor { num }).with_abs_time(EventTime(time_ns))
     }
 
     pub fn heartbeat(time_ns: i64) -> Event {

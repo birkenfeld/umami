@@ -18,7 +18,7 @@
 //! ```
 //!
 //! Fields: `time`, `rel_time`, `raw_0`, `raw_1`, `channel`, `ampl`,
-//! `x`, `y`, `t`, `i`, `flags`, `evtype`, `auxnum`, `gateup`.
+//! `x`, `y`, `t`, `i`, `flags`, `evtype`, `auxnum`, `monnum`, `gateup`.
 //!
 //! Named constants for `evtype` comparisons:
 //! `neutron`, `monitor`, `edge`, `gate`, `tzero`, `auxsignal`, `heartbeat`,
@@ -54,6 +54,7 @@ enum Field {
     Flags,
     EvType,
     AuxNum,
+    MonNum,
     GateUp,
 }
 
@@ -73,6 +74,7 @@ impl Field {
             "flags" => Field::Flags,
             "evtype" => Field::EvType,
             "auxnum" => Field::AuxNum,
+            "monnum" => Field::MonNum,
             "gateup" => Field::GateUp,
             _ => return None,
         })
@@ -97,11 +99,15 @@ impl Field {
             Field::EvType => evtype_discriminant(&ev.evtype),
             Field::AuxNum => match ev.evtype {
                 EventType::AuxSignal { num } => num as i64,
-                _ => 0,
+                _ => -1,
+            },
+            Field::MonNum => match ev.evtype {
+                EventType::Monitor { num } => num as i64,
+                _ => -1,
             },
             Field::GateUp => match ev.evtype {
                 EventType::Edge { up } | EventType::Gate { up } => up as i64,
-                _ => 0,
+                _ => -1,
             },
         }
     }
@@ -110,7 +116,7 @@ impl Field {
 fn evtype_discriminant(t: &EventType) -> i64 {
     match t {
         EventType::Neutron => 0x01,
-        EventType::Monitor => 0x02,
+        EventType::Monitor { .. } => 0x02,
         EventType::Edge { .. } => 0x10,
         EventType::Gate { .. } => 0x11,
         EventType::Tzero => 0x12,
@@ -569,14 +575,19 @@ mod tests {
         let aux = test_utils::aux(0, 3);
         assert_eq!(Expr::parse("evtype == auxsignal").unwrap().eval(&aux), 1);
         assert_eq!(Expr::parse("auxnum").unwrap().eval(&aux), 3);
-        assert_eq!(Expr::parse("auxnum").unwrap().eval(&neutron), 0);
+        assert_eq!(Expr::parse("auxnum").unwrap().eval(&neutron), -1);
+
+        let monitor = test_utils::monitor(0, 2);
+        assert_eq!(Expr::parse("evtype == monitor").unwrap().eval(&monitor), 1);
+        assert_eq!(Expr::parse("monnum").unwrap().eval(&monitor), 2);
+        assert_eq!(Expr::parse("monnum").unwrap().eval(&neutron), -1);
 
         let edge_up = test_utils::edge(0, 0, true);
         assert_eq!(Expr::parse("evtype == edge").unwrap().eval(&edge_up), 1);
         assert_eq!(Expr::parse("gateup").unwrap().eval(&edge_up), 1);
         let gate_down = test_utils::gate(0, false);
         assert_eq!(Expr::parse("gateup").unwrap().eval(&gate_down), 0);
-        assert_eq!(Expr::parse("gateup").unwrap().eval(&neutron), 0);
+        assert_eq!(Expr::parse("gateup").unwrap().eval(&neutron), -1);
     }
 
     #[test]
