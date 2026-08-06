@@ -196,7 +196,9 @@ class MainWindow(QtWidgets.QWidget):
         else:
             display = buf.astype(float)
         if self.auto_levels_check.isChecked():
-            self.img.setImage(display, autoLevels=True)
+            # pyqtgraph's autoLevels defaults to subsampling (levelSamples=65536)
+            # for speed, which can miss a small/sparse peak entirely
+            self.img.setImage(display, autoLevels=True, levelSamples=display.size)
         else:
             lo, hi = self.level_min_spin.value(), self.level_max_spin.value()
             if self.log_scale_check.isChecked():
@@ -735,6 +737,10 @@ class MainWindow(QtWidgets.QWidget):
             self.settings.value('log_scale', True, type=bool))
         self.auto_levels_check.setChecked(
             self.settings.value('auto_levels', True, type=bool))
+        self.level_min_spin.setValue(
+            self.settings.value('level_min', 0, type=float))
+        self.level_max_spin.setValue(
+            self.settings.value('level_max', 100, type=float))
         # only the path is restored, not whether dumping was enabled -- silently
         # resuming a raw dump to a possibly stale path on startup would surprise
         raw_dump_path = self.settings.value('raw_dump_path')
@@ -749,4 +755,6 @@ class MainWindow(QtWidgets.QWidget):
         self.settings.setValue('colormap', self.colormap_combo.currentText())
         self.settings.setValue('log_scale', self.log_scale_check.isChecked())
         self.settings.setValue('auto_levels', self.auto_levels_check.isChecked())
+        self.settings.setValue('level_min', self.level_min_spin.value())
+        self.settings.setValue('level_max', self.level_max_spin.value())
         self.settings.setValue('raw_dump_path', self.raw_dump_path.text())

@@ -445,7 +445,10 @@ class AuxHistoWindow(QtWidgets.QWidget):
             try:
                 if is_2d:
                     buf = shm.read_plane(0)
-                    item.setImage(np.log10(buf.astype(float) + 0.1), autoLevels=True)
+                    display = np.log10(buf.astype(float) + 0.1)
+                    # scan every pixel -- pyqtgraph's default subsampled
+                    # autoLevels can miss a small/sparse peak entirely
+                    item.setImage(display, autoLevels=True, levelSamples=display.size)
                     item.setRect(extent)
                 else:
                     # pyqtgraph keeps this array reference alive indefinitely
