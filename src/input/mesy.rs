@@ -144,6 +144,12 @@ pub struct PulserConfig {
     on: bool,
 }
 
+impl PulserConfig {
+    fn off() -> Self {
+        Self { chan: 0, pos: cmd::PulserPos::Middle, amp: 0, on: false }
+    }
+}
+
 #[derive(HasParams)]
 #[params(kind = "input", type = "mesy")]
 pub struct MesyInput<S, C>
@@ -255,7 +261,8 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
 
     fn set_pulser(&mut self, pulser: BTreeMap<usize, PulserConfig>) -> UResult<()> {
         for (&idx, cfg) in &pulser {
-            self.command_handler.set_pulser(self.name, idx, cfg.chan, cfg.pos, cfg.amp, cfg.on)?;
+            let modtype = self.found.get(idx).map(|f| f.mod_type).unwrap_or(cmd::ModType::None);
+            self.command_handler.set_pulser(self.name, idx, modtype, cfg)?;
         }
         self.pulser = pulser;
         Ok(())

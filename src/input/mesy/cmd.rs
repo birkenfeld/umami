@@ -16,7 +16,7 @@ use crate::command::ModuleId;
 use crate::config::SourceConfig;
 use crate::error::UResult;
 use crate::util::resolve;
-use super::{MesyCellConfig, MesyConfig, MesyModuleConfig, MpsdGain, MstdGain};
+use super::{MesyCellConfig, MesyConfig, MesyModuleConfig, MpsdGain, MstdGain, PulserConfig};
 
 const HEADER_WORDS: u16 = 10;
 const BUFFERTYPE: u16 = 0x8000;
@@ -70,6 +70,17 @@ pub enum ModType {
     MdllP = 235,   // MDLL+, not official, but for easier handling of different MDLL modules
     #[num_enum(default)]
     Unknown,
+}
+
+impl ModType {
+    pub fn is_mpsd(&self) -> bool {
+        // NOTE: Mpsd8Old is not included here, unsupported
+        matches!(self, ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P)
+    }
+
+    pub fn is_mstd(&self) -> bool {
+        matches!(self, ModType::Mstd16 | ModType::Mstd16P)
+    }
 }
 
 /// Position of an injected test pulse relative to the module's channel strip.
@@ -211,9 +222,8 @@ pub trait MesyCommandHandler: Send + 'static {
         // could otherwise still be active; force it off on every MPSD/MSTD-class
         // module present.
         for (i, module) in found.iter().enumerate() {
-            if matches!(module.mod_type, ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P
-                                        | ModType::Mstd16 | ModType::Mstd16P) {
-                self.set_pulser(name, i, 0, PulserPos::Middle, 0, false)?;
+            if module.mod_type.is_mpsd() || module.mod_type.is_mstd() {
+                self.set_pulser(name, i, module.mod_type, &PulserConfig::off())?;
             }
         }
         Ok(())
@@ -287,7 +297,7 @@ pub trait MesyCommandHandler: Send + 'static {
     fn set_up_module(&mut self, name: ModuleId, idx: usize, modtype: ModType,
                      mcpd_version: McpdVersion, cfg: Option<&MesyModuleConfig>) -> UResult<()> {
         match modtype {
-            ModType::Mpsd8SADC | ModType::Mpsd8 | ModType::Mpsd8P => match cfg {
+            m if m.is_mpsd() => match cfg {
                 Some(MesyModuleConfig::Mpsd { threshold, gain }) =>
                     self.set_up_mpsd(name, idx, *threshold, *gain),
                 Some(_) => {
@@ -299,7 +309,7 @@ pub trait MesyCommandHandler: Send + 'static {
                     Ok(())
                 }
             },
-            ModType::Mstd16 | ModType::Mstd16P => match cfg {
+            m if m.is_mstd() => match cfg {
                 Some(MesyModuleConfig::Mstd { threshold, gain }) => {
                     // Original MSTD-16 modules only gained a dedicated gain
                     // command once the MCPD's own firmware reached 9.8; below
@@ -390,19 +400,24 @@ pub trait MesyCommandHandler: Send + 'static {
         Ok(())
     }
 
-    /// Push a test-pulse injection setting to one module. `chan` follows the
-    /// module's own channel-count convention for "all channels" (e.g. 8 for
-    /// an 8-channel MPSD). Purely a runtime hardware command, never persisted
-    /// -- also used to apply a live `SetParams` update to a running input.
-    fn set_pulser(&mut self, name: ModuleId, module: usize, chan: u16, pos: PulserPos, amp: u16,
-                 on: bool) -> UResult<()> {
-        if on {
-            lprintln!(INFO, [name] "Setting pulser on module {module}: chan {chan}, pos {pos:?}, amp {amp}");
+    /// Push a test-pulse injection setting to one module. Purely a runtime
+    /// hardware command, never persisted -- also used to apply a live
+    /// `SetParams` update to a running input.
+    ///
+    /// There's no dedicated MSTD-16 pulser command, so like `SETGAIN_MPSD`
+    /// (see [`Self::set_up_mstd`]), an MSTD-16's 16 channels can only be
+    /// addressed in pairs via the MPSD-8 pulser command: `chan` is halved.
+    fn set_pulser(&mut self, name: ModuleId, module: usize, modtype: ModType,
+                  cfg: &PulserConfig) -> UResult<()> {
+        let chan = if modtype.is_mstd() { cfg.chan / 2 } else { cfg.chan };
+        if cfg.on {
+            lprintln!(INFO, [name] "Setting pulser on module {module}: chan {chan}, pos {:?}, amp {}",
+                      cfg.pos, cfg.amp);
         }
         let _res: [U16; 5] = self.do_command(
             Cmd::SetPulser,
-            [U16::new(module as _), U16::new(chan), U16::new(pos as u16),
-             U16::new(amp), U16::new(on as u16)],
+            [U16::new(module as _), U16::new(chan), U16::new(cfg.pos as u16),
+             U16::new(cfg.amp), U16::new(cfg.on as u16)],
         )?;
         Ok(())
     }
