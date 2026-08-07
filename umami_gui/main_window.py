@@ -710,8 +710,29 @@ class MainWindow(QtWidgets.QWidget):
             self.client.save_histo(path, self.histo.nt)
         else:
             t = self.t_spin.value()
-            np.savetxt(path, self.histo.read_plane(t), fmt='%d')
+            buf = self.histo.read_plane(t)
+            np.savetxt(path, buf, fmt='%d', header=self._histo_export_header(t, buf))
             self.log_panel.info(f'Saved t={t} slice to {path}')
+
+    def _histo_export_header(self, t, buf):
+        roi = self._roi_bounds()
+        roi_total = int(buf[roi[1]:roi[3], roi[0]:roi[2]].sum()) if roi else 0
+        total_events, total_neutrons, lifetime_ns, tzero_count, monitor_counts = \
+            self.histo.read_counters()
+        lines = [
+            'UMAMI histogram export',
+            f'run: {self.histo.read_run_id()}',
+            f'mode: {self.current_mode or self.mode_combo.currentText()}',
+            f't-slice: {t}',
+            f'counts in slice: {int(buf.sum())}',
+            f'counts in ROI: {roi_total}',
+            f'total counts: {total_neutrons}',
+            f'life time: {lifetime_ns / 1_000_000_000:.1f} s',
+            f'total events: {total_events}',
+            f'tzero: {tzero_count}',
+            *(f'monitor {i}: {c}' for i, c in enumerate(monitor_counts)),
+        ]
+        return '\n'.join(lines)
 
     def save_plot_image_dialog(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(

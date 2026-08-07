@@ -544,18 +544,34 @@ class AuxHistoWindow(QtWidgets.QWidget):
             path += '.txt'
         _, _, is_2d, _ = self._plots[name]
         spec = next(h for h in self._histos if h['name'] == name)
+        header = self._histogram_export_header(spec, shm.read_run_id())
         if is_2d:
             x = self._bin_values(spec['x'])
             y = self._bin_values(spec['y'])
-            header = ('x: ' + ' '.join(f'{v:g}' for v in x) + '\n'
-                      'y: ' + ' '.join(f'{v:g}' for v in y))
-            np.savetxt(path, shm.read_plane(0), fmt='%d', header=header)
+            header += ('\n# x values: ' + ' '.join(f'{v:g}' for v in x) +
+                       '\n# y values: ' + ' '.join(f'{v:g}' for v in y))
+            np.savetxt(path, shm.read_plane(0), fmt='%d', header=header,
+                       comments='')
         else:
             x = self._bin_values(spec['x'])
             counts = shm.read_plane(0)[0]
             np.savetxt(path, np.column_stack([x, counts]), fmt=['%g', '%d'],
-                       header='x y', comments='')
+                       header=header, comments='')
         self.log.info(f'Saved aux histogram {name!r} to {path}')
+
+    @staticmethod
+    def _histogram_export_header(spec, run_id):
+        lines = ['UMAMI auxiliary histogram export',
+                f'run: {run_id}', f"name: {spec['name']}"]
+        for axis_name in ('x', 'y'):
+            axis = spec.get(axis_name)
+            if axis is None:
+                continue
+            lines.append(f"{axis_name}: {axis['expr']} "
+                        f"(bins={axis['bins']}, min={axis['min']}, max={axis['max']})")
+        if spec.get('filter'):
+            lines.append(f"filter: {spec['filter']}")
+        return '\n'.join(f'# {line}' for line in lines)
 
     def _save_histogram_image(self, name):
         if name not in self._plots:
