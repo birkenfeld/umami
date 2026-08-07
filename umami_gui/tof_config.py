@@ -1,14 +1,24 @@
 # Part of the Unified Mechanism for Acquisition of Measured Intensity
 # (UMAMI), see README and LICENSE files for more info.
 
-"""TOF histogram bin configuration: friendly equal-width-bin generator.
+"""TOF histogram bin configuration: friendly equal-width-bin generator."""
 
-`generate_time_bins()` only computes a plain list of ints -- no client or
-networking dependency -- so it (and `TofBinsWidget`) can be reused by an
-offline config-file editor later, not just `TofConfigWindow`.
-"""
-
-from pyqtgraph.Qt import QtCore, QtWidgets
+from pyqtgraph.Qt.QtCore import pyqtSignal
+from pyqtgraph.Qt.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QSpinBox,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .icons import icon_button
 
@@ -74,7 +84,7 @@ def generate_time_bins(mode, number=None, width=None, total=None, offset=0):
     return bins
 
 
-class TofBinsWidget(QtWidgets.QWidget):
+class TofBinsWidget(QWidget):
     """Equal-width `time_bins` generator for one histo_tof mode.
 
     Local state only -- the preview (and `current()`) update live as the
@@ -83,17 +93,17 @@ class TofBinsWidget(QtWidgets.QWidget):
     complete state.
     """
 
-    changed = QtCore.pyqtSignal()
+    changed = pyqtSignal()
 
     def __init__(self):
         super().__init__()
         self._bins = None
 
-        outer = QtWidgets.QVBoxLayout(self)
-        layout = QtWidgets.QFormLayout()
+        outer = QVBoxLayout(self)
+        layout = QFormLayout()
         outer.addLayout(layout)
 
-        self.unit_combo = QtWidgets.QComboBox()
+        self.unit_combo = QComboBox()
         self.unit_combo.addItems(list(UNIT_FACTORS))
         self.unit_combo.setCurrentText(DEFAULT_UNIT)
         self.unit_combo.currentTextChanged.connect(self._update_suffixes)
@@ -104,36 +114,36 @@ class TofBinsWidget(QtWidgets.QWidget):
         # starts unchecked, and editing a field checks its own box (the user
         # can also un/check by hand). Exactly two checked selects the mode,
         # the unchecked one is the value `generate_time_bins()` derives.
-        self.number_spin = QtWidgets.QSpinBox()
+        self.number_spin = QSpinBox()
         self.number_spin.setRange(1, MAX_BINS)
         self.number_check, number_row = self._given_field(self.number_spin)
         layout.addRow('Number of bins:', number_row)
 
-        self.width_spin = QtWidgets.QDoubleSpinBox()
+        self.width_spin = QDoubleSpinBox()
         self.width_spin.setDecimals(0)
         self.width_spin.setRange(1, 1e15)
         self.width_check, width_row = self._given_field(self.width_spin)
         layout.addRow('Bin width:', width_row)
 
-        self.total_spin = QtWidgets.QDoubleSpinBox()
+        self.total_spin = QDoubleSpinBox()
         self.total_spin.setDecimals(0)
         self.total_spin.setRange(1, 1e15)
         self.total_check, total_row = self._given_field(self.total_spin)
         layout.addRow('Total time:', total_row)
 
-        self.offset_spin = QtWidgets.QDoubleSpinBox()
+        self.offset_spin = QDoubleSpinBox()
         self.offset_spin.setDecimals(0)
         self.offset_spin.setRange(1, 1e15)
         self.offset_spin.setEnabled(False)
         self.offset_spin.valueChanged.connect(self._update_preview)
-        self.offset_check = QtWidgets.QCheckBox()
+        self.offset_check = QCheckBox()
         self.offset_check.toggled.connect(self.offset_spin.setEnabled)
         self.offset_check.toggled.connect(self._update_preview)
         offset_row = self._field_row(self.offset_check, self.offset_spin)
         layout.addRow('Offset (extra bin):', offset_row)
 
-        outer.addWidget(QtWidgets.QLabel('Bins:'))
-        self.preview = QtWidgets.QPlainTextEdit()
+        outer.addWidget(QLabel('Bins:'))
+        self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
         self.preview.setMinimumHeight(80)
         outer.addWidget(self.preview, 1)
@@ -144,14 +154,14 @@ class TofBinsWidget(QtWidgets.QWidget):
     @staticmethod
     def _field_row(checkbox, spin):
         """Build a checkbox + `spin` row, aligned like every other field row."""
-        row = QtWidgets.QHBoxLayout()
+        row = QHBoxLayout()
         row.addWidget(checkbox)
         row.addWidget(spin)
         return row
 
     def _given_field(self, spin):
         """Build a checkbox + `spin` row; editing `spin` auto-checks the box."""
-        checkbox = QtWidgets.QCheckBox()
+        checkbox = QCheckBox()
         spin.valueChanged.connect(lambda _v: checkbox.setChecked(True))
         spin.valueChanged.connect(self._update_preview)
         checkbox.toggled.connect(self._update_preview)
@@ -203,14 +213,14 @@ class TofBinsWidget(QtWidgets.QWidget):
         return self._bins
 
 
-class TofConfigWindow(QtWidgets.QWidget):
+class TofConfigWindow(QWidget):
     """Separate window with one tab per detected histo_tof mode.
 
     Discovers modes via `discover_tof_recipes()`. Follows the same
     "closing just hides" pattern as the other quick-setup windows.
     """
 
-    applied = QtCore.pyqtSignal()
+    applied = pyqtSignal()
 
     def __init__(self, client, get_nt_capacity):
         super().__init__()
@@ -222,9 +232,9 @@ class TofConfigWindow(QtWidgets.QWidget):
         self._names = []
         self._tabs_by_name = {}
 
-        self.tabs = QtWidgets.QTabWidget()
+        self.tabs = QTabWidget()
 
-        close_btn = QtWidgets.QPushButton('Close')
+        close_btn = QPushButton('Close')
         close_btn.clicked.connect(self.close)
         self.apply_btn = icon_button('apply', 'Apply')
         self.apply_btn.setToolTip(
@@ -233,12 +243,12 @@ class TofConfigWindow(QtWidgets.QWidget):
         self.apply_btn.clicked.connect(self._apply_all)
         self.apply_btn.setEnabled(False)
 
-        bottom_row = QtWidgets.QHBoxLayout()
+        bottom_row = QHBoxLayout()
         bottom_row.addWidget(close_btn)
         bottom_row.addStretch()
         bottom_row.addWidget(self.apply_btn)
 
-        layout = QtWidgets.QVBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)
         layout.addLayout(bottom_row)
 
@@ -261,7 +271,7 @@ class TofConfigWindow(QtWidgets.QWidget):
         if over_capacity:
             lines = '\n'.join(f'- {name}: needs {needed} time slices'
                                for name, needed in over_capacity)
-            QtWidgets.QMessageBox.warning(
+            QMessageBox.warning(
                 self, 'Not enough histogram capacity',
                 'The histogram buffer only has room for '
                 f'{capacity} time slice(s) (max_nt in the config):\n\n{lines}\n\n'

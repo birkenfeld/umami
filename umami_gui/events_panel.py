@@ -3,7 +3,14 @@
 
 """Extended, per-run event/counter breakdown as a live-updating grid."""
 
-from pyqtgraph.Qt import QtWidgets
+from pyqtgraph.Qt.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .icons import icon_button
 from .status_panel import THIN_SPACE, format_elapsed, rich_text_width
@@ -20,7 +27,7 @@ ROW_NAMES = [
 ]
 
 
-class EventsPanel(QtWidgets.QWidget):
+class EventsPanel(QWidget):
     """Name/value/rate grid of counters, extending the compact status line.
 
     `set_roi_btn` is exposed for `MainWindow` to wire up.
@@ -28,17 +35,17 @@ class EventsPanel(QtWidgets.QWidget):
 
     def __init__(self):
         super().__init__()
-        outer = QtWidgets.QVBoxLayout(self)
+        outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 5, 5)
 
-        layout = QtWidgets.QGridLayout()
+        layout = QGridLayout()
         layout.setVerticalSpacing(int(layout.verticalSpacing() * 1.5))
         layout.setHorizontalSpacing(int(layout.horizontalSpacing() * 1.5))
         outer.addLayout(layout)
 
         outer.addSpacing(24)
 
-        btn_row = QtWidgets.QHBoxLayout()
+        btn_row = QHBoxLayout()
         self.set_roi_btn = icon_button('select', 'Enable ROI')
         self.set_roi_btn.setCheckable(True)
         self.set_roi_btn.setToolTip(
@@ -51,7 +58,7 @@ class EventsPanel(QtWidgets.QWidget):
         header_font = self.font()
         header_font.setBold(True)
         for col, text in enumerate(['Counter', 'Value', 'Rate']):
-            label = QtWidgets.QLabel(text)
+            label = QLabel(text)
             label.setFont(header_font)
             layout.addWidget(label, 0, col)
 
@@ -63,11 +70,11 @@ class EventsPanel(QtWidgets.QWidget):
                 layout.addWidget(self._separator(), row, 0, 1, 3)
                 row += 1
                 continue
-            layout.addWidget(QtWidgets.QLabel(name), row, 0)
-            value_label = QtWidgets.QLabel('-')
+            layout.addWidget(QLabel(name), row, 0)
+            value_label = QLabel('-')
             layout.addWidget(value_label, row, 1)
             self._value_labels[name] = value_label
-            rate_label = QtWidgets.QLabel('-')
+            rate_label = QLabel('-')
             layout.addWidget(rate_label, row, 2)
             self._rate_labels[name] = rate_label
             row += 1
@@ -81,9 +88,9 @@ class EventsPanel(QtWidgets.QWidget):
 
     @staticmethod
     def _separator():
-        line = QtWidgets.QFrame()
-        line.setFrameShape(QtWidgets.QFrame.Shape.HLine)
-        line.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
         return line
 
     @staticmethod

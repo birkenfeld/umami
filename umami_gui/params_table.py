@@ -5,12 +5,27 @@
 
 import json
 
-from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
+from pyqtgraph.Qt.QtCore import Qt
+from pyqtgraph.Qt.QtGui import QFont
+from pyqtgraph.Qt.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QPlainTextEdit,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .icons import icon_button
 
 
-class ValueEditDialog(QtWidgets.QDialog):
+class ValueEditDialog(QDialog):
     """Edit one parameter's value as pretty-printed JSON in a bigger box.
 
     Simple/scalar values are still edited in place via the table's own cell
@@ -24,29 +39,27 @@ class ValueEditDialog(QtWidgets.QDialog):
         self.setWindowTitle(f'View {key}' if readonly else f'Edit {key}')
         self.resize(500, 400)
 
-        layout = QtWidgets.QVBoxLayout(self)
+        layout = QVBoxLayout(self)
         datatype = info.get('datatype', '')
         help_text = info.get('help', '')
         if datatype or help_text:
             text = f'{datatype}: {help_text}' if datatype else help_text
-            label = QtWidgets.QLabel(text)
+            label = QLabel(text)
             label.setWordWrap(True)
             label.setStyleSheet('color: #555;')
             layout.addWidget(label)
 
-        self.edit = QtWidgets.QPlainTextEdit(json.dumps(info.get('value'), indent=2))
-        self.edit.setFont(QtGui.QFont('monospace'))
+        self.edit = QPlainTextEdit(json.dumps(info.get('value'), indent=2))
+        self.edit.setFont(QFont('monospace'))
         self.edit.setReadOnly(readonly)
         layout.addWidget(self.edit)
 
         if readonly:
-            buttons = QtWidgets.QDialogButtonBox(
-                QtWidgets.QDialogButtonBox.StandardButton.Ok)
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
             buttons.accepted.connect(self.reject)
         else:
-            buttons = QtWidgets.QDialogButtonBox(
-                QtWidgets.QDialogButtonBox.StandardButton.Ok |
-                QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
+                                       QDialogButtonBox.StandardButton.Cancel)
             buttons.accepted.connect(self._validate_and_accept)
             buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -57,7 +70,7 @@ class ValueEditDialog(QtWidgets.QDialog):
         try:
             self._value = json.loads(self.edit.toPlainText())
         except json.JSONDecodeError as e:
-            QtWidgets.QMessageBox.warning(self, 'Invalid JSON', str(e))
+            QMessageBox.warning(self, 'Invalid JSON', str(e))
             return
         self.accept()
 
@@ -65,7 +78,7 @@ class ValueEditDialog(QtWidgets.QDialog):
         return self._value
 
 
-class ParamsTable(QtWidgets.QTableWidget):
+class ParamsTable(QTableWidget):
     """Shows current recipe/output parameters from get_params.
 
     Editing a cell pushes the change live via set_params.
@@ -76,7 +89,7 @@ class ParamsTable(QtWidgets.QTableWidget):
         self.client = client
         self.setHorizontalHeaderLabels(['Parameter', 'Value', ''])
         self.horizontalHeader().setSectionResizeMode(
-            1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+            1, QHeaderView.ResizeMode.Stretch)
         self.itemChanged.connect(self._on_item_changed)
         self._keys = []
         self.params = None
@@ -87,12 +100,12 @@ class ParamsTable(QtWidgets.QTableWidget):
         # before switching between the checkbox and text-item representations
         if isinstance(value, bool):
             self.takeItem(row, 1)
-            checkbox = QtWidgets.QCheckBox()
+            checkbox = QCheckBox()
             checkbox.setChecked(value)
             checkbox.setEnabled(not readonly)
             checkbox.toggled.connect(lambda checked, k=key: self._send(k, checked))
-            cell = QtWidgets.QWidget()
-            cell_layout = QtWidgets.QHBoxLayout(cell)
+            cell = QWidget()
+            cell_layout = QHBoxLayout(cell)
             cell_layout.setContentsMargins(6, 0, 0, 0)
             cell_layout.addWidget(checkbox)
             self.setCellWidget(row, 1, cell)
@@ -104,10 +117,10 @@ class ParamsTable(QtWidgets.QTableWidget):
                 text = ''
             else:
                 text = str(value)
-            value_item = QtWidgets.QTableWidgetItem(text)
+            value_item = QTableWidgetItem(text)
             if readonly:
                 value_item.setFlags(
-                    value_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+                    value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.setItem(row, 1, value_item)
 
     def refresh(self):
@@ -124,8 +137,8 @@ class ParamsTable(QtWidgets.QTableWidget):
         self._keys = []
         for row, (key, info) in enumerate(sorted(shown.items())):
             readonly = info.get('readonly', False)
-            name_item = QtWidgets.QTableWidgetItem(key)
-            name_item.setFlags(name_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            name_item = QTableWidgetItem(key)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             tooltip = f"{info.get('datatype', '')}: {info.get('help', '')}"
             name_item.setToolTip(f'{tooltip} (read-only)' if readonly else tooltip)
             self.setItem(row, 0, name_item)
@@ -140,8 +153,8 @@ class ParamsTable(QtWidgets.QTableWidget):
                                      'Edit in a larger dialog')
                 edit_btn.clicked.connect(
                     lambda _, k=key, i=info: self._edit_dialog(k, i))
-                cell = QtWidgets.QWidget()
-                cell_layout = QtWidgets.QHBoxLayout(cell)
+                cell = QWidget()
+                cell_layout = QHBoxLayout(cell)
                 cell_layout.setContentsMargins(2, 0, 2, 0)
                 cell_layout.addWidget(edit_btn)
                 self.setCellWidget(row, 2, cell)
@@ -152,7 +165,7 @@ class ParamsTable(QtWidgets.QTableWidget):
 
     def _edit_dialog(self, key, info):
         dialog = ValueEditDialog(self, key, info)
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self._send(key, dialog.value())
         self.refresh()

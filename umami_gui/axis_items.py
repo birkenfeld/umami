@@ -4,7 +4,7 @@
 """Custom pyqtgraph plot items shared across umami-gui windows."""
 
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtCore
+from pyqtgraph.Qt.QtCore import QPointF, QRectF, Qt
 
 
 class RotatedAxisItem(pg.AxisItem):
@@ -37,9 +37,9 @@ class RotatedAxisItem(pg.AxisItem):
             # right edge; anchor there so the rotated label's top-right
             # corner lines up with the tick and swings down-left below it
             p.save()
-            p.translate(QtCore.QPointF(rect.center().x(), rect.top()))
+            p.translate(QPointF(rect.center().x(), rect.top()))
             p.rotate(self.tick_angle)
-            local_rect = QtCore.QRectF(-rect.width(), 0, rect.width(), rect.height())
+            local_rect = QRectF(-rect.width(), 0, rect.width(), rect.height())
             p.drawText(local_rect, int(flags), text)
             p.restore()
 
@@ -53,20 +53,20 @@ class ZoomViewBox(pg.ViewBox):
     """
 
     def mouseDragEvent(self, ev, axis=None):  # noqa: N802
-        if ev.button() == QtCore.Qt.MouseButton.RightButton:
+        if ev.button() == Qt.MouseButton.RightButton:
             ev.accept()
             p1 = self.mapToView(ev.lastPos())
             p2 = self.mapToView(ev.pos())
             self.translateBy(x=p1.x() - p2.x(), y=p1.y() - p2.y())
             return
-        if ev.button() != QtCore.Qt.MouseButton.LeftButton:
+        if ev.button() != Qt.MouseButton.LeftButton:
             super().mouseDragEvent(ev, axis=axis)
             return
         ev.accept()
         if ev.isFinish():
             self.rbScaleBox.hide()
-            ax = QtCore.QRectF(pg.Point(ev.buttonDownPos(ev.button())),
-                               pg.Point(ev.pos()))
+            ax = QRectF(pg.Point(ev.buttonDownPos(ev.button())),
+                        pg.Point(ev.pos()))
             ax = self.childGroup.mapRectFromParent(ax)
             self.showAxRect(ax)
             self.axHistoryPointer += 1
@@ -75,7 +75,7 @@ class ZoomViewBox(pg.ViewBox):
             self.updateScaleBox(ev.buttonDownPos(), ev.pos())
 
     def mouseClickEvent(self, ev):  # noqa: N802
-        if ev.button() != QtCore.Qt.MouseButton.MiddleButton:
+        if ev.button() != Qt.MouseButton.MiddleButton:
             super().mouseClickEvent(ev)
             return
         ev.accept()

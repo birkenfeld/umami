@@ -7,7 +7,17 @@ import html
 
 import numpy as np
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtCore, QtWidgets
+from pyqtgraph.Qt.QtCore import QRectF, Qt, pyqtSignal
+from pyqtgraph.Qt.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .axis_items import ZoomViewBox
 from .plot_utils import COLORMAPS, set_image_data, step_histogram_curve
@@ -53,14 +63,14 @@ def axis_extent(axis):
     return axis['min'] - bin_width(axis) / 2, axis['max'] - axis['min'] + 1
 
 
-class AuxPlot(QtWidgets.QWidget):
+class AuxPlot(QWidget):
     """One auxiliary histogram's plot, with its own compact control strip.
 
     1-D histograms get a step curve with a log-y toggle; 2-D histograms get an
     image with log scale, colormap, and manual z-limit controls per plot.
     """
 
-    cursor_moved = QtCore.pyqtSignal(str)
+    cursor_moved = pyqtSignal(str)
 
     def __init__(self, name, spec, is_2d, state):
         super().__init__()
@@ -74,7 +84,7 @@ class AuxPlot(QtWidgets.QWidget):
         if state['log'] is None:
             state['log'] = is_2d
 
-        layout = QtWidgets.QVBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
         self._build_plot(name, spec)
@@ -95,7 +105,7 @@ class AuxPlot(QtWidgets.QWidget):
             plot_item.addItem(self._img)
             x_lo, x_span = axis_extent(spec['x'])
             y_lo, y_span = axis_extent(spec['y'])
-            self._extent = QtCore.QRectF(x_lo, y_lo, x_span, y_span)
+            self._extent = QRectF(x_lo, y_lo, x_span, y_span)
         else:
             plot_item.setLabel('left', 'counts')
             self._curve = step_histogram_curve(plot_item)
@@ -103,31 +113,31 @@ class AuxPlot(QtWidgets.QWidget):
         self.plot_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
 
     def _build_controls(self, state):
-        strip = QtWidgets.QWidget()
-        row = QtWidgets.QHBoxLayout(strip)
+        strip = QWidget()
+        row = QHBoxLayout(strip)
         row.setContentsMargins(4, 0, 4, 0)
         row.setSpacing(4)
-        strip.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
-                            QtWidgets.QSizePolicy.Policy.Fixed)
+        strip.setSizePolicy(QSizePolicy.Policy.Preferred,
+                            QSizePolicy.Policy.Fixed)
         font = strip.font()
         font.setPointSizeF(max(font.pointSizeF() - 1.5, 7.0))
         strip.setFont(font)
 
-        self.log_check = QtWidgets.QCheckBox('Log')
+        self.log_check = QCheckBox('Log')
         self.log_check.setToolTip('Log scale')
         self.log_check.setChecked(state['log'])
         row.addWidget(self.log_check)
 
         if self.is_2d:
-            self.colormap_combo = QtWidgets.QComboBox()
+            self.colormap_combo = QComboBox()
             self.colormap_combo.setToolTip('Colormap')
             self.colormap_combo.addItems(list(COLORMAPS))
             self.colormap_combo.setCurrentText(state['colormap'])
             self.colormap_combo.setFixedWidth(84)
-            self.colormap_combo.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+            self.colormap_combo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             row.addWidget(self.colormap_combo)
 
-            self.auto_check = QtWidgets.QCheckBox('Auto')
+            self.auto_check = QCheckBox('Auto')
             self.auto_check.setToolTip('Auto levels')
             self.auto_check.setChecked(state['auto_levels'])
             row.addWidget(self.auto_check)
@@ -137,7 +147,7 @@ class AuxPlot(QtWidgets.QWidget):
             self.level_min_spin.setEnabled(not state['auto_levels'])
             self.level_max_spin.setEnabled(not state['auto_levels'])
             row.addWidget(self.level_min_spin)
-            row.addWidget(QtWidgets.QLabel('-'))
+            row.addWidget(QLabel('-'))
             row.addWidget(self.level_max_spin)
 
             self._img.setColorMap(pg.colormap.get(COLORMAPS[state['colormap']]))
@@ -154,13 +164,13 @@ class AuxPlot(QtWidgets.QWidget):
         return strip
 
     def _level_spinbox(self, value):
-        box = QtWidgets.QDoubleSpinBox()
+        box = QDoubleSpinBox()
         box.setRange(0, 1e9)
         box.setDecimals(0)
         box.setValue(value)
         box.setFixedWidth(64)
         box.setKeyboardTracking(False)
-        box.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         return box
 
     # ---- display state ----

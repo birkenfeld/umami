@@ -7,7 +7,15 @@ import math
 
 import numpy as np
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtCore, QtWidgets
+from pyqtgraph.Qt.QtCore import Qt
+from pyqtgraph.Qt.QtWidgets import (
+    QCheckBox,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .axis_items import RotatedAxisItem, ZoomViewBox
 from .plot_utils import step_histogram_curve
@@ -17,7 +25,7 @@ from .plot_utils import step_histogram_curve
 MAX_T_AXIS_LABELS = 20
 
 
-class _ScalarPlotWindow(QtWidgets.QWidget):
+class _ScalarPlotWindow(QWidget):
     """Shared scaffolding for a standalone single-curve plot window.
 
     Common to `DiffractogramWindow` and `TofSpectrumWindow`: a log-scale
@@ -37,22 +45,22 @@ class _ScalarPlotWindow(QtWidgets.QWidget):
         self._plot_item.setLabel('left', 'counts')
         self.curve = step_histogram_curve(self.plot_widget)
 
-        strip = QtWidgets.QWidget()
-        row = QtWidgets.QHBoxLayout(strip)
+        strip = QWidget()
+        row = QHBoxLayout(strip)
         row.setContentsMargins(4, 0, 4, 0)
-        strip.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
-                            QtWidgets.QSizePolicy.Policy.Fixed)
-        self.log_check = QtWidgets.QCheckBox('Log scale')
+        strip.setSizePolicy(QSizePolicy.Policy.Preferred,
+                            QSizePolicy.Policy.Fixed)
+        self.log_check = QCheckBox('Log scale')
         self.log_check.toggled.connect(
             lambda checked: self._plot_item.setLogMode(y=checked))
         row.addWidget(self.log_check)
         row.addStretch()
 
-        self.cursor_label = QtWidgets.QLabel('')
-        self.cursor_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.cursor_label = QLabel('')
+        self.cursor_label.setTextFormat(Qt.TextFormat.PlainText)
         self.cursor_label.setContentsMargins(8, 4, 8, 4)
 
-        layout = QtWidgets.QVBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
         layout.addWidget(strip)

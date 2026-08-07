@@ -5,11 +5,20 @@
 
 from typing import ClassVar
 
-from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
+from pyqtgraph.Qt.QtCore import QRectF, QSize, Qt
+from pyqtgraph.Qt.QtGui import QColor, QPainter, QPixmap
+from pyqtgraph.Qt.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QWidget,
+)
 
 from .icons import is_dark_mode, load_icon
 
-CONN_ICON_SIZE = QtCore.QSize(16, 16)
+CONN_ICON_SIZE = QSize(16, 16)
 THIN_SPACE = '\u2009'
 
 
@@ -27,12 +36,12 @@ def format_elapsed(seconds):
 
 def rich_text_width(font, html):
     """Width a QLabel would need to show `html` (rich text) in `font`."""
-    label = QtWidgets.QLabel(html)
+    label = QLabel(html)
     label.setFont(font)
     return label.sizeHint().width()
 
 
-class StatusPanel(QtWidgets.QFrame):
+class StatusPanel(QFrame):
     """Connection, mode, run/counts, and per-input state at a glance."""
 
     STATE_COLORS: ClassVar = [
@@ -54,58 +63,58 @@ class StatusPanel(QtWidgets.QFrame):
         self.connected_color = self.CONNECTED_COLOR[dark]
         self.error_color = self.ERROR_COLOR[dark]
         self.default_text_color = self.DEFAULT_TEXT[dark]
-        top_row = QtWidgets.QHBoxLayout(self)
+        top_row = QHBoxLayout(self)
         top_row.setContentsMargins(8, 2, 13, 2)
-        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
-                           QtWidgets.QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred,
+                           QSizePolicy.Policy.Fixed)
 
         value_font = self.font()
         value_font.setPointSize(
             int(value_font.pointSize() * self.VALUE_FONT_SIZE_FACTOR))
 
-        self.conn_icon = QtWidgets.QLabel()
+        self.conn_icon = QLabel()
         top_row.addWidget(self.conn_icon)
-        self.conn_label = QtWidgets.QLabel()
+        self.conn_label = QLabel()
         top_row.addWidget(self.conn_label)
         top_row.addSpacing(20)
 
-        self.mode_label = QtWidgets.QLabel('mode: <b>-</b>')
+        self.mode_label = QLabel('mode: <b>-</b>')
         self.mode_label.setFont(value_font)
         top_row.addWidget(self.mode_label)
         top_row.addSpacing(20)
 
-        self.run_label = QtWidgets.QLabel('run: <b>-</b>')
+        self.run_label = QLabel('run: <b>-</b>')
         self.run_label.setFont(value_font)
         top_row.addWidget(self.run_label)
         top_row.addSpacing(20)
 
-        self.time_label = QtWidgets.QLabel('time: <b>-</b>')
+        self.time_label = QLabel('time: <b>-</b>')
         self.time_label.setFont(value_font)
         self.time_label.setMinimumWidth(
             rich_text_width(value_font, f'time: {format_elapsed(659)}'))
         top_row.addWidget(self.time_label)
         top_row.addSpacing(20)
 
-        self.total_label = QtWidgets.QLabel('in slice: <b>-</b>')
+        self.total_label = QLabel('in slice: <b>-</b>')
         self.total_label.setFont(value_font)
         self.total_label.setMinimumWidth(
             rich_text_width(value_font, 'in slice: <b>10,000</b>'))
         top_row.addWidget(self.total_label)
         top_row.addSpacing(20)
 
-        self.rate_label = QtWidgets.QLabel('rate: <b>-</b>')
+        self.rate_label = QLabel('rate: <b>-</b>')
         self.rate_label.setFont(value_font)
         top_row.addWidget(self.rate_label)
         top_row.addSpacing(20)
 
         # a config can have many inputs; one LED-style dot per input, wrapping
         # to a new row every LEDS_PER_ROW
-        inputs_widget = QtWidgets.QWidget()
-        self.inputs_layout = QtWidgets.QGridLayout(inputs_widget)
+        inputs_widget = QWidget()
+        self.inputs_layout = QGridLayout(inputs_widget)
         self.inputs_layout.setContentsMargins(0, 0, 0, 0)
         self.inputs_layout.setSpacing(6)
         self.inputs_layout.setAlignment(
-            QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         top_row.addWidget(inputs_widget, stretch=1)
         self._input_leds = {}
 
@@ -131,15 +140,15 @@ class StatusPanel(QtWidgets.QFrame):
 
     @staticmethod
     def _led_pixmap(color, size):
-        pixmap = QtGui.QPixmap(size, size)
-        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
-        painter = QtGui.QPainter(pixmap)
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        painter.setPen(QtGui.QColor('black'))
-        painter.setBrush(QtGui.QColor(color))
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QColor('black'))
+        painter.setBrush(QColor(color))
         # inset by half a pixel on every side -- the pen's stroke is centered
         # on the ellipse's path and extends outward by half its width
-        painter.drawEllipse(QtCore.QRectF(0.5, 0.5, size - 1, size - 1))
+        painter.drawEllipse(QRectF(0.5, 0.5, size - 1, size - 1))
         painter.end()
         return pixmap
 
@@ -152,7 +161,7 @@ class StatusPanel(QtWidgets.QFrame):
         # first pass: make sure every input has a LED at a fixed grid slot
         for name in inputs:
             if name not in self._input_leds:
-                led = QtWidgets.QLabel()
+                led = QLabel()
                 index = len(self._input_leds)
                 self.inputs_layout.addWidget(led, index // self.LEDS_PER_ROW,
                                              index % self.LEDS_PER_ROW)

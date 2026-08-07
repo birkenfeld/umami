@@ -5,7 +5,22 @@
 
 import typing
 
-from pyqtgraph.Qt import QtCore, QtWidgets
+from pyqtgraph.Qt.QtCore import Qt, pyqtSignal
+from pyqtgraph.Qt.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QPushButton,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .icons import icon_button
 
@@ -25,15 +40,15 @@ def discover_mesy_inputs(params):
 
 
 def _centered(widget):
-    cell = QtWidgets.QWidget()
-    layout = QtWidgets.QHBoxLayout(cell)
+    cell = QWidget()
+    layout = QHBoxLayout(cell)
     layout.setContentsMargins(0, 0, 0, 0)
-    layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+    layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
     layout.addWidget(widget)
     return cell
 
 
-class MesyCellsTable(QtWidgets.QTableWidget):
+class MesyCellsTable(QTableWidget):
     """8 fixed rows (cell index 0-7): Configure / Source / Compare.
 
     Loads/reports a dict shaped like the `cells` param value, e.g.
@@ -46,20 +61,19 @@ class MesyCellsTable(QtWidgets.QTableWidget):
         super().__init__(N_SLOTS, 3)
         self.setHorizontalHeaderLabels(['Configure', 'Source', 'Compare'])
         self.setVerticalHeaderLabels([f'Cell {i}' for i in range(N_SLOTS)])
-        self.horizontalHeader().setSectionResizeMode(
-            QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._loading = False
         self._checks = []
         self._sources = []
         self._compares = []
         for row in range(N_SLOTS):
-            check = QtWidgets.QCheckBox()
+            check = QCheckBox()
             check.setToolTip("Manage this cell's settings from umami")
             check.toggled.connect(self._on_toggle)
             self.setCellWidget(row, 0, _centered(check))
             self._checks.append(check)
 
-            source = QtWidgets.QComboBox()
+            source = QComboBox()
             source.addItems(CELL_TRIGGERS)
             source.setToolTip(
                 'Trigger source: none, one of 4 aux timers, one of 2 digital inputs, '
@@ -67,7 +81,7 @@ class MesyCellsTable(QtWidgets.QTableWidget):
             self.setCellWidget(row, 1, source)
             self._sources.append(source)
 
-            compare = QtWidgets.QSpinBox()
+            compare = QSpinBox()
             compare.setRange(0, 22)
             compare.setToolTip(
                 'Only used when source = compare: bit 0-20 of the compare/status '
@@ -107,7 +121,7 @@ class MesyCellsTable(QtWidgets.QTableWidget):
         }
 
 
-class MesyModulesTable(QtWidgets.QTableWidget):
+class MesyModulesTable(QTableWidget):
     """8 fixed rows: Detected / Configure / Type / Threshold / Gain 0-15.
 
     Loads/reports a dict shaped like the `modules` param value, e.g.
@@ -131,8 +145,7 @@ class MesyModulesTable(QtWidgets.QTableWidget):
             ['Detected', 'Configure', 'Type', 'Threshold']
             + [f'Gain {c}' for c in range(self.N_GAIN_CHANS)])
         self.setVerticalHeaderLabels([f'Module {i}' for i in range(N_SLOTS)])
-        self.horizontalHeader().setSectionResizeMode(
-            QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._loading = False
         self._detected = []
         self._checks = []
@@ -140,32 +153,32 @@ class MesyModulesTable(QtWidgets.QTableWidget):
         self._thresholds = []
         self._gains = []  # one list of N_GAIN_CHANS QSpinBox per row
         for row in range(N_SLOTS):
-            detected = QtWidgets.QTableWidgetItem('-')
-            detected.setFlags(detected.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            detected = QTableWidgetItem('-')
+            detected.setFlags(detected.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.setItem(row, 0, detected)
             self._detected.append(detected)
 
-            check = QtWidgets.QCheckBox()
+            check = QCheckBox()
             check.setToolTip("Manage this module's settings from umami")
             check.toggled.connect(self._on_toggle)
             self.setCellWidget(row, 1, _centered(check))
             self._checks.append(check)
 
-            combo = QtWidgets.QComboBox()
+            combo = QComboBox()
             combo.addItems(MODULE_TYPES)
             combo.currentIndexChanged.connect(
                 lambda _idx, r=row: self._update_gain_enabled(r))
             self.setCellWidget(row, 2, combo)
             self._types.append(combo)
 
-            threshold = QtWidgets.QSpinBox()
+            threshold = QSpinBox()
             threshold.setRange(0, 0xFFFF)
             self.setCellWidget(row, 3, threshold)
             self._thresholds.append(threshold)
 
             row_gains = []
             for chan in range(self.N_GAIN_CHANS):
-                gain = QtWidgets.QSpinBox()
+                gain = QSpinBox()
                 gain.setRange(0, 0xFFFF)
                 gain.setToolTip(f'Gain for channel/tube {chan}')
                 self.setCellWidget(row, 4 + chan, gain)
@@ -236,7 +249,7 @@ class MesyModulesTable(QtWidgets.QTableWidget):
         return result
 
 
-class MesyPulserTable(QtWidgets.QTableWidget):
+class MesyPulserTable(QTableWidget):
     """8 fixed rows (module index 0-7): Configure / On / Channel / Position / Amplitude.
 
     Loads/reports a dict shaped like the `pulser` param value, e.g.
@@ -252,8 +265,7 @@ class MesyPulserTable(QtWidgets.QTableWidget):
         self.setHorizontalHeaderLabels(
             ['Configure', 'On', 'Channel', 'Position', 'Amplitude'])
         self.setVerticalHeaderLabels([f'Module {i}' for i in range(N_SLOTS)])
-        self.horizontalHeader().setSectionResizeMode(
-            QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._loading = False
         self._checks = []
         self._ons = []
@@ -261,29 +273,29 @@ class MesyPulserTable(QtWidgets.QTableWidget):
         self._positions = []
         self._amps = []
         for row in range(N_SLOTS):
-            check = QtWidgets.QCheckBox()
+            check = QCheckBox()
             check.setToolTip("Manage this module's pulser from umami")
             check.toggled.connect(self._on_toggle)
             self.setCellWidget(row, 0, _centered(check))
             self._checks.append(check)
 
-            on = QtWidgets.QCheckBox()
+            on = QCheckBox()
             on.setToolTip('Actually inject test pulses -- leave off when not testing')
             self.setCellWidget(row, 1, _centered(on))
             self._ons.append(on)
 
-            chan = QtWidgets.QSpinBox()
+            chan = QSpinBox()
             chan.setRange(0, N_SLOTS - 1)
             chan.setToolTip('Channel to pulse')
             self.setCellWidget(row, 2, chan)
             self._chans.append(chan)
 
-            pos = QtWidgets.QComboBox()
+            pos = QComboBox()
             pos.addItems(PULSER_POSITIONS)
             self.setCellWidget(row, 3, pos)
             self._positions.append(pos)
 
-            amp = QtWidgets.QSpinBox()
+            amp = QSpinBox()
             amp.setRange(0, 255)
             self.setCellWidget(row, 4, amp)
             self._amps.append(amp)
@@ -328,14 +340,14 @@ class MesyPulserTable(QtWidgets.QTableWidget):
         }
 
 
-class McpdConfigWindow(QtWidgets.QWidget):
+class McpdConfigWindow(QWidget):
     """Separate window with one tab per detected Mesytec MCPD input.
 
     Discovers mesy inputs via `discover_mesy_inputs()`. Follows the same
     "closing just hides" pattern as the aux-histogram window.
     """
 
-    applied = QtCore.pyqtSignal()
+    applied = pyqtSignal()
 
     def __init__(self, client):
         super().__init__()
@@ -346,22 +358,22 @@ class McpdConfigWindow(QtWidgets.QWidget):
         self._names = []  # mesy input names last seen, in tab order
         self._tables = {}
 
-        self.tabs = QtWidgets.QTabWidget()
+        self.tabs = QTabWidget()
 
-        close_btn = QtWidgets.QPushButton('Close')
+        close_btn = QPushButton('Close')
         close_btn.clicked.connect(self.close)
         refresh_btn = icon_button('refresh', 'Refresh')
         refresh_btn.clicked.connect(self.refresh)
         apply_btn = icon_button('apply', 'Apply')
         apply_btn.clicked.connect(self._apply_all)
 
-        bottom_row = QtWidgets.QHBoxLayout()
+        bottom_row = QHBoxLayout()
         bottom_row.addWidget(close_btn)
         bottom_row.addStretch()
         bottom_row.addWidget(refresh_btn)
         bottom_row.addWidget(apply_btn)
 
-        layout = QtWidgets.QVBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)
         layout.addLayout(bottom_row)
 
@@ -370,25 +382,25 @@ class McpdConfigWindow(QtWidgets.QWidget):
         self.refresh()
 
     def _add_tab(self, name):
-        page = QtWidgets.QWidget()
-        page_layout = QtWidgets.QVBoxLayout(page)
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
 
-        version_label = QtWidgets.QLabel('MCPD firmware: -')
+        version_label = QLabel('MCPD firmware: -')
         page_layout.addWidget(version_label)
 
-        modules_box = QtWidgets.QGroupBox('Modules')
+        modules_box = QGroupBox('Modules')
         modules_table = MesyModulesTable()
-        QtWidgets.QVBoxLayout(modules_box).addWidget(modules_table)
+        QVBoxLayout(modules_box).addWidget(modules_table)
 
-        cells_box = QtWidgets.QGroupBox('Cells')
+        cells_box = QGroupBox('Cells')
         cells_table = MesyCellsTable()
-        QtWidgets.QVBoxLayout(cells_box).addWidget(cells_table)
+        QVBoxLayout(cells_box).addWidget(cells_table)
 
-        pulser_box = QtWidgets.QGroupBox('Pulser')
+        pulser_box = QGroupBox('Pulser')
         pulser_table = MesyPulserTable()
-        QtWidgets.QVBoxLayout(pulser_box).addWidget(pulser_table)
+        QVBoxLayout(pulser_box).addWidget(pulser_table)
 
-        bottom_row = QtWidgets.QHBoxLayout()
+        bottom_row = QHBoxLayout()
         bottom_row.addWidget(cells_box)
         bottom_row.addWidget(pulser_box)
 

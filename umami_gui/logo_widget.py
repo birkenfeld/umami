@@ -6,7 +6,9 @@
 import random
 import time
 
-from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
+from pyqtgraph.Qt.QtCore import QRectF, Qt, QTimer
+from pyqtgraph.Qt.QtGui import QColor, QFont, QFontInfo, QImage, QPainter, qGray
+from pyqtgraph.Qt.QtWidgets import QWidget
 
 # Grid geometry matching the original logo artwork's 22x22 tiles (a 300x300
 # viewBox), reused here purely as an animation resolution/aspect choice.
@@ -45,11 +47,10 @@ def thermal_rgb(t):
 
 def _letter_font(pixel_size):
     """Font for rasterizing a letter."""
-    font = QtGui.QFont(LETTER_FONT_FAMILY)
-    if QtGui.QFontInfo(font).family() != LETTER_FONT_FAMILY:
-        font = QtGui.QFont()
-        font.setStyleHint(QtGui.QFont.StyleHint.SansSerif,
-                         QtGui.QFont.StyleStrategy.PreferMatch)
+    font = QFont(LETTER_FONT_FAMILY)
+    if QFontInfo(font).family() != LETTER_FONT_FAMILY:
+        font = QFont()
+        font.setStyleHint(QFont.StyleHint.SansSerif, QFont.StyleStrategy.PreferMatch)
     font.setPixelSize(pixel_size)
     return font
 
@@ -62,22 +63,22 @@ def _letter_coverage(letter, grid, rng):
     coverage instead of a hard on/off mask.
     """
     supersample = grid * 8
-    image_format = QtGui.QImage.Format.Format_Grayscale8
-    image = QtGui.QImage(supersample, supersample, image_format)
+    image_format = QImage.Format.Format_Grayscale8
+    image = QImage(supersample, supersample, image_format)
     image.fill(0)
-    painter = QtGui.QPainter(image)
-    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     center = supersample / 2
     painter.translate(center, center)
     painter.rotate(rng.uniform(*ROTATION_RANGE_DEG))
     painter.translate(-center, -center)
     painter.setFont(_letter_font(round(supersample * LETTER_SIZE_FRACTION)))
-    painter.setPen(QtGui.QColor('white'))
-    painter.drawText(image.rect(), QtCore.Qt.AlignmentFlag.AlignCenter, letter)
+    painter.setPen(QColor('white'))
+    painter.drawText(image.rect(), Qt.AlignmentFlag.AlignCenter, letter)
     painter.end()
-    small = image.scaled(grid, grid, QtCore.Qt.AspectRatioMode.IgnoreAspectRatio,
-                         QtCore.Qt.TransformationMode.SmoothTransformation)
-    return [QtGui.qGray(small.pixel(col, row)) / 255
+    small = image.scaled(grid, grid, Qt.AspectRatioMode.IgnoreAspectRatio,
+                         Qt.TransformationMode.SmoothTransformation)
+    return [qGray(small.pixel(col, row)) / 255
             for row in range(grid) for col in range(grid)]
 
 
@@ -93,7 +94,7 @@ def _generate_heat(letter, grid, rng):
             for c in coverage]
 
 
-class LogoBuildupWidget(QtWidgets.QWidget):
+class LogoBuildupWidget(QWidget):
     """Fixed-size widget animating the logo's pixel grid from cold to final.
 
     Starts the animation on construction and repaints on a timer until every
@@ -119,19 +120,19 @@ class LogoBuildupWidget(QtWidgets.QWidget):
         self.setFixedSize(width, width)
 
         self._start_time = time.monotonic()
-        self._timer = QtCore.QTimer(self)
+        self._timer = QTimer(self)
         self._timer.setInterval(33)
         self._timer.timeout.connect(self.update)
         self._timer.start()
 
     def paintEvent(self, event):  # noqa: N802, ARG002
         elapsed_ms = (time.monotonic() - self._start_time) * 1000
-        painter = QtGui.QPainter(self)
-        painter.fillRect(self.rect(), QtGui.QColor(BACKGROUND_COLOR))
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(BACKGROUND_COLOR))
         for x, y, w, h, heat, delay_ms, ramp_ms in self._tiles:
             progress = max(0.0, min(1.0, (elapsed_ms - delay_ms) / ramp_ms))
             eased = 1 - (1 - progress) ** 3
-            painter.fillRect(QtCore.QRectF(x, y, w, h),
-                             QtGui.QColor(*thermal_rgb(heat * eased)))
+            painter.fillRect(QRectF(x, y, w, h),
+                             QColor(*thermal_rgb(heat * eased)))
         if elapsed_ms >= self._total_duration_ms:
             self._timer.stop()

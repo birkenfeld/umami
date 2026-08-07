@@ -11,7 +11,30 @@ from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph import exporters
-from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
+from pyqtgraph.Qt.QtCore import QSettings, Qt, QTimer
+from pyqtgraph.Qt.QtGui import QKeySequence
+from pyqtgraph.Qt.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QSpinBox,
+    QSplitter,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import __version__
 from .aux_histo import AuxHistoWindow, discover_aux_histo_output
@@ -46,7 +69,7 @@ AUTHORS = [
 ]
 
 
-class MainWindow(QtWidgets.QWidget):
+class MainWindow(QWidget):
     """Top-level UMAMI histogram viewer.
 
     Has control buttons, the live 2-D histogram image, per-input status, and a
@@ -60,13 +83,13 @@ class MainWindow(QtWidgets.QWidget):
         self.shm_name = shm_name
         self.resize(1100, 800)
         self.setWindowTitle('UMAMI histogram')
-        self.setLayout(QtWidgets.QVBoxLayout())
+        self.setLayout(QVBoxLayout())
         self.layout().setContentsMargins(0, 0, 0, 0)
 
         try:
             self.histo = ShmHistogram(shm_name)
         except RuntimeError as e:
-            QtWidgets.QMessageBox.critical(None, 'Error', str(e))
+            QMessageBox.critical(None, 'Error', str(e))
             sys.exit(1)
 
         self.log_panel = LogPanel()
@@ -87,7 +110,7 @@ class MainWindow(QtWidgets.QWidget):
         self.last_buf = None
         self.was_connected = False
         self.last_elapsed_s = None
-        self.settings = QtCore.QSettings()
+        self.settings = QSettings()
 
         self._build_main_plot()
         self._build_status_and_mode()
@@ -99,13 +122,13 @@ class MainWindow(QtWidgets.QWidget):
         self._build_right_tabs()
         self._assemble()
         self._load_settings()
-        QtWidgets.QApplication.instance().aboutToQuit.connect(self._save_settings)
+        QApplication.instance().aboutToQuit.connect(self._save_settings)
 
-        self.image_timer = QtCore.QTimer()
+        self.image_timer = QTimer()
         self.image_timer.timeout.connect(self.update_buffer)
         self.image_timer.start(IMAGE_REFRESH_MS)
 
-        self.state_timer = QtCore.QTimer()
+        self.state_timer = QTimer()
         self.state_timer.timeout.connect(self.poll_state)
         self.state_timer.start(STATE_POLL_MS)
 
@@ -124,7 +147,7 @@ class MainWindow(QtWidgets.QWidget):
     def closeEvent(self, event):  # noqa: N802
         # other top-level windows may still be open (see _quick_setup_window)
         super().closeEvent(event)
-        QtWidgets.QApplication.instance().quit()
+        QApplication.instance().quit()
 
     # ---- main image plot ----
 
@@ -305,7 +328,7 @@ class MainWindow(QtWidgets.QWidget):
 
     def _build_status_and_mode(self):
         self.status_panel = StatusPanel()
-        self.mode_combo = QtWidgets.QComboBox()
+        self.mode_combo = QComboBox()
         self.mode_combo.activated.connect(self.on_mode_selected)
 
     def on_mode_selected(self, index):
@@ -361,19 +384,19 @@ class MainWindow(QtWidgets.QWidget):
     # ---- controls ----
 
     def _build_buttons(self):
-        frame = QtWidgets.QFrame()
-        frame.setLayout(QtWidgets.QHBoxLayout())
+        frame = QFrame()
+        frame.setLayout(QHBoxLayout())
         frame.layout().setContentsMargins(8, 5, 8, 5)
-        frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
-                            QtWidgets.QSizePolicy.Policy.Fixed)
+        frame.setSizePolicy(QSizePolicy.Policy.Preferred,
+                            QSizePolicy.Policy.Fixed)
 
         btn = icon_button('reset', 'Reset')
         btn.clicked.connect(self.client.reset)
         frame.layout().addWidget(btn)
 
-        frame.layout().addWidget(QtWidgets.QLabel('Run ID:'))
+        frame.layout().addWidget(QLabel('Run ID:'))
 
-        self.run_id_field = QtWidgets.QLineEdit()
+        self.run_id_field = QLineEdit()
         self.run_id_field.setPlaceholderText('<use current time>')
         self.run_id_field.setMaximumWidth(160)
         frame.layout().addWidget(self.run_id_field)
@@ -394,7 +417,7 @@ class MainWindow(QtWidgets.QWidget):
         frame.layout().addWidget(btn)
 
         frame.layout().addSpacing(20)
-        frame.layout().addWidget(QtWidgets.QLabel('Mode:'))
+        frame.layout().addWidget(QLabel('Mode:'))
         frame.layout().addWidget(self.mode_combo)
 
         frame.layout().addStretch()
@@ -405,22 +428,22 @@ class MainWindow(QtWidgets.QWidget):
 
         self.log_toggle = icon_button('show_log', 'Show Log')
         self.log_toggle.setCheckable(True)
-        self.log_toggle.setShortcut(QtGui.QKeySequence('Ctrl+L'))
+        self.log_toggle.setShortcut(QKeySequence('Ctrl+L'))
         frame.layout().addWidget(self.log_toggle)
 
-        about_btn = QtWidgets.QPushButton('About')
+        about_btn = QPushButton('About')
         about_btn.clicked.connect(self.show_about)
         frame.layout().addWidget(about_btn)
 
         btn = icon_button('quit', 'Quit')
-        btn.setShortcut(QtGui.QKeySequence('Ctrl+Q'))
-        btn.clicked.connect(QtWidgets.QApplication.instance().quit)
+        btn.setShortcut(QKeySequence('Ctrl+Q'))
+        btn.clicked.connect(QApplication.instance().quit)
         frame.layout().addWidget(btn)
 
         self.buttons_frame = frame
 
     def show_about(self):
-        dialog = QtWidgets.QDialog(self)
+        dialog = QDialog(self)
         dialog.setWindowTitle('About UMAMI GUI')
 
         # the pixel grid plays the count-buildup animation; the wordmark
@@ -430,30 +453,29 @@ class MainWindow(QtWidgets.QWidget):
         wordmark_height = round(logo_width * WORDMARK_ASPECT)
 
         grid = LogoBuildupWidget(logo_width)
-        wordmark = QtWidgets.QLabel()
+        wordmark = QLabel()
         wordmark.setPixmap(load_icon('wordmark').pixmap(logo_width, wordmark_height))
-        wordmark.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        wordmark.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        logo_layout = QtWidgets.QVBoxLayout()
+        logo_layout = QVBoxLayout()
         logo_layout.setContentsMargins(0, 0, 0, 0)
         logo_layout.setSpacing(12)
-        logo_layout.addWidget(grid, alignment=QtCore.Qt.AlignmentFlag.AlignCenter)
+        logo_layout.addWidget(grid, alignment=Qt.AlignmentFlag.AlignCenter)
         logo_layout.addWidget(wordmark)
 
         authors_html = '<br>'.join(html.escape(author) for author in AUTHORS)
-        text = QtWidgets.QLabel(
+        text = QLabel(
             f'{__version__}<br><br>'
             'Live histogram viewer and control panel for the UMAMI '
             'data-acquisition backend.<br><br>'
             f'<b>Authors</b><br>{authors_html}')
-        text.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         text.setWordWrap(True)
 
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Ok)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
         buttons.accepted.connect(dialog.accept)
 
-        layout = QtWidgets.QVBoxLayout(dialog)
+        layout = QVBoxLayout(dialog)
         layout.addLayout(logo_layout)
         layout.addWidget(text)
         layout.addWidget(buttons)
@@ -516,47 +538,47 @@ class MainWindow(QtWidgets.QWidget):
     # ---- display controls: scale, colormap, levels, cursor readout ----
 
     def _build_display_controls(self):
-        frame = QtWidgets.QFrame()
-        frame.setLayout(QtWidgets.QHBoxLayout())
+        frame = QFrame()
+        frame.setLayout(QHBoxLayout())
         frame.layout().setContentsMargins(8, 0, 8, 5)
-        frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
-                            QtWidgets.QSizePolicy.Policy.Fixed)
+        frame.setSizePolicy(QSizePolicy.Policy.Preferred,
+                            QSizePolicy.Policy.Fixed)
 
-        frame.layout().addWidget(QtWidgets.QLabel('Show t slice:'))
-        self.t_spin = QtWidgets.QSpinBox()
+        frame.layout().addWidget(QLabel('Show t slice:'))
+        self.t_spin = QSpinBox()
         self.t_spin.setRange(0, max(self.histo.nt - 1, 0))
         self.t_spin.valueChanged.connect(lambda _: self.update_buffer())
         frame.layout().addWidget(self.t_spin)
 
         frame.layout().addSpacing(20)
 
-        self.log_scale_check = QtWidgets.QCheckBox('Log scale')
+        self.log_scale_check = QCheckBox('Log scale')
         self.log_scale_check.setChecked(True)
         self.log_scale_check.toggled.connect(lambda _: self.update_buffer())
         frame.layout().addWidget(self.log_scale_check)
 
         frame.layout().addSpacing(20)
-        frame.layout().addWidget(QtWidgets.QLabel('Colormap:'))
-        self.colormap_combo = QtWidgets.QComboBox()
+        frame.layout().addWidget(QLabel('Colormap:'))
+        self.colormap_combo = QComboBox()
         self.colormap_combo.addItems(list(COLORMAPS))
         self.colormap_combo.currentTextChanged.connect(
             lambda name: self.img.setColorMap(pg.colormap.get(COLORMAPS[name])))
         frame.layout().addWidget(self.colormap_combo)
 
         frame.layout().addSpacing(20)
-        self.auto_levels_check = QtWidgets.QCheckBox('Auto levels')
+        self.auto_levels_check = QCheckBox('Auto levels')
         self.auto_levels_check.setChecked(True)
         frame.layout().addWidget(self.auto_levels_check)
 
-        self.level_min_spin = QtWidgets.QDoubleSpinBox()
+        self.level_min_spin = QDoubleSpinBox()
         self.level_min_spin.setRange(0, 1e9)
         self.level_min_spin.setDecimals(0)
         self.level_min_spin.setEnabled(False)
         frame.layout().addWidget(self.level_min_spin)
 
-        frame.layout().addWidget(QtWidgets.QLabel('-'))
+        frame.layout().addWidget(QLabel('-'))
 
-        self.level_max_spin = QtWidgets.QDoubleSpinBox()
+        self.level_max_spin = QDoubleSpinBox()
         self.level_max_spin.setRange(0, 1e9)
         self.level_max_spin.setDecimals(0)
         self.level_max_spin.setValue(100)
@@ -570,7 +592,7 @@ class MainWindow(QtWidgets.QWidget):
         frame.layout().addSpacing(20)
         frame.layout().addStretch()
 
-        self.cursor_label = QtWidgets.QLabel('')
+        self.cursor_label = QLabel('')
         self.cursor_label.setMinimumWidth(200)
         frame.layout().addWidget(self.cursor_label)
 
@@ -602,32 +624,32 @@ class MainWindow(QtWidgets.QWidget):
     # ---- raw dump / save histo controls ----
 
     def _build_dump_controls(self):
-        frame = QtWidgets.QFrame()
-        frame.setLayout(QtWidgets.QHBoxLayout())
+        frame = QFrame()
+        frame.setLayout(QHBoxLayout())
         frame.layout().setContentsMargins(8, 0, 8, 5)
-        frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
-                            QtWidgets.QSizePolicy.Policy.Fixed)
+        frame.setSizePolicy(QSizePolicy.Policy.Preferred,
+                            QSizePolicy.Policy.Fixed)
 
-        self.raw_dump_check = QtWidgets.QCheckBox('Raw dump to:')
+        self.raw_dump_check = QCheckBox('Raw dump to:')
         frame.layout().addWidget(self.raw_dump_check)
-        self.raw_dump_path = QtWidgets.QLineEdit()
+        self.raw_dump_path = QLineEdit()
         self.raw_dump_path.setPlaceholderText('/path/to/raw/dump/dir')
         frame.layout().addWidget(self.raw_dump_path)
         self.raw_dump_check.toggled.connect(self._on_raw_dump_toggled)
         self.raw_dump_path.editingFinished.connect(self.raw_dump_path_changed)
 
-        browse_btn = QtWidgets.QPushButton('...')
+        browse_btn = QPushButton('...')
         browse_btn.setMaximumWidth(30)
         browse_btn.clicked.connect(self.browse_raw_dump_dir)
         frame.layout().addWidget(browse_btn)
 
         frame.layout().addSpacing(20)
 
-        btn = QtWidgets.QPushButton('Diffractogram')
+        btn = QPushButton('Diffractogram')
         btn.clicked.connect(self.open_projection_window)
         frame.layout().addWidget(btn)
 
-        btn = QtWidgets.QPushButton('TOF Spectrum')
+        btn = QPushButton('TOF Spectrum')
         btn.clicked.connect(self.open_t_projection_window)
         frame.layout().addWidget(btn)
 
@@ -639,7 +661,7 @@ class MainWindow(QtWidgets.QWidget):
         frame.layout().addSpacing(20)
 
         save_btn = icon_button('save', 'Save Histogram')
-        save_menu = QtWidgets.QMenu(save_btn)
+        save_menu = QMenu(save_btn)
         save_menu.addAction('ASCII text...', self.save_histo_dialog)
         save_menu.addAction('Image...', self.save_plot_image_dialog)
         save_btn.setMenu(save_menu)
@@ -649,7 +671,7 @@ class MainWindow(QtWidgets.QWidget):
 
     def _on_raw_dump_toggled(self, checked):
         if checked and not self.raw_dump_path.text():
-            path = QtWidgets.QFileDialog.getExistingDirectory(
+            path = QFileDialog.getExistingDirectory(
                 self, 'Raw Dump Directory', self.raw_dump_path.text())
             if not path:
                 self.raw_dump_check.blockSignals(True)
@@ -660,7 +682,7 @@ class MainWindow(QtWidgets.QWidget):
         self.client.set_raw_dump(checked, self.raw_dump_path.text())
 
     def browse_raw_dump_dir(self):
-        path = QtWidgets.QFileDialog.getExistingDirectory(
+        path = QFileDialog.getExistingDirectory(
             self, 'Raw Dump Directory', self.raw_dump_path.text())
         if path:
             self.raw_dump_path.setText(path)
@@ -671,16 +693,16 @@ class MainWindow(QtWidgets.QWidget):
             self.client.set_raw_dump(True, self.raw_dump_path.text())
 
     def save_histo_dialog(self):
-        dialog = QtWidgets.QFileDialog(
+        dialog = QFileDialog(
             self, 'Save Histogram', '', 'Text files (*.txt);;All files (*)')
-        dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptMode.AcceptSave)
-        dialog.setOption(QtWidgets.QFileDialog.Option.DontUseNativeDialog, True)
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
         all_check = None
         if self.histo.nt > 1:
-            all_check = QtWidgets.QCheckBox('Save all t-slices (default: current only)')
+            all_check = QCheckBox('Save all t-slices (default: current only)')
             layout = dialog.layout()
             layout.addWidget(all_check, layout.rowCount(), 0, 1, layout.columnCount())
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         paths = dialog.selectedFiles()
         if not paths:
@@ -717,7 +739,7 @@ class MainWindow(QtWidgets.QWidget):
         return '\n'.join(lines)
 
     def save_plot_image_dialog(self):
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+        path, _ = QFileDialog.getSaveFileName(
             self, 'Save Plot Image', '', 'PNG files (*.png);;All files (*)')
         if not path:
             return
@@ -729,7 +751,7 @@ class MainWindow(QtWidgets.QWidget):
         self.client.save_config()
 
     def save_config_dialog(self):
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+        path, _ = QFileDialog.getSaveFileName(
             self, 'Save Config', '', 'Config files (*.conf);;All files (*)')
         if not path:
             return
@@ -740,18 +762,18 @@ class MainWindow(QtWidgets.QWidget):
     # ---- params panel ----
 
     def _build_params_panel(self):
-        panel = QtWidgets.QWidget()
-        panel.setLayout(QtWidgets.QVBoxLayout())
+        panel = QWidget()
+        panel.setLayout(QVBoxLayout())
         panel.layout().setContentsMargins(5, 8, 0, 0)
         self.params_table = ParamsTable(self.client)
 
-        top_row = QtWidgets.QHBoxLayout()
+        top_row = QHBoxLayout()
         refresh_btn = icon_button('refresh', 'Refresh Params')
         refresh_btn.clicked.connect(self.refresh_params)
         top_row.addWidget(refresh_btn)
 
         save_config_btn = icon_button('save', 'Save Config')
-        save_config_menu = QtWidgets.QMenu(save_config_btn)
+        save_config_menu = QMenu(save_config_btn)
         save_config_menu.addAction('Same config file', self.save_config_same_file)
         save_config_menu.addAction('Select new file...', self.save_config_dialog)
         save_config_btn.setMenu(save_config_menu)
@@ -761,12 +783,12 @@ class MainWindow(QtWidgets.QWidget):
 
         # quick-setup dialogs for specific input types, shown only when
         # relevant to the current config -- MCPD Setup is the first of these
-        setup_row = QtWidgets.QHBoxLayout()
-        self.mcpd_config_btn = QtWidgets.QPushButton('MCPD Setup')
+        setup_row = QHBoxLayout()
+        self.mcpd_config_btn = QPushButton('MCPD Setup')
         self.mcpd_config_btn.clicked.connect(self.show_mcpd_config_window)
         self.mcpd_config_btn.setVisible(False)
         setup_row.addWidget(self.mcpd_config_btn)
-        self.tof_config_btn = QtWidgets.QPushButton('TOF Setup')
+        self.tof_config_btn = QPushButton('TOF Setup')
         self.tof_config_btn.clicked.connect(self.show_tof_config_window)
         self.tof_config_btn.setVisible(False)
         setup_row.addWidget(self.tof_config_btn)
@@ -839,8 +861,8 @@ class MainWindow(QtWidgets.QWidget):
         return x0, y0, x1, y1
 
     def _build_right_tabs(self):
-        tabs = QtWidgets.QTabWidget()
-        tabs.setTabPosition(QtWidgets.QTabWidget.TabPosition.North)
+        tabs = QTabWidget()
+        tabs.setTabPosition(QTabWidget.TabPosition.North)
         tabs.setStyleSheet('QTabWidget::pane { border: 0; }')
         tabs.addTab(self.events_panel, 'Statistics')
         tabs.addTab(self.params_panel, 'Parameters')
@@ -854,17 +876,17 @@ class MainWindow(QtWidgets.QWidget):
         self.log_toggle.toggled.connect(self.log_panel.setVisible)
         self.log_panel.error_logged.connect(lambda: self.log_toggle.setChecked(True))
 
-        self.left_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.left_splitter = QSplitter(Qt.Orientation.Vertical)
         self.left_splitter.addWidget(self.graphics)
         self.left_splitter.addWidget(self.log_panel)
         self.left_splitter.setSizes([600, 200])
 
-        self.main_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.main_splitter.addWidget(self.left_splitter)
         self.main_splitter.addWidget(self.right_tabs)
         self.main_splitter.setSizes([800, 300])
-        self.main_splitter.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
-                                         QtWidgets.QSizePolicy.Policy.Expanding)
+        self.main_splitter.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                         QSizePolicy.Policy.Expanding)
 
         self.layout().addWidget(self.buttons_frame)
         self.layout().addWidget(self.dump_frame)
@@ -876,9 +898,9 @@ class MainWindow(QtWidgets.QWidget):
 
     @staticmethod
     def _hline():
-        line = QtWidgets.QFrame()
-        line.setFrameShape(QtWidgets.QFrame.Shape.HLine)
-        line.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
         return line
 
     # ---- persisted UI state ----

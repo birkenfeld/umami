@@ -7,7 +7,7 @@ import signal
 import sys
 
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtWidgets
+from pyqtgraph.Qt.QtWidgets import QApplication
 
 from .icons import is_dark_mode, load_icon
 from .main_window import MainWindow
@@ -16,7 +16,7 @@ from .main_window import MainWindow
 def main():
     shm_name = sys.argv[1] if len(sys.argv) > 1 else 'umami'
 
-    app = QtWidgets.QApplication(['umami-histogram'])
+    app = QApplication(['umami-histogram'])
     app.setOrganizationName('mlz')
     app.setApplicationName('umami')
     app.setWindowIcon(load_icon('logo_mark'))

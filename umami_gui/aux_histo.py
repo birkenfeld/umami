@@ -12,7 +12,29 @@ from pathlib import Path
 
 import numpy as np
 from pyqtgraph import exporters
-from pyqtgraph.Qt import QtCore, QtWidgets
+from pyqtgraph.Qt.QtCore import QSettings, Qt, QTimer, pyqtSignal
+from pyqtgraph.Qt.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
+    QScrollArea,
+    QSpinBox,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .aux_plot import AuxPlot, bin_values
 from .icons import icon_button
@@ -68,7 +90,7 @@ def help_text(aliases):
     return EXPR_SYNTAX_HELP + '\n'.join(lines)
 
 
-class HistoDefDialog(QtWidgets.QDialog):
+class HistoDefDialog(QDialog):
     """Add/edit one auxiliary histogram definition (name/filter/x/y-axis).
 
     Uses a form, with an inline expression-syntax reference, instead of
@@ -79,7 +101,7 @@ class HistoDefDialog(QtWidgets.QDialog):
 
     @classmethod
     def _range_spinbox(cls, value, lo=-2_147_483_648, hi=2_147_483_647):
-        box = QtWidgets.QSpinBox()
+        box = QSpinBox()
         box.setRange(lo, hi)
         box.setValue(value)
         box.setFixedWidth(cls.RANGE_BOX_WIDTH)
@@ -91,15 +113,15 @@ class HistoDefDialog(QtWidgets.QDialog):
 
         Returns (row_widget, bins_spinbox, min_spinbox, max_spinbox).
         """
-        row = QtWidgets.QWidget()
-        row_layout = QtWidgets.QHBoxLayout(row)
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
         bins = cls._range_spinbox(bins_default, 1, 65535)
         row_layout.addWidget(bins)
-        row_layout.addWidget(QtWidgets.QLabel('bins from'))
+        row_layout.addWidget(QLabel('bins from'))
         min_box = cls._range_spinbox(min_default)
         row_layout.addWidget(min_box)
-        row_layout.addWidget(QtWidgets.QLabel('to'))
+        row_layout.addWidget(QLabel('to'))
         max_box = cls._range_spinbox(max_default)
         row_layout.addWidget(max_box)
         row_layout.addStretch()
@@ -112,26 +134,26 @@ class HistoDefDialog(QtWidgets.QDialog):
         x = spec.get('x') or {}
         y = spec.get('y')
 
-        form = QtWidgets.QFormLayout()
-        self.name_edit = QtWidgets.QLineEdit(spec.get('name', ''))
+        form = QFormLayout()
+        self.name_edit = QLineEdit(spec.get('name', ''))
         form.addRow('Name:', self.name_edit)
-        self.filter_edit = QtWidgets.QLineEdit(spec.get('filter') or '')
+        self.filter_edit = QLineEdit(spec.get('filter') or '')
         self.filter_edit.setPlaceholderText(
             'e.g. evtype == neutron  (empty = always true)')
         form.addRow('Filter:', self.filter_edit)
 
-        form.addRow(QtWidgets.QLabel('<b>X axis</b>'))
-        self.x_expr = QtWidgets.QLineEdit(x.get('expr', ''))
+        form.addRow(QLabel('<b>X axis</b>'))
+        self.x_expr = QLineEdit(x.get('expr', ''))
         form.addRow('  Expr:', self.x_expr)
         x_row, self.x_bins, self.x_min, self.x_max = self._make_range_row(
             x.get('bins', 256), x.get('min', 0), x.get('max', 255))
         form.addRow('  Axis:', x_row)
 
-        self.y_check = QtWidgets.QCheckBox('2-D (add Y axis)')
+        self.y_check = QCheckBox('2-D (add Y axis)')
         self.y_check.setChecked(y is not None)
         form.addRow(self.y_check)
-        form.addRow(QtWidgets.QLabel('<b>Y axis</b>'))
-        self.y_expr = QtWidgets.QLineEdit((y or {}).get('expr', ''))
+        form.addRow(QLabel('<b>Y axis</b>'))
+        self.y_expr = QLineEdit((y or {}).get('expr', ''))
         form.addRow('  Expr:', self.y_expr)
         y_row, self.y_bins, self.y_min, self.y_max = self._make_range_row(
             (y or {}).get('bins', 256), (y or {}).get('min', 0),
@@ -144,22 +166,21 @@ class HistoDefDialog(QtWidgets.QDialog):
         self.y_check.toggled.connect(sync_y_enabled)
         sync_y_enabled(self.y_check.isChecked())
 
-        help_title = QtWidgets.QLabel('<b>Expression syntax</b>')
-        help_label = QtWidgets.QLabel(help_text(aliases))
+        help_title = QLabel('<b>Expression syntax</b>')
+        help_label = QLabel(help_text(aliases))
         help_label.setWordWrap(True)
         help_label.setStyleSheet('color: #555; font-size: 9pt;')
-        help_scroll = QtWidgets.QScrollArea()
+        help_scroll = QScrollArea()
         help_scroll.setWidget(help_label)
         help_scroll.setWidgetResizable(True)
         help_scroll.setMaximumHeight(250)
 
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Ok |
-            QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
+                                   QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
 
-        layout = QtWidgets.QVBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.addLayout(form)
         layout.addWidget(help_title)
         layout.addWidget(help_scroll)
@@ -167,22 +188,22 @@ class HistoDefDialog(QtWidgets.QDialog):
 
     def _validate_and_accept(self):
         if not self.name_edit.text().strip():
-            QtWidgets.QMessageBox.warning(self, 'Invalid', 'Name is required.')
+            QMessageBox.warning(self, 'Invalid', 'Name is required.')
             return
         if not self.x_expr.text().strip():
-            QtWidgets.QMessageBox.warning(self, 'Invalid', 'X expression is required.')
+            QMessageBox.warning(self, 'Invalid', 'X expression is required.')
             return
         if self.x_max.value() <= self.x_min.value():
-            QtWidgets.QMessageBox.warning(
+            QMessageBox.warning(
                 self, 'Invalid', 'X max must be greater than X min.')
             return
         if self.y_check.isChecked():
             if not self.y_expr.text().strip():
-                QtWidgets.QMessageBox.warning(
+                QMessageBox.warning(
                     self, 'Invalid', 'Y expression is required.')
                 return
             if self.y_max.value() <= self.y_min.value():
-                QtWidgets.QMessageBox.warning(
+                QMessageBox.warning(
                     self, 'Invalid', 'Y max must be greater than Y min.')
                 return
         # Note: this is a client-side sanity check only -- the authoritative
@@ -209,7 +230,7 @@ class HistoDefDialog(QtWidgets.QDialog):
         return result
 
 
-class AuxHistoWindow(QtWidgets.QWidget):
+class AuxHistoWindow(QWidget):
     """Separate window for user-defined auxiliary/diagnostic histograms.
 
     Handles the `aux_histo` output type: discovers the first active one via
@@ -223,7 +244,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
 
     REFRESH_MS = 500
 
-    applied = QtCore.pyqtSignal()
+    applied = pyqtSignal()
 
     def __init__(self, client, ipc_name, log):  # noqa: PLR0915
         super().__init__()
@@ -240,24 +261,24 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self._plots = {}     # histo_name -> AuxPlot
         self._last_seen_histos = None  # the whole histos list as of the last rebuild
 
-        self.settings = QtCore.QSettings()
+        self.settings = QSettings()
         # per-plot display state (log/colormap/levels) of histos that have
         # been destroyed by _forget() -- merged with the live plots' own
         # state in _save_settings() so it survives a _rebuild() or restart
         self._display_state = self._load_display_state()
 
-        self.table = QtWidgets.QTableWidget(0, 5)
+        self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(['Name', 'X', 'Y', 'Filter', ''])
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(
-            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+            QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(
-            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+            QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.cellDoubleClicked.connect(self._on_row_double_clicked)
 
-        btn_col = QtWidgets.QVBoxLayout()
+        btn_col = QVBoxLayout()
         add_btn = icon_button('add', 'Add')
         add_btn.clicked.connect(self._add_histogram)
         btn_col.addWidget(add_btn)
@@ -269,32 +290,32 @@ class AuxHistoWindow(QtWidgets.QWidget):
         btn_col.addWidget(save_btn)
         btn_col.addStretch()
 
-        table_row = QtWidgets.QHBoxLayout()
+        table_row = QHBoxLayout()
         table_row.setContentsMargins(5, 5, 8, 5)
         table_row.addWidget(self.table)
         table_row.addLayout(btn_col)
-        table_container = QtWidgets.QWidget()
+        table_container = QWidget()
         table_container.setLayout(table_row)
 
         # a splitter of row-splitters: every plot starts out evenly sized,
         # and the user can still drag to rebalance
-        self.plot_area = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.plot_area = QSplitter(Qt.Orientation.Vertical)
         self._row_splitters = []
-        scroll = QtWidgets.QScrollArea()
+        scroll = QScrollArea()
         scroll.setWidget(self.plot_area)
         scroll.setWidgetResizable(True)
 
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(table_container)
         splitter.addWidget(scroll)
         splitter.setSizes([200, 500])
 
-        self.cursor_label = QtWidgets.QLabel('')
-        self.cursor_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.cursor_label = QLabel('')
+        self.cursor_label.setTextFormat(Qt.TextFormat.PlainText)
         self.cursor_label.setMinimumWidth(250)
         self.cursor_label.setContentsMargins(8, 0, 8, 4)
 
-        layout = QtWidgets.QVBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(splitter)
         layout.addWidget(self.cursor_label)
@@ -302,9 +323,9 @@ class AuxHistoWindow(QtWidgets.QWidget):
         # Only ticks while the window is visible (see showEvent /
         # hideEvent) -- no point polling params or shm segments for a window
         # the user has never opened.
-        self._timer = QtCore.QTimer(self)
+        self._timer = QTimer(self)
         self._timer.timeout.connect(self._update_plots)
-        QtWidgets.QApplication.instance().aboutToQuit.connect(self._save_display_state)
+        QApplication.instance().aboutToQuit.connect(self._save_display_state)
 
     def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
@@ -407,14 +428,14 @@ class AuxHistoWindow(QtWidgets.QWidget):
 
         self.table.setRowCount(len(self._histos))
         for row, spec in enumerate(self._histos):
-            self.table.setItem(row, 0, QtWidgets.QTableWidgetItem(spec['name']))
-            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(spec['x']['expr']))
+            self.table.setItem(row, 0, QTableWidgetItem(spec['name']))
+            self.table.setItem(row, 1, QTableWidgetItem(spec['x']['expr']))
             self.table.setItem(row, 2,
-                QtWidgets.QTableWidgetItem(spec['y']['expr'] if spec.get('y') else ''))
+                QTableWidgetItem(spec['y']['expr'] if spec.get('y') else ''))
             self.table.setItem(
-                row, 3, QtWidgets.QTableWidgetItem(spec.get('filter') or ''))
-            btn_widget = QtWidgets.QWidget()
-            btn_layout = QtWidgets.QHBoxLayout(btn_widget)
+                row, 3, QTableWidgetItem(spec.get('filter') or ''))
+            btn_widget = QWidget()
+            btn_layout = QHBoxLayout(btn_widget)
             btn_layout.setContentsMargins(5, 0, 5, 0)
             edit_btn = icon_button('edit')
             edit_btn.setToolTip('Edit')
@@ -438,7 +459,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
                 continue
             row = i // col_count
             while row >= len(self._row_splitters):
-                row_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+                row_splitter = QSplitter(Qt.Orientation.Horizontal)
                 self._row_splitters.append(row_splitter)
                 self.plot_area.addWidget(row_splitter)
             # insertWidget also relocates a widget that's already placed (in
@@ -472,10 +493,10 @@ class AuxHistoWindow(QtWidgets.QWidget):
 
     def _save_histogram(self):
         if not self._histos:
-            QtWidgets.QMessageBox.warning(
+            QMessageBox.warning(
                 self, 'No histograms', 'No histograms to save.')
             return
-        menu = QtWidgets.QMenu(self)
+        menu = QMenu(self)
         for spec in self._histos:
             name = spec['name']
             submenu = menu.addMenu(name)
@@ -491,10 +512,10 @@ class AuxHistoWindow(QtWidgets.QWidget):
     def _save_histogram_to_file(self, name):
         shm = self._shms.get(name)
         if shm is None:
-            QtWidgets.QMessageBox.warning(
+            QMessageBox.warning(
                 self, 'Not available', f'Histogram {name!r} is not currently open.')
             return
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+        path, _ = QFileDialog.getSaveFileName(
             self, f'Save Histogram {name!r}', '', 'Text files (*.txt);;All files (*)')
         if not path:
             return
@@ -533,10 +554,10 @@ class AuxHistoWindow(QtWidgets.QWidget):
 
     def _save_histogram_image(self, name):
         if name not in self._plots:
-            QtWidgets.QMessageBox.warning(
+            QMessageBox.warning(
                 self, 'Not available', f'Histogram {name!r} is not currently open.')
             return
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+        path, _ = QFileDialog.getSaveFileName(
             self, f'Save Histogram {name!r} Image', '',
             'PNG files (*.png);;All files (*)')
         if not path:
@@ -549,12 +570,12 @@ class AuxHistoWindow(QtWidgets.QWidget):
 
     def _add_histogram(self):
         if self._module is None:
-            QtWidgets.QMessageBox.warning(
+            QMessageBox.warning(
                 self, 'No output',
                 'No active aux_histo output found -- configure one first.')
             return
         dialog = HistoDefDialog(self, aliases=self._aliases)
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         new_specs = [*self._histos, dialog.spec()]
         self.client.set_params({f'{self._module}.histos': new_specs})
@@ -563,7 +584,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
 
     def _edit_histogram(self, spec):
         dialog = HistoDefDialog(self, spec, aliases=self._aliases)
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         new_specs = [dialog.spec() if h['name'] == spec['name'] else h
                      for h in self._histos]
@@ -572,11 +593,11 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self.refresh()
 
     def _delete_histogram(self, name):
-        reply = QtWidgets.QMessageBox.question(
+        reply = QMessageBox.question(
             self, 'Delete', f'Delete histogram {name!r}?',
-            QtWidgets.QMessageBox.StandardButton.Yes |
-            QtWidgets.QMessageBox.StandardButton.No)
-        if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+            QMessageBox.StandardButton.Yes |
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
             return
         new_specs = [h for h in self._histos if h['name'] != name]
         self.client.set_params({f'{self._module}.histos': new_specs})
