@@ -1,0 +1,294 @@
+# Part of the Unified Mechanism for Acquisition of Measured Intensity
+# (UMAMI), see README and LICENSE files for more info.
+
+"""One auxiliary histogram's plot widget, with its own display controls.
+
+Factored out of `aux_histo.py` since each `aux_histo` plot now carries
+enough display state (log scale, colormap, manual z-limits, cursor
+readout) that folding it into `AuxHistoWindow`'s own bookkeeping would
+make that file's already-large state dict unreadable.
+"""
+
+import html
+
+import numpy as np
+import pyqtgraph as pg
+from pyqtgraph.Qt import QtCore, QtWidgets
+
+from .axis_items import ZoomViewBox
+from .plot_utils import COLORMAPS, set_image_data, step_histogram_curve
+
+# 'log': None resolves to `is_2d` at construction -- 2-D defaults to log
+# (matching the previous hard-coded behavior), 1-D to linear.
+DEFAULT_STATE = {
+    'log': None,
+    'colormap': 'viridis',
+    'auto_levels': True,
+    'level_min': 0.0,
+    'level_max': 100.0,
+}
+
+
+def bin_values(axis):
+    """Each bin's lower edge, in the axis expression's own units.
+
+    Inverts the binning done server-side: `bin = (v - min) * bins /
+    (max - min + 1)`, where `max` is inclusive. E.g. bins=8, min=0,
+    max=7 (one bin per representable integer) gives 0, 1, ..., 7.
+    """
+    bins, lo, hi = axis['bins'], axis['min'], axis['max']
+    width = (hi - lo + 1) / bins
+    return lo + np.arange(bins) * width
+
+
+def bin_width(axis):
+    return (axis['max'] - axis['min'] + 1) / axis['bins']
+
+
+def bin_edges(axis):
+    """Real-value edges of every bin (bins+1 points), for step-mode plots.
+
+    Shifted back by half a bin width so the value a bin represents sits
+    at the center of its rendered bar -- e.g. bin 0 of bins=8, min=0,
+    max=7 renders as a bar centered on 0, spanning [-0.5, 0.5], matching
+    the old bin-index convention (there, an implicit width of 1) rather
+    than a plain edge-aligned histogram.
+    """
+    edges = np.append(bin_values(axis), axis['max'] + 1)
+    return edges - bin_width(axis) / 2
+
+
+def axis_extent(axis):
+    """(low, span) of an axis's real-value range, for setRect().
+
+    Also shifted by half a bin width, for the same reason as
+    `bin_edges` -- see there.
+    """
+    return axis['min'] - bin_width(axis) / 2, axis['max'] - axis['min'] + 1
+
+
+class _WheelBlocker(QtCore.QObject):
+    """Discards wheel events on a control that doesn't have focus.
+
+    Installed on the colormap combo and level spinboxes -- they sit right
+    above a plot the user scrolls to zoom, and an unintended wheel-over
+    would otherwise silently change a setting instead.
+    """
+
+    def eventFilter(self, obj, event):  # noqa: N802
+        if (event.type() == QtCore.QEvent.Type.Wheel
+                and not obj.hasFocus()):
+            return True
+        return super().eventFilter(obj, event)
+
+
+class AuxPlot(QtWidgets.QWidget):
+    """One auxiliary histogram's plot, with its own compact control strip.
+
+    1-D histograms get a step curve with a log-y toggle; 2-D histograms get
+    an image with log scale, colormap, and manual z-limit controls -- the
+    same conventions as the main window's histogram display, applied
+    per-plot since aux histograms routinely have unrelated count scales.
+    """
+
+    cursor_moved = QtCore.pyqtSignal(str)
+
+    def __init__(self, name, spec, is_2d, state):
+        super().__init__()
+        self.name = name
+        self.is_2d = is_2d
+        self._extent = None  # 2-D only: QRectF real-value extent
+        self._edges = None   # 1-D only: bin edges
+        self._counts = None  # cached raw-counts buffer, see update_data()
+        self._wheel_blocker = _WheelBlocker(self)
+
+        state = {**DEFAULT_STATE, **state}
+        if state['log'] is None:
+            state['log'] = is_2d
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        self._build_plot(name, spec)
+        layout.addWidget(self._build_controls(state))
+        layout.addWidget(self.plot_widget)
+
+    # ---- construction ----
+
+    def _build_plot(self, name, spec):
+        self.plot_widget = pg.PlotWidget(title=html.escape(name), viewBox=ZoomViewBox())
+        plot_item = self.plot_widget.getPlotItem()
+        plot_item.setLabel('bottom', html.escape(spec['x']['expr']))
+        if self.is_2d:
+            y_expr = (spec.get('y') or {}).get('expr', '')
+            plot_item.setLabel('left', html.escape(y_expr))
+            self._img = pg.ImageItem(border='w', axisOrder='row-major')
+            plot_item.addItem(self._img)
+            x_lo, x_span = axis_extent(spec['x'])
+            y_lo, y_span = axis_extent(spec['y'])
+            self._extent = QtCore.QRectF(x_lo, y_lo, x_span, y_span)
+        else:
+            plot_item.setLabel('left', 'counts')
+            self._curve = step_histogram_curve(plot_item)
+            self._edges = bin_edges(spec['x'])
+        self.plot_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
+
+    def _build_controls(self, state):
+        strip = QtWidgets.QWidget()
+        row = QtWidgets.QHBoxLayout(strip)
+        row.setContentsMargins(4, 0, 4, 0)
+        row.setSpacing(4)
+        strip.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                            QtWidgets.QSizePolicy.Policy.Fixed)
+        font = strip.font()
+        font.setPointSizeF(max(font.pointSizeF() - 1.5, 7.0))
+        strip.setFont(font)
+
+        self.log_check = QtWidgets.QCheckBox('Log')
+        self.log_check.setToolTip('Log scale')
+        self.log_check.setChecked(state['log'])
+        row.addWidget(self.log_check)
+
+        if self.is_2d:
+            self.colormap_combo = QtWidgets.QComboBox()
+            self.colormap_combo.setToolTip('Colormap')
+            self.colormap_combo.addItems(list(COLORMAPS))
+            self.colormap_combo.setCurrentText(state['colormap'])
+            self.colormap_combo.setFixedWidth(84)
+            self.colormap_combo.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+            self.colormap_combo.installEventFilter(self._wheel_blocker)
+            row.addWidget(self.colormap_combo)
+
+            self.auto_check = QtWidgets.QCheckBox('Auto')
+            self.auto_check.setToolTip('Auto levels')
+            self.auto_check.setChecked(state['auto_levels'])
+            row.addWidget(self.auto_check)
+
+            self.level_min_spin = self._level_spinbox(state['level_min'])
+            self.level_max_spin = self._level_spinbox(state['level_max'])
+            self.level_min_spin.setEnabled(not state['auto_levels'])
+            self.level_max_spin.setEnabled(not state['auto_levels'])
+            row.addWidget(self.level_min_spin)
+            row.addWidget(QtWidgets.QLabel('-'))
+            row.addWidget(self.level_max_spin)
+
+            self._img.setColorMap(pg.colormap.get(COLORMAPS[state['colormap']]))
+            self.colormap_combo.currentTextChanged.connect(
+                lambda n: self._img.setColorMap(pg.colormap.get(COLORMAPS[n])))
+            self.auto_check.toggled.connect(self._on_auto_levels_toggled)
+            self.level_min_spin.valueChanged.connect(lambda _: self._redraw())
+            self.level_max_spin.valueChanged.connect(lambda _: self._redraw())
+        else:
+            self.plot_widget.getPlotItem().setLogMode(y=state['log'])
+
+        self.log_check.toggled.connect(self._on_log_toggled)
+        row.addStretch()
+        return strip
+
+    def _level_spinbox(self, value):
+        box = QtWidgets.QDoubleSpinBox()
+        box.setRange(0, 1e9)
+        box.setDecimals(0)
+        box.setValue(value)
+        box.setFixedWidth(64)
+        box.setKeyboardTracking(False)
+        box.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        box.installEventFilter(self._wheel_blocker)
+        return box
+
+    # ---- display state ----
+
+    def display_state(self):
+        state = {'log': self.log_check.isChecked()}
+        if self.is_2d:
+            state.update(
+                colormap=self.colormap_combo.currentText(),
+                auto_levels=self.auto_check.isChecked(),
+                level_min=self.level_min_spin.value(),
+                level_max=self.level_max_spin.value())
+        return state
+
+    def _on_auto_levels_toggled(self, checked):
+        self.level_min_spin.setEnabled(not checked)
+        self.level_max_spin.setEnabled(not checked)
+        self._redraw()
+
+    def _on_log_toggled(self, checked):
+        if not self.is_2d:
+            # setLogMode() auto-fits the range on every toggle, discarding
+            # any manual zoom -- acceptable here, it's the same trade-off
+            # ZoomViewBox's own middle-click autoRange() makes
+            self.plot_widget.getPlotItem().setLogMode(y=checked)
+        self._redraw()
+
+    # ---- data ----
+
+    def update_data(self, buf):
+        """Feed a freshly-read plane (`shm.read_plane(0)`) to this plot.
+
+        Caches a copy of the raw counts -- not the raw mmap view, which
+        pyqtgraph would keep alive indefinitely (until the next setData),
+        blocking the shm segment from ever closing -- for the cursor
+        readout and for redrawing without re-reading shm on every control
+        change.
+        """
+        if self.is_2d:
+            self._counts = buf.copy()
+        else:
+            counts = buf[0]
+            if len(counts) + 1 != len(self._edges):
+                # stale shm reopened against a since-changed spec; the next
+                # _rebuild() will re-pair them once the server catches up
+                return
+            self._counts = counts.copy()
+        self._redraw()
+
+    def _redraw(self):
+        if self._counts is None:
+            return
+        if self.is_2d:
+            set_image_data(
+                self._img, self._counts, log=self.log_check.isChecked(),
+                auto_levels=self.auto_check.isChecked(),
+                level_min=self.level_min_spin.value(),
+                level_max=self.level_max_spin.value())
+            self._img.setRect(self._extent)
+        else:
+            self._curve.setData(self._edges, self._counts, stepMode='center')
+
+    # ---- cursor readout ----
+
+    def _on_mouse_moved(self, scene_pos):
+        plot_item = self.plot_widget.getPlotItem()
+        if not plot_item.sceneBoundingRect().contains(scene_pos):
+            self.cursor_moved.emit('')
+            return
+        view_pos = plot_item.vb.mapSceneToView(scene_pos)
+        text = self._cursor_text_2d(view_pos) if self.is_2d \
+            else self._cursor_text_1d(view_pos)
+        self.cursor_moved.emit(text)
+
+    def leaveEvent(self, event):  # noqa: N802
+        super().leaveEvent(event)
+        self.cursor_moved.emit('')
+
+    def _cursor_text_2d(self, view_pos):
+        if self._counts is None:
+            return ''
+        rect, (nrows, ncols) = self._extent, self._counts.shape
+        col = int(np.floor((view_pos.x() - rect.left()) / rect.width() * ncols))
+        row = int(np.floor((view_pos.y() - rect.top()) / rect.height() * nrows))
+        if not (0 <= row < nrows and 0 <= col < ncols):
+            return ''
+        x = rect.left() + (col + 0.5) * rect.width() / ncols
+        y = rect.top() + (row + 0.5) * rect.height() / nrows
+        return f'{self.name}:  x={x:g}  y={y:g}  counts={int(self._counts[row, col])}'
+
+    def _cursor_text_1d(self, view_pos):
+        if self._counts is None:
+            return ''
+        i = int(np.searchsorted(self._edges, view_pos.x(), side='right')) - 1
+        if not 0 <= i < len(self._counts):
+            return ''
+        x = (self._edges[i] + self._edges[i + 1]) / 2
+        return f'{self.name}:  x={x:g}  counts={int(self._counts[i])}'

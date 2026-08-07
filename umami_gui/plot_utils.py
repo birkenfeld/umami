@@ -1,14 +1,52 @@
 # Part of the Unified Mechanism for Acquisition of Measured Intensity
 # (UMAMI), see README and LICENSE files for more info.
 
-"""Small helpers shared by UMAMI's various step-histogram plots.
+"""Small helpers shared by UMAMI's plots.
 
-Used by `projection_windows.py` and `aux_histo.py` -- consistent curve
-styling and a cursor-following hover tooltip, factored out since both were
-previously copy-pasted at each plot with only the bin lookup/text differing.
+Used by `projection_windows.py`, `aux_histo.py` and `aux_plot.py` --
+consistent curve styling, a cursor-following hover tooltip, and the
+log-scale/colormap/levels convention for 2-D images -- factored out since
+these were previously copy-pasted at each plot with only minor details
+differing.
 """
 
+import numpy as np
 from pyqtgraph.Qt import QtGui, QtWidgets
+
+# display name -> pyqtgraph colormap name; pyqtgraph has no plain 'grey'/'gray'
+# map, so this points at CET-L1, its linear (grayscale) perceptual map
+COLORMAPS = {
+    'viridis': 'viridis',
+    'inferno': 'inferno',
+    'plasma': 'plasma',
+    'magma': 'magma',
+    'turbo': 'turbo',
+    'grey': 'CET-L1',
+}
+
+# avoids log10(0) = -inf; also the implicit "zero" level for manual limits
+LOG_OFFSET = 0.1
+
+
+def set_image_data(img, counts, *, log, auto_levels, level_min, level_max):
+    """Apply `counts` to an `ImageItem`, handling log scale and z-limits.
+
+    `level_min`/`level_max` are always in raw count units -- when `log` is
+    set, they're transformed to log space at apply time, so the caller's
+    UI never has to show/enter log values directly.
+    """
+    display = counts.astype(float)
+    if log:
+        display = np.log10(display + LOG_OFFSET)
+    if auto_levels:
+        # pyqtgraph's autoLevels defaults to subsampling (levelSamples=65536)
+        # for speed, which can miss a small/sparse peak entirely
+        img.setImage(display, autoLevels=True, levelSamples=display.size)
+    else:
+        lo, hi = level_min, level_max
+        if log:
+            lo, hi = np.log10(lo + LOG_OFFSET), np.log10(hi + LOG_OFFSET)
+        img.setImage(display, autoLevels=False, levels=(lo, hi))
 
 
 def step_histogram_curve(plot_item_or_widget):

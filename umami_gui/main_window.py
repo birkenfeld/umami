@@ -23,6 +23,7 @@ from .log_panel import LogPanel
 from .logo_widget import LogoBuildupWidget
 from .mesy_config import McpdConfigWindow, discover_mesy_inputs
 from .params_table import ParamsTable
+from .plot_utils import COLORMAPS, set_image_data
 from .projection_windows import DiffractogramWindow, TofSpectrumWindow
 from .replay_window import ReplayWindow
 from .shm import ShmHistogram
@@ -32,17 +33,6 @@ from .tof_config import TofConfigWindow, discover_tof_recipes
 IMAGE_REFRESH_MS = 250
 STATE_POLL_MS = 1000
 RATE_SAMPLES = 4  # ~1 sec of history at IMAGE_REFRESH_MS
-
-# display name -> pyqtgraph colormap name; pyqtgraph has no plain 'grey'/'gray'
-# map, so this points at CET-L1, its linear (grayscale) perceptual map
-COLORMAPS = {
-    'viridis': 'viridis',
-    'inferno': 'inferno',
-    'plasma': 'plasma',
-    'magma': 'magma',
-    'turbo': 'turbo',
-    'grey': 'CET-L1',
-}
 
 # height/width of icons/wordmark.svg's viewBox (199.328 x 44.863891) -- used
 # to size the About dialog's wordmark without distorting it
@@ -212,19 +202,11 @@ class MainWindow(QtWidgets.QWidget):
         # a copy, not the raw mmap view -- keeping a view alive across ticks
         # would block the mmap from ever closing (e.g. on reconnect)
         self.last_buf = buf.copy()
-        if self.log_scale_check.isChecked():
-            display = np.log10(buf.astype(float) + 0.1)
-        else:
-            display = buf.astype(float)
-        if self.auto_levels_check.isChecked():
-            # pyqtgraph's autoLevels defaults to subsampling (levelSamples=65536)
-            # for speed, which can miss a small/sparse peak entirely
-            self.img.setImage(display, autoLevels=True, levelSamples=display.size)
-        else:
-            lo, hi = self.level_min_spin.value(), self.level_max_spin.value()
-            if self.log_scale_check.isChecked():
-                lo, hi = np.log10(lo + 0.1), np.log10(hi + 0.1)
-            self.img.setImage(display, autoLevels=False, levels=(lo, hi))
+        set_image_data(
+            self.img, buf, log=self.log_scale_check.isChecked(),
+            auto_levels=self.auto_levels_check.isChecked(),
+            level_min=self.level_min_spin.value(),
+            level_max=self.level_max_spin.value())
         if self.proj_window is not None:
             x_edges = np.arange(self.histo.nx + 1) - 0.5
             self.proj_window.update_data(x_edges, buf.sum(axis=0))

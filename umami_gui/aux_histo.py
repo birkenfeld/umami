@@ -7,18 +7,21 @@ A form-based add/edit dialog and the window that discovers a running
 `aux_histo` output and live-plots its histograms.
 """
 
-import html
+import json
 from pathlib import Path
 
 import numpy as np
-import pyqtgraph as pg
 from pyqtgraph import exporters
 from pyqtgraph.Qt import QtCore, QtWidgets
 
-from .axis_items import ZoomViewBox
+from .aux_plot import AuxPlot, bin_values
 from .icons import icon_button
-from .plot_utils import connect_hover_tooltip, step_histogram_curve
 from .shm import ShmHistogram
+
+# QSettings key for all aux plots' display state, one JSON blob keyed by
+# histo name -- not a QSettings subgroup per histo, since a name containing
+# '/' would otherwise be silently split into nested groups
+AUX_DISPLAY_KEY = 'aux_histo_display'
 
 # Kept in sync by hand with the grammar/field table documented in
 # src/expr.rs -- there is no machine-readable source for this on the wire.
@@ -220,8 +223,8 @@ class AuxHistoWindow(QtWidgets.QWidget):
     output is supported here, matching the backend's own one-output
     convenience assumption), lets the user add/edit/delete definitions
     through a form instead of hand-written JSON, and live-plots each one
-    (1-D as a step curve, 2-D as a log-scale image) from its own shm
-    segment.
+    (1-D as a step curve, 2-D as an image), each with its own display
+    controls (`AuxPlot`), from its own shm segment.
     """
 
     REFRESH_MS = 500
@@ -240,8 +243,14 @@ class AuxHistoWindow(QtWidgets.QWidget):
         self._histos = []    # its histogram specs, as last seen from get_params
         self._aliases = []   # its available_aliases, as last seen from get_params
         self._shms = {}      # histo_name -> ShmHistogram
-        self._plots = {}     # histo_name -> (PlotItem, ImageItem|PlotDataItem, is_2d)
+        self._plots = {}     # histo_name -> AuxPlot
         self._last_seen_histos = None  # the whole histos list as of the last rebuild
+
+        self.settings = QtCore.QSettings()
+        # per-plot display state (log/colormap/levels) of histos that have
+        # been destroyed by _forget() -- merged with the live plots' own
+        # state in _save_settings() so it survives a _rebuild() or restart
+        self._display_state = self._load_display_state()
 
         self.table = QtWidgets.QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(['Name', 'X', 'Y', 'Filter', ''])
@@ -284,15 +293,22 @@ class AuxHistoWindow(QtWidgets.QWidget):
         splitter.addWidget(scroll)
         splitter.setSizes([200, 500])
 
+        self.cursor_label = QtWidgets.QLabel('')
+        self.cursor_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.cursor_label.setMinimumWidth(250)
+        self.cursor_label.setContentsMargins(8, 0, 8, 4)
+
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(splitter)
+        layout.addWidget(self.cursor_label)
 
         # Only ticks while the window is visible (see showEvent /
         # hideEvent) -- no point polling params or shm segments for a window
         # the user has never opened.
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._update_plots)
+        QtWidgets.QApplication.instance().aboutToQuit.connect(self._save_display_state)
 
     def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
@@ -324,11 +340,35 @@ class AuxHistoWindow(QtWidgets.QWidget):
             self._aliases = []
         self._rebuild()
 
+    def _load_display_state(self):
+        raw = self.settings.value(AUX_DISPLAY_KEY)
+        # QSettings' INI backend can hand back a QStringList instead of a
+        # str for a comma-containing value written by a hand-edited or
+        # older config -- treat that the same as "nothing saved yet"
+        if not isinstance(raw, str):
+            return {}
+        try:
+            state = json.loads(raw)
+        except ValueError:
+            return {}
+        return state if isinstance(state, dict) else {}
+
+    def _save_display_state(self):
+        # self._display_state only holds plots that have been destroyed by
+        # _forget() -- merge the live ones' current settings on top so
+        # what's open right now is what actually gets persisted
+        state = {**self._display_state,
+                 **{name: plot.display_state() for name, plot in self._plots.items()}}
+        self.settings.setValue(AUX_DISPLAY_KEY, json.dumps(state))
+
     def _forget(self, name):
         self._shms.pop(name).close()
-        plot_widget, _, _, _ = self._plots.pop(name)
-        plot_widget.setParent(None)
-        plot_widget.deleteLater()
+        plot = self._plots.pop(name)
+        # per-plot display settings must outlive the widget -- _rebuild()
+        # destroys and recreates every plot whenever the histos list changes
+        self._display_state[name] = plot.display_state()
+        plot.setParent(None)
+        plot.deleteLater()
 
     def invalidate_all(self):
         """Force every cached shm segment to be reopened on the next refresh.
@@ -337,6 +377,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
         are recreated from scratch with a new backing shm object, which
         _rebuild()'s own before/after list comparison has no way to notice
         on its own (the histos list it fetches via get_params looks identical).
+        Per-plot display settings survive, since this goes through _forget().
         """
         for name in list(self._shms):
             self._forget(name)
@@ -354,29 +395,9 @@ class AuxHistoWindow(QtWidgets.QWidget):
             return False
         self._shms[name] = shm
         is_2d = shm.ny > 1
-        plot_widget = pg.PlotWidget(title=html.escape(name), viewBox=ZoomViewBox())
-        plot_item = plot_widget.getPlotItem()
-        plot_item.setLabel('bottom', html.escape(spec['x']['expr']))
-        if is_2d:
-            plot_item.setLabel('left', html.escape(spec['y']['expr']))
-            img = pg.ImageItem(border='w', axisOrder='row-major')
-            plot_item.addItem(img)
-            img.setColorMap(pg.colormap.get('viridis'))
-            # real axis values (not bin index) -- setRect() must come after
-            # this histo's first setImage() in _update_plots(), since it
-            # derives its scale from the image's current dimensions, which
-            # are unset (None, falling back to 1) before any image has been
-            # assigned
-            x_lo, x_span = self._axis_extent(spec['x'])
-            y_lo, y_span = self._axis_extent(spec['y'])
-            extent = QtCore.QRectF(x_lo, y_lo, x_span, y_span)
-            self._plots[name] = (plot_widget, img, True, extent)
-        else:
-            curve = step_histogram_curve(plot_item)
-            edges = self._bin_edges(spec['x'])
-            self._plots[name] = (plot_widget, curve, False, edges)
-            connect_hover_tooltip(
-                plot_widget, lambda vx, n=name: self._hover_text(n, vx))
+        plot = AuxPlot(name, spec, is_2d, self._display_state.get(name, {}))
+        plot.cursor_moved.connect(self.cursor_label.setText)
+        self._plots[name] = plot
         return True
 
     def _rebuild(self):
@@ -427,7 +448,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
             # insertWidget also relocates a widget that's already placed (in
             # this or another row splitter), so the grid always matches
             # self._histos' current order even after an add/remove shifts it
-            self._row_splitters[row].insertWidget(i % col_count, self._plots[name][0])
+            self._row_splitters[row].insertWidget(i % col_count, self._plots[name])
 
         # drop now-empty trailing rows (e.g. after removing histos shrank
         # the grid, or col_count itself changed)
@@ -439,36 +460,15 @@ class AuxHistoWindow(QtWidgets.QWidget):
 
     def _update_plots(self):
         for name, shm in list(self._shms.items()):
-            if name not in self._plots:
+            plot = self._plots.get(name)
+            if plot is None:
                 continue
-            _, item, is_2d, extent = self._plots[name]
             try:
-                if is_2d:
-                    buf = shm.read_plane(0)
-                    display = np.log10(buf.astype(float) + 0.1)
-                    # scan every pixel -- pyqtgraph's default subsampled
-                    # autoLevels can miss a small/sparse peak entirely
-                    item.setImage(display, autoLevels=True, levelSamples=display.size)
-                    item.setRect(extent)
-                else:
-                    # pyqtgraph keeps this array reference alive indefinitely
-                    # (until the next setData) -- must be a copy, not a raw
-                    # view into the mmap, or closing this shm later fails
-                    # with "cannot close exported pointers exist"
-                    buf = shm.read_plane(0)[0].copy()
-                    item.setData(extent, buf, stepMode='center')
+                buf = shm.read_plane(0)
             except OSError as e:
                 self.log.warning(f'Error reading aux histogram {name!r}: {e}')
-
-    def _hover_text(self, name, view_x):
-        """Hover tooltip text for a 1-D histogram's plot (not 2-D ones, yet)."""
-        _plot_widget, curve, _is_2d, edges = self._plots[name]
-        _xdata, ydata = curve.getData()
-        i = int(np.searchsorted(edges, view_x, side='right')) - 1
-        if ydata is None or not 0 <= i < len(ydata):
-            return None
-        x_value = (edges[i] + edges[i + 1]) / 2
-        return f'x={x_value:.3g}\ncounts={int(ydata[i])}'
+                continue
+            plot.update_data(buf)
 
     def _on_row_double_clicked(self, row, _column):
         if 0 <= row < len(self._histos):
@@ -492,44 +492,6 @@ class AuxHistoWindow(QtWidgets.QWidget):
         button = self.sender()
         menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
 
-    @staticmethod
-    def _bin_values(axis):
-        """Each bin's lower edge, in the axis expression's own units.
-
-        Inverts the binning done server-side: `bin = (v - min) * bins /
-        (max - min + 1)`, where `max` is inclusive. E.g. bins=8, min=0,
-        max=7 (one bin per representable integer) gives 0, 1, ..., 7.
-        """
-        bins, lo, hi = axis['bins'], axis['min'], axis['max']
-        width = (hi - lo + 1) / bins
-        return lo + np.arange(bins) * width
-
-    @staticmethod
-    def _bin_width(axis):
-        return (axis['max'] - axis['min'] + 1) / axis['bins']
-
-    @classmethod
-    def _bin_edges(cls, axis):
-        """Real-value edges of every bin (bins+1 points), for step-mode plots.
-
-        Shifted back by half a bin width so the value a bin represents sits
-        at the center of its rendered bar -- e.g. bin 0 of bins=8, min=0,
-        max=7 renders as a bar centered on 0, spanning [-0.5, 0.5], matching
-        the old bin-index convention (there, an implicit width of 1) rather
-        than a plain edge-aligned histogram.
-        """
-        edges = np.append(cls._bin_values(axis), axis['max'] + 1)
-        return edges - cls._bin_width(axis) / 2
-
-    @classmethod
-    def _axis_extent(cls, axis):
-        """(low, span) of an axis's real-value range, for setRect().
-
-        Also shifted by half a bin width, for the same reason as
-        `_bin_edges` -- see there.
-        """
-        return axis['min'] - cls._bin_width(axis) / 2, axis['max'] - axis['min'] + 1
-
     def _save_histogram_to_file(self, name):
         shm = self._shms.get(name)
         if shm is None:
@@ -542,18 +504,18 @@ class AuxHistoWindow(QtWidgets.QWidget):
             return
         if not Path(path).suffix:
             path += '.txt'
-        _, _, is_2d, _ = self._plots[name]
+        is_2d = self._plots[name].is_2d
         spec = next(h for h in self._histos if h['name'] == name)
         header = self._histogram_export_header(spec, shm.read_run_id())
         if is_2d:
-            x = self._bin_values(spec['x'])
-            y = self._bin_values(spec['y'])
+            x = bin_values(spec['x'])
+            y = bin_values(spec['y'])
             header += ('\n# x values: ' + ' '.join(f'{v:g}' for v in x) +
                        '\n# y values: ' + ' '.join(f'{v:g}' for v in y))
             np.savetxt(path, shm.read_plane(0), fmt='%d', header=header,
                        comments='')
         else:
-            x = self._bin_values(spec['x'])
+            x = bin_values(spec['x'])
             counts = shm.read_plane(0)[0]
             np.savetxt(path, np.column_stack([x, counts]), fmt=['%g', '%d'],
                        header=header, comments='')
@@ -585,7 +547,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
             return
         if not Path(path).suffix:
             path += '.png'
-        plot_widget, *_ = self._plots[name]
+        plot_widget = self._plots[name].plot_widget
         exporters.ImageExporter(plot_widget.getPlotItem()).export(path)
         self.log.info(f'Saved aux histogram {name!r} image to {path}')
 
