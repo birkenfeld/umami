@@ -41,6 +41,11 @@ pub struct Mpsd {
     #[param(help = "Maps interesting MCPD digital input channels to event type",
             datatype = "{{\"number\" = (\"tzero\"/\"monitor=num\"/\"aux=num\")}}")]
     inputs: BTreeMap<u32, EdgeMapping>,
+    /// Voids out neutron events whose raw amplitude is 0 or > 960, a known
+    /// bad/overflow region on this detector's amplitude channel.
+    #[serde(default)]
+    #[param(help = "Void out neutron events with raw amplitude == 0 or > 960")]
+    y_mask: bool,
 }
 
 impl Recipe for Mpsd {
@@ -57,7 +62,13 @@ impl Recipe for Mpsd {
                     // remove fourth bit of channel
                     let x = (x_orig >> 1) & 0xFFF8 | (x_orig & 0x7);
                     event.histo.x = x as u16;
-                    event.histo.y = event.raw.0 as u16; // TODO: calibration
+
+                    let y = event.raw.0 as u16;
+                    if self.y_mask && (y == 0 || y > 960) {
+                        event.evtype = EventType::Void;
+                    }
+
+                    event.histo.y = y; // TODO: calibration
                 }
                 EventType::Edge { up: true } => {
                     if let Some(mapped) = self.inputs.get(&event.channel.0) {
@@ -152,6 +163,27 @@ mod tests {
         let ev = Event::new(EventType::Neutron).with_raw(1234, 0);
         let out = recipe.process(vec![ev]);
         assert_eq!(out[0].histo.y, 1234);
+    }
+
+    #[test]
+    fn test_mpsd_y_mask_disabled_by_default() {
+        let mut recipe = Mpsd::from_config(toml::Table::new(), &empty_recipes()).unwrap();
+        let ev = Event::new(EventType::Neutron).with_raw(0, 0);
+        let out = recipe.process(vec![ev]);
+        assert_eq!(out[0].evtype, EventType::Neutron);
+    }
+
+    #[test]
+    fn test_mpsd_y_mask_voids_zero_and_overflow() {
+        let cfg: toml::Table = toml::from_str("y_mask = true").unwrap();
+        let cases = [(0, true), (960, false), (961, true), (500, false)];
+        for (amp, expect_void) in cases {
+            let mut recipe = Mpsd::from_config(cfg.clone(), &empty_recipes()).unwrap();
+            let ev = Event::new(EventType::Neutron).with_raw(amp, 0);
+            let out = recipe.process(vec![ev]);
+            let expected = if expect_void { EventType::Void } else { EventType::Neutron };
+            assert_eq!(out[0].evtype, expected, "amp={amp}");
+        }
     }
 
     #[test]

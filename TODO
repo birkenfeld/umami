@@ -11,5 +11,4 @@ Later:
 GUI:
 - Tooltip/toolbar for 2d plots?
 - Param table -> tree?
-- Mesy cutoff y==0, y>960?
 - 2d aux histo as 1d display
