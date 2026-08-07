@@ -84,6 +84,8 @@ Each histogram definition (`HistoSpec`):
   event
 * `x` (required), `y` (optional, adds a second dimension): axis
   specifications
+* `group` (optional): arbitrary string; the GUI puts every 1-D histogram
+  sharing the same group name in the same plot
 
 Each axis (`AxisSpec`):
 

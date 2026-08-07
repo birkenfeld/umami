@@ -7,7 +7,7 @@ import html
 
 import numpy as np
 import pyqtgraph as pg
-from pyqtgraph.Qt.QtCore import QRectF, Qt, pyqtSignal
+from pyqtgraph.Qt.QtCore import QRectF, pyqtSignal
 from pyqtgraph.Qt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -195,7 +195,7 @@ class AuxPlot(QWidget):
 
     # ---- data ----
 
-    def update_data(self, buf):
+    def update_data(self, name, buf):  # noqa: ARG002 -- symmetry with AuxOverlayPlot
         """Feed a freshly-read data (`shm.read_plane(0)`) to this plot.
 
         Caches a *copy* of the raw counts (we should not keep the mmap alive)
@@ -262,3 +262,114 @@ class AuxPlot(QWidget):
             return ''
         x = (self._edges[i] + self._edges[i + 1]) / 2
         return f'{self.name}:  x={x:g}  counts={int(self._counts[i])}'
+
+
+class AuxOverlayPlot(QWidget):
+    """Several 1-D histograms sharing a `group`, overlaid on one plot.
+
+    One step curve per member, distinguished by color (`pg.intColor`,
+    pyqtgraph's built-in categorical color cycle) and a legend -- overlapping
+    semi-transparent fills like `AuxPlot`'s single-curve look get muddy with
+    2+ curves, so these are plain colored outlines instead. A single shared
+    control strip (`Log` only -- colormap/levels don't apply to line curves)
+    affects every curve's y-axis together.
+    """
+
+    cursor_moved = pyqtSignal(str)
+    is_2d = False  # for _save_histogram_to_file's uniform is_2d lookup
+
+    def __init__(self, specs, state):
+        super().__init__()
+        self._members = {}  # name -> {'edges', 'counts', 'curve'}
+
+        title = specs[0]['group']
+        x_exprs = {s['x']['expr'] for s in specs}
+        x_label = next(iter(x_exprs)) if len(x_exprs) == 1 else title
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        self._build_plot(title, x_label, specs)
+        layout.addWidget(self._build_controls(state))
+        layout.addWidget(self.plot_widget)
+
+    # ---- construction ----
+
+    def _build_plot(self, title, x_label, specs):
+        self.plot_widget = pg.PlotWidget(
+            title=html.escape(title), viewBox=ZoomViewBox())
+        plot_item = self.plot_widget.getPlotItem()
+        plot_item.setLabel('bottom', html.escape(x_label))
+        plot_item.setLabel('left', 'counts')
+        plot_item.addLegend()
+        for i, spec in enumerate(specs):
+            name = spec['name']
+            pen = pg.mkPen(pg.intColor(i, hues=len(specs)), width=2)
+            curve = plot_item.plot(stepMode='center', pen=pen, name=name)
+            self._members[name] = {'edges': bin_edges(spec['x']), 'counts': None,
+                                    'curve': curve}
+        self.plot_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
+
+    def _build_controls(self, state):
+        strip = QWidget()
+        row = QHBoxLayout(strip)
+        row.setContentsMargins(4, 0, 4, 0)
+        row.setSpacing(4)
+        strip.setSizePolicy(QSizePolicy.Policy.Preferred,
+                            QSizePolicy.Policy.Fixed)
+        font = strip.font()
+        font.setPointSizeF(max(font.pointSizeF() - 1.5, 7.0))
+        strip.setFont(font)
+
+        self.log_check = QCheckBox('Log')
+        self.log_check.setToolTip('Log scale')
+        self.log_check.setChecked(state.get('log', False))
+        self.plot_widget.getPlotItem().setLogMode(y=self.log_check.isChecked())
+        self.log_check.toggled.connect(self._on_log_toggled)
+        row.addWidget(self.log_check)
+        row.addStretch()
+        return strip
+
+    # ---- display state ----
+
+    def display_state(self):
+        return {'log': self.log_check.isChecked()}
+
+    def _on_log_toggled(self, checked):
+        self.plot_widget.getPlotItem().setLogMode(y=checked)
+
+    # ---- data ----
+
+    def update_data(self, name, buf):
+        member = self._members.get(name)
+        if member is None:
+            return
+        counts = buf[0]
+        if len(counts) + 1 != len(member['edges']):
+            # stale shm reopened against a since-changed spec; the next
+            # _rebuild() will re-pair them once the server catches up
+            return
+        member['counts'] = counts.copy()
+        member['curve'].setData(member['edges'], member['counts'], stepMode='center')
+
+    # ---- cursor readout ----
+
+    def _on_mouse_moved(self, scene_pos):
+        plot_item = self.plot_widget.getPlotItem()
+        if not plot_item.sceneBoundingRect().contains(scene_pos):
+            self.cursor_moved.emit('')
+            return
+        view_pos = plot_item.vb.mapSceneToView(scene_pos)
+        lines = []
+        for name, m in self._members.items():
+            if m['counts'] is None:
+                continue
+            i = int(np.searchsorted(m['edges'], view_pos.x(), side='right')) - 1
+            if 0 <= i < len(m['counts']):
+                x = (m['edges'][i] + m['edges'][i + 1]) / 2
+                lines.append(f'{name}:  x={x:g}  counts={int(m["counts"][i])}')
+        self.cursor_moved.emit('\n'.join(lines))
+
+    def leaveEvent(self, event):  # noqa: N802
+        super().leaveEvent(event)
+        self.cursor_moved.emit('')

@@ -46,6 +46,8 @@ pub struct HistoSpec {
     pub x: AxisSpec,
     #[serde(default)]
     pub y: Option<AxisSpec>,
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -511,13 +513,22 @@ mod tests {
             [[histos]]
             name = "amp"
             x = { expr = "ampl", bins = 4, min = 0, max = 7 }
+
+            [[histos]]
+            name = "amp2"
+            group = "amps"
+            x = { expr = "ampl", bins = 4, min = 0, max = 7 }
         "#).unwrap();
         let output = AuxHistoOutput::from_config(&common, cfg).unwrap();
         let _guard = ShmGuard::for_name(format!("{ipc}_aux_amp"));
+        let _guard2 = ShmGuard::for_name(format!("{ipc}_aux_amp2"));
 
         let params = output.get_params(false).unwrap();
         assert_eq!(params["enabled"]["value"], true);
         assert_eq!(params["histos"]["value"][0]["name"], "amp");
+        // group is a GUI-only display hint, optional and just round-tripped
+        assert!(params["histos"]["value"][0]["group"].is_null());
+        assert_eq!(params["histos"]["value"][1]["group"], "amps");
     }
 
     #[test]

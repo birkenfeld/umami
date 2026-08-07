@@ -36,7 +36,7 @@ from pyqtgraph.Qt.QtWidgets import (
     QWidget,
 )
 
-from .aux_plot import AuxPlot, bin_values
+from .aux_plot import AuxOverlayPlot, AuxPlot, bin_values
 from .icons import icon_button
 from .shm import ShmHistogram
 
@@ -141,6 +141,10 @@ class HistoDefDialog(QDialog):
         self.filter_edit.setPlaceholderText(
             'e.g. evtype == neutron  (empty = always true)')
         form.addRow('Filter:', self.filter_edit)
+        self.group_edit = QLineEdit(spec.get('group') or '')
+        self.group_edit.setPlaceholderText(
+            'optional -- histograms sharing a group go in one plot')
+        form.addRow('Group:', self.group_edit)
 
         form.addRow(QLabel('<b>X axis</b>'))
         self.x_expr = QLineEdit(x.get('expr', ''))
@@ -222,6 +226,9 @@ class HistoDefDialog(QDialog):
         filt = self.filter_edit.text().strip()
         if filt:
             result['filter'] = filt
+        group = self.group_edit.text().strip()
+        if group:
+            result['group'] = group
         if self.y_check.isChecked():
             result['y'] = {'expr': self.y_expr.text().strip(),
                            'bins': self.y_bins.value(),
@@ -267,8 +274,8 @@ class AuxHistoWindow(QWidget):
         # state in _save_settings() so it survives a _rebuild() or restart
         self._display_state = self._load_display_state()
 
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(['Name', 'X', 'Y', 'Filter', ''])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(['Name', 'X', 'Y', 'Filter', 'Group', ''])
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
@@ -399,23 +406,57 @@ class AuxHistoWindow(QWidget):
         for name in list(self._shms):
             self._forget(name)
 
-    def _create_plot(self, name, spec):
-        """Open the shm segment and build the plot widget for a new histo.
+    def _create_tile_plot(self, tile):
+        """Open shm segments and build the plot widget for a new tile.
 
-        Returns False (logging a warning) if the shm segment isn't there yet.
+        A tile is one histogram, or several sharing a `group` overlaid on
+        one plot. Returns False (logging a warning) if any member's shm
+        segment isn't there yet -- the whole tile is retried together on
+        the next refresh().
         """
-        shm_name = f'{self.ipc_name}_{self._module}_{name}'
-        try:
-            shm = ShmHistogram(shm_name)
-        except RuntimeError as e:
-            self.log.warning(f'Could not open {shm_name!r}: {e}')
-            return False
-        self._shms[name] = shm
-        is_2d = shm.ny > 1
-        plot = AuxPlot(name, spec, is_2d, self._display_state.get(name, {}))
+        shms = {}
+        for spec in tile:
+            name = spec['name']
+            shm_name = f'{self.ipc_name}_{self._module}_{name}'
+            try:
+                shms[name] = ShmHistogram(shm_name)
+            except RuntimeError as e:
+                self.log.warning(f'Could not open {shm_name!r}: {e}')
+                for shm in shms.values():
+                    shm.close()
+                return False
+        if len(tile) == 1:
+            spec = tile[0]
+            name = spec['name']
+            is_2d = shms[name].ny > 1
+            plot = AuxPlot(name, spec, is_2d, self._display_state.get(name, {}))
+        else:
+            plot = AuxOverlayPlot(tile, self._display_state.get(tile[0]['name'], {}))
         plot.cursor_moved.connect(self.cursor_label.setText)
-        self._plots[name] = plot
+        self._shms.update(shms)
+        for spec in tile:
+            self._plots[spec['name']] = plot
         return True
+
+    def _tiles(self):
+        """Bucket `self._histos` into plot tiles.
+
+        1-D histograms sharing a non-empty `group` land in the same tile
+        (rendered as one overlaid plot); everything else -- 2-D histograms,
+        or an ungrouped 1-D one -- is its own tile of one. A tile's
+        position follows its first member's position in `self._histos`.
+        """
+        tiles = []
+        group_index = {}
+        for spec in self._histos:
+            group = spec.get('group') if spec.get('y') is None else None
+            if group:
+                if group in group_index:
+                    tiles[group_index[group]].append(spec)
+                    continue
+                group_index[group] = len(tiles)
+            tiles.append([spec])
+        return tiles
 
     def _rebuild(self):
         # the server recreates every histogram's shm segment whenever the
@@ -434,6 +475,8 @@ class AuxHistoWindow(QWidget):
                 QTableWidgetItem(spec['y']['expr'] if spec.get('y') else ''))
             self.table.setItem(
                 row, 3, QTableWidgetItem(spec.get('filter') or ''))
+            self.table.setItem(
+                row, 4, QTableWidgetItem(spec.get('group') or ''))
             btn_widget = QWidget()
             btn_layout = QHBoxLayout(btn_widget)
             btn_layout.setContentsMargins(5, 0, 5, 0)
@@ -445,17 +488,19 @@ class AuxHistoWindow(QWidget):
             del_btn.clicked.connect(lambda _, n=spec['name']: self._delete_histogram(n))
             btn_layout.addWidget(edit_btn)
             btn_layout.addWidget(del_btn)
-            self.table.setCellWidget(row, 4, btn_widget)
+            self.table.setCellWidget(row, 5, btn_widget)
         # the icon on the Delete button widens it beyond the buttons
         # column's default width, clipping its text -- widen the column to
         # fit now that the cell widgets (and their size hints) are in place
-        self.table.resizeColumnToContents(4)
+        self.table.resizeColumnToContents(5)
 
         # up to 3 per row, except exactly 4 which reads better as 2x2 than 3+1
-        col_count = 2 if len(self._histos) == 4 else 3
-        for i, spec in enumerate(self._histos):
-            name = spec['name']
-            if name not in self._plots and not self._create_plot(name, spec):
+        tiles = self._tiles()
+        col_count = 2 if len(tiles) == 4 else 3
+        for i, tile in enumerate(tiles):
+            names = [s['name'] for s in tile]
+            if (not all(n in self._plots for n in names)
+                    and not self._create_tile_plot(tile)):
                 continue
             row = i // col_count
             while row >= len(self._row_splitters):
@@ -465,11 +510,11 @@ class AuxHistoWindow(QWidget):
             # insertWidget also relocates a widget that's already placed (in
             # this or another row splitter), so the grid always matches
             # self._histos' current order even after an add/remove shifts it
-            self._row_splitters[row].insertWidget(i % col_count, self._plots[name])
+            self._row_splitters[row].insertWidget(i % col_count, self._plots[names[0]])
 
         # drop now-empty trailing rows (e.g. after removing histos shrank
         # the grid, or col_count itself changed)
-        needed_rows = -(-len(self._histos) // col_count) if self._histos else 0
+        needed_rows = -(-len(tiles) // col_count) if tiles else 0
         while len(self._row_splitters) > needed_rows:
             row_splitter = self._row_splitters.pop()
             row_splitter.setParent(None)
@@ -485,7 +530,7 @@ class AuxHistoWindow(QWidget):
             except OSError as e:
                 self.log.warning(f'Error reading aux histogram {name!r}: {e}')
                 continue
-            plot.update_data(buf)
+            plot.update_data(name, buf)
 
     def _on_row_double_clicked(self, row, _column):
         if 0 <= row < len(self._histos):
