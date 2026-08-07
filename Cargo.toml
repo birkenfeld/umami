@@ -2,7 +2,7 @@
 
 [package]
 name = "umami"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 authors = ["Georg Brandl <g.brandl@fz-juelich.de>",
            "Alexander Zaft <a.zaft@fz-juelich.de>",
