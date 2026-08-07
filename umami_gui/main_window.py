@@ -155,12 +155,13 @@ class MainWindow(QtWidgets.QWidget):
 
         pen = pg.mkPen('#80ffffff', width=1)
         pen.setCosmetic(True)
-        self.roi_item = pg.RectROI((0, 0), (0, 0), pen=pen, movable=True)
+        self.roi_item = pg.RectROI((0, 0), (0, 0), pen=pen, movable=False)
         self.roi_item.addScaleHandle([0, 0], [1, 1])
         self.roi_item.addScaleHandle([0, 1], [1, 0])
         self.roi_item.addScaleHandle([1, 0], [0, 1])
         self.roi_item.setZValue(10)
         self.roi_item.hide()
+        self._roi_snap_guard = False  # re-entrancy guard, see _on_roi_region_changed
         self.roi_item.sigRegionChanged.connect(self._on_roi_region_changed)
         self.plot.addItem(self.roi_item)
 
@@ -776,7 +777,6 @@ class MainWindow(QtWidgets.QWidget):
     def _build_events_panel(self):
         self.events_panel = EventsPanel()
         self.events_panel.set_roi_btn.toggled.connect(self._on_set_roi_toggled)
-        self.events_panel.clear_roi_btn.clicked.connect(self._clear_roi)
 
     def _on_set_roi_toggled(self, checked):
         if not checked:
@@ -784,8 +784,8 @@ class MainWindow(QtWidgets.QWidget):
             return
         size = self.roi_item.size()
         if size.x() <= 0 or size.y() <= 0:
-            # never configured (or just Cleared) -- start from a sensible
-            # default the user can then drag/resize into place
+            # never configured -- start from a sensible default the user
+            # can then resize into place
             nx, ny = self.histo.nx, self.histo.ny
             x0, x1 = nx // 4, nx - nx // 4
             y0, y1 = ny // 4, ny - ny // 4
@@ -793,14 +793,27 @@ class MainWindow(QtWidgets.QWidget):
             self.roi_item.setSize((x1 - x0, y1 - y0))
         self.roi_item.show()
 
-    def _clear_roi(self):
-        self.events_panel.set_roi_btn.setChecked(False)
-        self.roi_item.hide()
-        self.roi_item.setSize((0, 0))
-        self.roi_rate_samples.clear()
-
     def _on_roi_region_changed(self):
+        if self._roi_snap_guard:
+            return
         self.roi_rate_samples.clear()
+        # snap both edges to the nearest bin boundary (same convention as
+        # _roi_bounds()/on_mouse_moved()) so the drawn box always lines up
+        # with whole bins instead of an arbitrary sub-pixel rectangle
+        pos, size = self.roi_item.pos(), self.roi_item.size()
+        x0 = np.floor(pos.x() + 0.5) - 0.5
+        x1 = np.floor(pos.x() + size.x() + 0.5) - 0.5
+        y0 = np.floor(pos.y() + 0.5) - 0.5
+        y1 = np.floor(pos.y() + size.y() + 0.5) - 0.5
+        w, h = max(0.0, x1 - x0), max(0.0, y1 - y0)
+        if (x0, y0, w, h) == (pos.x(), pos.y(), size.x(), size.y()):
+            return
+        self._roi_snap_guard = True
+        try:
+            self.roi_item.setPos((x0, y0))
+            self.roi_item.setSize((w, h))
+        finally:
+            self._roi_snap_guard = False
 
     def _roi_bounds(self):
         """Return the current ROI as `(x0, y0, x1, y1)` bin-index bounds.

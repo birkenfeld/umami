@@ -23,8 +23,8 @@ ROW_NAMES = [
 class EventsPanel(QtWidgets.QWidget):
     """Name/value/rate grid of counters, extending the compact status line.
 
-    `set_roi_btn`/`clear_roi_btn` are exposed for `MainWindow` to wire up --
-    picking a region on the main plot and drawing/persisting it there is
+    `set_roi_btn` is exposed for `MainWindow` to wire up -- picking a region
+    on the main plot and drawing/persisting it there is
     that plot's business, this panel only displays the resulting ROI count.
     """
 
@@ -41,13 +41,11 @@ class EventsPanel(QtWidgets.QWidget):
         outer.addSpacing(24)
 
         btn_row = QtWidgets.QHBoxLayout()
-        self.set_roi_btn = icon_button('select', 'Set ROI')
+        self.set_roi_btn = icon_button('select', 'Enable ROI')
         self.set_roi_btn.setCheckable(True)
         self.set_roi_btn.setToolTip(
-            'Drag a rectangle on the histogram plot to set the ROI')
+            'Show a resizable ROI on the histogram plot')
         btn_row.addWidget(self.set_roi_btn)
-        self.clear_roi_btn = icon_button('remove_selection', 'Clear')
-        btn_row.addWidget(self.clear_roi_btn)
         btn_row.addStretch()
         outer.addLayout(btn_row)
         outer.addStretch()
