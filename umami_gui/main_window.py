@@ -598,9 +598,7 @@ class MainWindow(QtWidgets.QWidget):
         self.raw_dump_path = QtWidgets.QLineEdit()
         self.raw_dump_path.setPlaceholderText('/path/to/raw/dump/dir')
         frame.layout().addWidget(self.raw_dump_path)
-        self.raw_dump_check.toggled.connect(
-            lambda checked: self.client.set_raw_dump(checked,
-                                                     self.raw_dump_path.text()))
+        self.raw_dump_check.toggled.connect(self._on_raw_dump_toggled)
         self.raw_dump_path.editingFinished.connect(self.raw_dump_path_changed)
 
         browse_btn = QtWidgets.QPushButton('...')
@@ -633,6 +631,18 @@ class MainWindow(QtWidgets.QWidget):
         frame.layout().addWidget(save_btn)
 
         self.dump_frame = frame
+
+    def _on_raw_dump_toggled(self, checked):
+        if checked and not self.raw_dump_path.text():
+            path = QtWidgets.QFileDialog.getExistingDirectory(
+                self, 'Raw Dump Directory', self.raw_dump_path.text())
+            if not path:
+                self.raw_dump_check.blockSignals(True)
+                self.raw_dump_check.setChecked(False)
+                self.raw_dump_check.blockSignals(False)
+                return
+            self.raw_dump_path.setText(path)
+        self.client.set_raw_dump(checked, self.raw_dump_path.text())
 
     def browse_raw_dump_dir(self):
         path = QtWidgets.QFileDialog.getExistingDirectory(

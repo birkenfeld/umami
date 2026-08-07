@@ -4,5 +4,10 @@ Later:
 - More custom aliases (raw -> y pre calib etc)
 - Test input errors with real hw
 - Save config: only if val changed in session
-- Tooltip/toolbar for 2d plots?
 - Mesy pulser smoke test
+- ROI for main histo
+
+- Tooltip/toolbar for 2d plots?
+- Param table -> tree?
+- Mesy cutoff y==0, y>960?
+- 2d aux histo as 1d display
