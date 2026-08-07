@@ -5,6 +5,7 @@
 
 from pyqtgraph.Qt import QtWidgets
 
+from .icons import icon_button
 from .status_panel import THIN_SPACE, format_elapsed, rich_text_width
 
 MONITOR_COUNT = 5
@@ -20,14 +21,36 @@ ROW_NAMES = [
 
 
 class EventsPanel(QtWidgets.QWidget):
-    """Name/value/rate grid of counters, extending the compact status line."""
+    """Name/value/rate grid of counters, extending the compact status line.
+
+    `set_roi_btn`/`clear_roi_btn` are exposed for `MainWindow` to wire up --
+    picking a region on the main plot and drawing/persisting it there is
+    that plot's business, this panel only displays the resulting ROI count.
+    """
 
     def __init__(self):
         super().__init__()
-        layout = QtWidgets.QGridLayout(self)
-        layout.setContentsMargins(8, 8, 5, 5)
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 5, 5)
+
+        layout = QtWidgets.QGridLayout()
         layout.setVerticalSpacing(int(layout.verticalSpacing() * 1.5))
         layout.setHorizontalSpacing(int(layout.horizontalSpacing() * 1.5))
+        outer.addLayout(layout)
+
+        outer.addSpacing(24)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        self.set_roi_btn = icon_button('select', 'Set ROI')
+        self.set_roi_btn.setCheckable(True)
+        self.set_roi_btn.setToolTip(
+            'Drag a rectangle on the histogram plot to set the ROI')
+        btn_row.addWidget(self.set_roi_btn)
+        self.clear_roi_btn = icon_button('remove_selection', 'Clear')
+        btn_row.addWidget(self.clear_roi_btn)
+        btn_row.addStretch()
+        outer.addLayout(btn_row)
+        outer.addStretch()
 
         header_font = self.font()
         header_font.setBold(True)
@@ -53,18 +76,12 @@ class EventsPanel(QtWidgets.QWidget):
             self._rate_labels[name] = rate_label
             row += 1
 
-        # ROI counting isn't implemented yet -- pinned at zero, never updated
-        self._value_labels['Counts in ROI'].setText('<b>0</b>')
-        self._rate_labels['Counts in ROI'].setText(self._fmt_rate(None))
-
         # fix the value/rate columns' width to fit large counts without
         # the whole grid resizing/jumping as digits are added
         self._value_labels['Total events'].setMinimumWidth(
             rich_text_width(self.font(), '<b>100,000,000</b>'))
         self._rate_labels['Total events'].setMinimumWidth(
-            rich_text_width(self.font(), f'10,000.0{THIN_SPACE}k/s'))
-
-        layout.setRowStretch(row, 1)
+            rich_text_width(self.font(), f'10,000.0{THIN_SPACE}<b>k</b>/s'))
 
     @staticmethod
     def _separator():
@@ -78,27 +95,27 @@ class EventsPanel(QtWidgets.QWidget):
         if rate is None:
             return '-'
         if rate >= 1_000:
-            return f'{rate/1_000:,.1f}{THIN_SPACE}k/s'
+            return f'{rate/1_000:,.1f}{THIN_SPACE}<b>k</b>/s'
         return f'{rate:,.1f}{THIN_SPACE}/s'
 
-    def update_counts(self, in_slice, in_slice_rate, total_counts, total_events,
-                      tzero, monitor_counts, lifetime_ns, rates):
+    def update_counts(self, in_slice, roi, total_counts, total_events, tzero,
+                      monitor_counts, lifetime_ns, rates):
         """Update every row's value/rate.
 
-        `in_slice_rate` is computed by the caller over the same trailing
-        window as the compact status line's rate, so both stay consistent.
-        `rates` is `(total_counts_rate, events_rate, tzero_rate,
-        *monitor_rates)`; entries are `None` where not enough samples are
-        available yet or the underlying counter decreased (e.g. a Clear
-        happened mid-window).
+        `rates` is `(in_slice_rate, roi_rate, total_counts_rate,
+        events_rate, tzero_rate, *monitor_rates)`; entries are `None` where
+        not enough samples are available yet or the underlying counter
+        decreased (e.g. a Clear happened mid-window).
         """
-        total_counts_rate, events_rate, tzero_rate, *monitor_rates = rates
+        (in_slice_rate, roi_rate, total_counts_rate, events_rate,
+         tzero_rate, *monitor_rates) = rates
 
         def set_row(name, value, rate):
             self._value_labels[name].setText(f'<b>{value:,}</b>')
             self._rate_labels[name].setText(self._fmt_rate(rate))
 
         set_row('Counts in slice', in_slice, in_slice_rate)
+        set_row('Counts in ROI', roi, roi_rate)
         set_row('Total counts', total_counts, total_counts_rate)
         set_row('Total events', total_events, events_rate)
         set_row('T-zero', tzero, tzero_rate)

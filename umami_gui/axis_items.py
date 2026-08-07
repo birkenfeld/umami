@@ -50,7 +50,16 @@ class ZoomViewBox(pg.ViewBox):
     The reverse of pyqtgraph's own default (left-button pans, right-button
     drag-to-scale). Right-click still opens the normal context menu (not
     overridden); a middle-click resets the view to fit all data instead.
+
+    `roi_drag_callback`, if set, redirects the next completed left-button
+    drag to it (as a `QRectF` in view/data coordinates) instead of zooming,
+    then resets itself to `None` -- a one-shot "arm" for an external
+    "pick a region" action (see `MainWindow._on_set_roi_toggled`).
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.roi_drag_callback = None
 
     def mouseDragEvent(self, ev, axis=None):  # noqa: N802
         if ev.button() == QtCore.Qt.MouseButton.RightButton:
@@ -68,9 +77,14 @@ class ZoomViewBox(pg.ViewBox):
             ax = QtCore.QRectF(pg.Point(ev.buttonDownPos(ev.button())),
                                pg.Point(ev.pos()))
             ax = self.childGroup.mapRectFromParent(ax)
-            self.showAxRect(ax)
-            self.axHistoryPointer += 1
-            self.axHistory = [*self.axHistory[:self.axHistoryPointer], ax]
+            if self.roi_drag_callback is not None:
+                callback = self.roi_drag_callback
+                self.roi_drag_callback = None
+                callback(ax)
+            else:
+                self.showAxRect(ax)
+                self.axHistoryPointer += 1
+                self.axHistory = [*self.axHistory[:self.axHistoryPointer], ax]
         else:
             self.updateScaleBox(ev.buttonDownPos(), ev.pos())
 

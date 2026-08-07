@@ -92,6 +92,8 @@ class MainWindow(QtWidgets.QWidget):
         self.instance_name = None
         self.rate_samples = []  # trailing (time, total) samples, up to RATE_SAMPLES
         self.counter_samples = []  # trailing (time, (events, neutrons, tzero, *mon))
+        self.roi = None  # (x0, y0, x1, y1) bin-index bounds, or None
+        self.roi_rate_samples = []  # trailing (time, roi_total) samples
         self.last_t = None
         self.last_buf = None
         self.was_connected = False
@@ -152,6 +154,17 @@ class MainWindow(QtWidgets.QWidget):
         self.plot.enableAutoRange('xy', True)
         self.plot.scene().sigMouseMoved.connect(self.on_mouse_moved)
 
+        self.roi_rect_item = QtWidgets.QGraphicsRectItem()
+        pen = QtGui.QPen(QtGui.QColor('#80ffffff'))
+        pen.setWidth(2)
+        pen.setCosmetic(True)
+        self.roi_rect_item.setPen(pen)
+        self.roi_rect_item.setBrush(QtGui.QBrush(QtCore.Qt.BrushStyle.NoBrush))
+        self.roi_rect_item.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
+        self.roi_rect_item.setZValue(10)
+        self.roi_rect_item.hide()
+        self.plot.addItem(self.roi_rect_item)
+
     # ---- projection plots: separate windows, created lazily on request ----
 
     def open_projection_window(self):
@@ -186,12 +199,13 @@ class MainWindow(QtWidgets.QWidget):
         if self.tof_config_window is not None and self.tof_config_window.isVisible():
             self.tof_config_window.refresh()
 
-    def update_buffer(self):  # noqa: C901, PLR0912
+    def update_buffer(self):  # noqa: C901, PLR0912, PLR0915
         t = self.t_spin.value()
         if t != self.last_t:
             # switching slices jumps the total to an unrelated bin's count;
             # drop the old baseline so the rate isn't computed across that jump
             self.rate_samples.clear()
+            self.roi_rate_samples.clear()
             self.last_t = t
         run_id = self.histo.read_run_id()
         buf = self.histo.read_plane(t)
@@ -237,6 +251,20 @@ class MainWindow(QtWidgets.QWidget):
         self.status_panel.update_run_info(run_id, elapsed_s=elapsed_s, total=total,
                                           rate=rate)
 
+        if self.roi is not None:
+            x0, y0, x1, y1 = self.roi
+            roi_total = int(buf[y0:y1, x0:x1].sum())
+        else:
+            roi_total = 0
+        self.roi_rate_samples.append((now, roi_total))
+        if len(self.roi_rate_samples) > RATE_SAMPLES:
+            self.roi_rate_samples.pop(0)
+        roi_rate = None
+        if self.roi is not None and len(self.roi_rate_samples) > 1:
+            old_time, old_total = self.roi_rate_samples[0]
+            if roi_total >= old_total:
+                roi_rate = (roi_total - old_total) / (now - old_time)
+
         total_events, total_neutrons, lifetime_ns, tzero_count, monitor_counts = \
             self.histo.read_counters()
         counters = (total_neutrons, total_events, tzero_count, *monitor_counts)
@@ -250,8 +278,8 @@ class MainWindow(QtWidgets.QWidget):
                 if cur >= old:
                     counter_rates[i] = (cur - old) / (now - old_time)
         self.events_panel.update_counts(
-            total, rate, total_neutrons, total_events, tzero_count,
-            monitor_counts, lifetime_ns, counter_rates)
+            total, roi_total, total_neutrons, total_events, tzero_count,
+            monitor_counts, lifetime_ns, (rate, roi_rate, *counter_rates))
 
     def _compute_elapsed_s(self):
         """Seconds since the last StartOfRun, frozen once the run has ended.
@@ -286,6 +314,7 @@ class MainWindow(QtWidgets.QWidget):
         self.histo = new_histo
         self.rate_samples.clear()
         self.counter_samples.clear()
+        self.roi_rate_samples.clear()
         self.plot.enableAutoRange('xy', True)
         self.t_spin.setRange(0, max(self.histo.nt - 1, 0))
 
@@ -746,6 +775,36 @@ class MainWindow(QtWidgets.QWidget):
 
     def _build_events_panel(self):
         self.events_panel = EventsPanel()
+        self.events_panel.set_roi_btn.toggled.connect(self._on_set_roi_toggled)
+        self.events_panel.clear_roi_btn.clicked.connect(self._clear_roi)
+
+    def _on_set_roi_toggled(self, checked):
+        self.plot.vb.roi_drag_callback = self._on_roi_dragged if checked else None
+
+    def _on_roi_dragged(self, rect):
+        self.events_panel.set_roi_btn.setChecked(False)
+        rect = rect.normalized()
+        # same pixel-center convention as on_mouse_moved() -- pixel i spans
+        # [i-0.5, i+0.5], so floor(v + 0.5) gives the nearest bin boundary
+        x0 = max(0, min(self.histo.nx, int(np.floor(rect.left() + 0.5))))
+        x1 = max(0, min(self.histo.nx, int(np.floor(rect.right() + 0.5))))
+        y0 = max(0, min(self.histo.ny, int(np.floor(rect.top() + 0.5))))
+        y1 = max(0, min(self.histo.ny, int(np.floor(rect.bottom() + 0.5))))
+        if x1 <= x0 or y1 <= y0:
+            return  # degenerate drag (e.g. a plain click) -- ignore
+        self._set_roi((x0, y0, x1, y1))
+
+    def _set_roi(self, roi):
+        self.roi = roi
+        self.roi_rate_samples.clear()
+        x0, y0, x1, y1 = roi
+        self.roi_rect_item.setRect(x0 - 0.5, y0 - 0.5, x1 - x0, y1 - y0)
+        self.roi_rect_item.show()
+
+    def _clear_roi(self):
+        self.roi = None
+        self.roi_rate_samples.clear()
+        self.roi_rect_item.hide()
 
     def _build_right_tabs(self):
         tabs = QtWidgets.QTabWidget()
@@ -818,6 +877,10 @@ class MainWindow(QtWidgets.QWidget):
         raw_dump_path = self.settings.value('raw_dump_path')
         if raw_dump_path is not None:
             self.raw_dump_path.setText(raw_dump_path)
+        if self.settings.contains('roi_x0'):
+            roi = tuple(self.settings.value(f'roi_{k}', type=int)
+                       for k in ('x0', 'y0', 'x1', 'y1'))
+            self._set_roi(roi)
 
     def _save_settings(self):
         self.settings.setValue('geometry', self.saveGeometry())
@@ -829,3 +892,9 @@ class MainWindow(QtWidgets.QWidget):
         self.settings.setValue('level_min', self.level_min_spin.value())
         self.settings.setValue('level_max', self.level_max_spin.value())
         self.settings.setValue('raw_dump_path', self.raw_dump_path.text())
+        if self.roi is not None:
+            for k, v in zip(('x0', 'y0', 'x1', 'y1'), self.roi):
+                self.settings.setValue(f'roi_{k}', v)
+        else:
+            for k in ('x0', 'y0', 'x1', 'y1'):
+                self.settings.remove(f'roi_{k}')
