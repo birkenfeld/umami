@@ -360,15 +360,15 @@ class AuxOverlayPlot(QWidget):
             self.cursor_moved.emit('')
             return
         view_pos = plot_item.vb.mapSceneToView(scene_pos)
-        lines = []
+        x = view_pos.x()
+        parts = [f'x={x:g}']
         for name, m in self._members.items():
             if m['counts'] is None:
                 continue
-            i = int(np.searchsorted(m['edges'], view_pos.x(), side='right')) - 1
+            i = int(np.searchsorted(m['edges'], x, side='right')) - 1
             if 0 <= i < len(m['counts']):
-                x = (m['edges'][i] + m['edges'][i + 1]) / 2
-                lines.append(f'{name}:  x={x:g}  counts={int(m["counts"][i])}')
-        self.cursor_moved.emit('\n'.join(lines))
+                parts.append(f'{name}={int(m["counts"][i])}')
+        self.cursor_moved.emit('  '.join(parts))
 
     def leaveEvent(self, event):  # noqa: N802
         super().leaveEvent(event)
