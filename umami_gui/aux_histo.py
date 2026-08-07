@@ -111,7 +111,9 @@ class HistoDefDialog(QDialog):
     def _make_range_row(cls, bins_default, min_default, max_default):
         """One line combining an axis's Bins/Min/Max fields, for space economy.
 
-        Returns (row_widget, bins_spinbox, min_spinbox, max_spinbox).
+        Min/max default to 0..bins-1, otherwise custom bins are selectable.
+        Returns (row_widget, bins_spinbox, custom_checkbox, min_spinbox,
+        max_spinbox).
         """
         row = QWidget()
         row_layout = QHBoxLayout(row)
@@ -124,8 +126,28 @@ class HistoDefDialog(QDialog):
         row_layout.addWidget(QLabel('to'))
         max_box = cls._range_spinbox(max_default)
         row_layout.addWidget(max_box)
+        custom_check = QCheckBox('Custom range')
+        is_custom = min_default != 0 or max_default != bins_default - 1
+        custom_check.setChecked(is_custom)
+        min_box.setEnabled(is_custom)
+        max_box.setEnabled(is_custom)
+        row_layout.addWidget(custom_check)
         row_layout.addStretch()
-        return row, bins, min_box, max_box
+
+        def sync_defaults():
+            if not custom_check.isChecked():
+                min_box.setValue(0)
+                max_box.setValue(max(bins.value() - 1, 0))
+        bins.valueChanged.connect(lambda _: sync_defaults())
+
+        def on_custom_toggled(checked):
+            min_box.setEnabled(checked)
+            max_box.setEnabled(checked)
+            if not checked:
+                sync_defaults()
+        custom_check.toggled.connect(on_custom_toggled)
+
+        return row, bins, custom_check, min_box, max_box
 
     def __init__(self, parent=None, spec=None, aliases=None):
         super().__init__(parent)
@@ -149,8 +171,8 @@ class HistoDefDialog(QDialog):
         form.addRow(QLabel('<b>X axis</b>'))
         self.x_expr = QLineEdit(x.get('expr', ''))
         form.addRow('  Expr:', self.x_expr)
-        x_row, self.x_bins, self.x_min, self.x_max = self._make_range_row(
-            x.get('bins', 256), x.get('min', 0), x.get('max', 255))
+        x_row, self.x_bins, self.x_custom, self.x_min, self.x_max = \
+            self._make_range_row(x.get('bins', 256), x.get('min', 0), x.get('max', 255))
         form.addRow('  Axis:', x_row)
 
         self.y_check = QCheckBox('2-D (add Y axis)')
@@ -159,14 +181,17 @@ class HistoDefDialog(QDialog):
         form.addRow(QLabel('<b>Y axis</b>'))
         self.y_expr = QLineEdit((y or {}).get('expr', ''))
         form.addRow('  Expr:', self.y_expr)
-        y_row, self.y_bins, self.y_min, self.y_max = self._make_range_row(
-            (y or {}).get('bins', 256), (y or {}).get('min', 0),
-            (y or {}).get('max', 255))
+        y_defaults = y or {}
+        y_row, self.y_bins, self.y_custom, self.y_min, self.y_max = \
+            self._make_range_row(y_defaults.get('bins', 256), y_defaults.get('min', 0),
+                                 y_defaults.get('max', 255))
         form.addRow('  Axis:', y_row)
 
         def sync_y_enabled(checked):
-            for w in (self.y_expr, self.y_bins, self.y_min, self.y_max):
+            for w in (self.y_expr, self.y_bins, self.y_custom):
                 w.setEnabled(checked)
+            self.y_min.setEnabled(checked and self.y_custom.isChecked())
+            self.y_max.setEnabled(checked and self.y_custom.isChecked())
         self.y_check.toggled.connect(sync_y_enabled)
         sync_y_enabled(self.y_check.isChecked())
 
@@ -238,16 +263,7 @@ class HistoDefDialog(QDialog):
 
 
 class AuxHistoWindow(QWidget):
-    """Separate window for user-defined auxiliary/diagnostic histograms.
-
-    Handles the `aux_histo` output type: discovers the first active one via
-    each module's `_info` entry in a `full` get-params reply (only one such
-    output is supported here, matching the backend's own one-output
-    convenience assumption), lets the user add/edit/delete definitions
-    through a form instead of hand-written JSON, and live-plots each one
-    (1-D as a step curve, 2-D as an image), each with its own display
-    controls (`AuxPlot`), from its own shm segment.
-    """
+    """Separate window for user-defined auxiliary/diagnostic histograms."""
 
     REFRESH_MS = 500
 

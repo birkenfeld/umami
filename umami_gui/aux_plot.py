@@ -361,7 +361,7 @@ class AuxOverlayPlot(QWidget):
             return
         view_pos = plot_item.vb.mapSceneToView(scene_pos)
         x = view_pos.x()
-        parts = [f'x={x:g}']
+        parts = [f'x={x:.1f}']
         for name, m in self._members.items():
             if m['counts'] is None:
                 continue
