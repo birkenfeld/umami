@@ -751,7 +751,7 @@ class MainWindow(QtWidgets.QWidget):
         tabs = QtWidgets.QTabWidget()
         tabs.setTabPosition(QtWidgets.QTabWidget.TabPosition.North)
         tabs.setStyleSheet('QTabWidget::pane { border: 0; }')
-        tabs.addTab(self.events_panel, 'Events')
+        tabs.addTab(self.events_panel, 'Statistics')
         tabs.addTab(self.params_panel, 'Parameters')
         tabs.setCurrentWidget(self.events_panel)
         self.right_tabs = tabs

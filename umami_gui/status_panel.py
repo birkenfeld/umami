@@ -25,6 +25,13 @@ def format_elapsed(seconds):
     return f'<b>{h}</b>{THIN_SPACE}hr <b>{m}</b>{THIN_SPACE}min'
 
 
+def rich_text_width(font, html):
+    """Width a QLabel would need to show `html` (rich text) in `font`."""
+    label = QtWidgets.QLabel(html)
+    label.setFont(font)
+    return label.sizeHint().width()
+
+
 class StatusPanel(QtWidgets.QFrame):
     """Connection, mode, run/counts, and per-input state at a glance."""
 
@@ -75,15 +82,14 @@ class StatusPanel(QtWidgets.QFrame):
         self.time_label = QtWidgets.QLabel('time: <b>-</b>')
         self.time_label.setFont(value_font)
         self.time_label.setMinimumWidth(
-            self._rich_text_width(value_font, f'time: {format_elapsed(659)}'))
+            rich_text_width(value_font, f'time: {format_elapsed(659)}'))
         top_row.addWidget(self.time_label)
         top_row.addSpacing(20)
 
         self.total_label = QtWidgets.QLabel('in slice: <b>-</b>')
         self.total_label.setFont(value_font)
         self.total_label.setMinimumWidth(
-            self._rich_text_width(value_font,
-                                  f'in slice: <b>10,000</b>{THIN_SPACE}cts'))
+            rich_text_width(value_font, 'in slice: <b>10,000</b>'))
         top_row.addWidget(self.total_label)
         top_row.addSpacing(20)
 
@@ -122,13 +128,6 @@ class StatusPanel(QtWidgets.QFrame):
             self.inputs_layout.removeWidget(led)
             led.deleteLater()
         self._input_leds.clear()
-
-    @staticmethod
-    def _rich_text_width(font, html):
-        """Width a QLabel would need to show `html` (rich text) in `font`."""
-        label = QtWidgets.QLabel(html)
-        label.setFont(font)
-        return label.sizeHint().width()
 
     @staticmethod
     def _led_pixmap(color, size):
@@ -188,9 +187,9 @@ class StatusPanel(QtWidgets.QFrame):
         else:
             time_text = 'time: <b>-</b>'
         self.time_label.setText(time_text)
-        self.total_label.setText(f'in slice: <b>{total:,}</b>{THIN_SPACE}cts')
+        self.total_label.setText(f'in slice: <b>{total:,}</b>')
         if rate is not None:
-            rate_text = f'rate: <b>{rate:,.1f}</b>{THIN_SPACE}/sec'
+            rate_text = f'rate: <b>{rate:,.1f}</b>{THIN_SPACE}/s'
         else:
             rate_text = 'rate: <b>-</b>'
         self.rate_label.setText(rate_text)
