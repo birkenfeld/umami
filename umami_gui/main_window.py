@@ -92,7 +92,6 @@ class MainWindow(QtWidgets.QWidget):
         self.instance_name = None
         self.rate_samples = []  # trailing (time, total) samples, up to RATE_SAMPLES
         self.counter_samples = []  # trailing (time, (events, neutrons, tzero, *mon))
-        self.roi = None  # (x0, y0, x1, y1) bin-index bounds, or None
         self.roi_rate_samples = []  # trailing (time, roi_total) samples
         self.last_t = None
         self.last_buf = None
@@ -154,16 +153,16 @@ class MainWindow(QtWidgets.QWidget):
         self.plot.enableAutoRange('xy', True)
         self.plot.scene().sigMouseMoved.connect(self.on_mouse_moved)
 
-        self.roi_rect_item = QtWidgets.QGraphicsRectItem()
-        pen = QtGui.QPen(QtGui.QColor('#80ffffff'))
-        pen.setWidth(2)
+        pen = pg.mkPen('#80ffffff', width=1)
         pen.setCosmetic(True)
-        self.roi_rect_item.setPen(pen)
-        self.roi_rect_item.setBrush(QtGui.QBrush(QtCore.Qt.BrushStyle.NoBrush))
-        self.roi_rect_item.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
-        self.roi_rect_item.setZValue(10)
-        self.roi_rect_item.hide()
-        self.plot.addItem(self.roi_rect_item)
+        self.roi_item = pg.RectROI((0, 0), (0, 0), pen=pen, movable=True)
+        self.roi_item.addScaleHandle([0, 0], [1, 1])
+        self.roi_item.addScaleHandle([0, 1], [1, 0])
+        self.roi_item.addScaleHandle([1, 0], [0, 1])
+        self.roi_item.setZValue(10)
+        self.roi_item.hide()
+        self.roi_item.sigRegionChanged.connect(self._on_roi_region_changed)
+        self.plot.addItem(self.roi_item)
 
     # ---- projection plots: separate windows, created lazily on request ----
 
@@ -251,8 +250,9 @@ class MainWindow(QtWidgets.QWidget):
         self.status_panel.update_run_info(run_id, elapsed_s=elapsed_s, total=total,
                                           rate=rate)
 
-        if self.roi is not None:
-            x0, y0, x1, y1 = self.roi
+        roi = self._roi_bounds()
+        if roi is not None:
+            x0, y0, x1, y1 = roi
             roi_total = int(buf[y0:y1, x0:x1].sum())
         else:
             roi_total = 0
@@ -260,7 +260,7 @@ class MainWindow(QtWidgets.QWidget):
         if len(self.roi_rate_samples) > RATE_SAMPLES:
             self.roi_rate_samples.pop(0)
         roi_rate = None
-        if self.roi is not None and len(self.roi_rate_samples) > 1:
+        if roi is not None and len(self.roi_rate_samples) > 1:
             old_time, old_total = self.roi_rate_samples[0]
             if roi_total >= old_total:
                 roi_rate = (roi_total - old_total) / (now - old_time)
@@ -779,32 +779,48 @@ class MainWindow(QtWidgets.QWidget):
         self.events_panel.clear_roi_btn.clicked.connect(self._clear_roi)
 
     def _on_set_roi_toggled(self, checked):
-        self.plot.vb.roi_drag_callback = self._on_roi_dragged if checked else None
-
-    def _on_roi_dragged(self, rect):
-        self.events_panel.set_roi_btn.setChecked(False)
-        rect = rect.normalized()
-        # same pixel-center convention as on_mouse_moved() -- pixel i spans
-        # [i-0.5, i+0.5], so floor(v + 0.5) gives the nearest bin boundary
-        x0 = max(0, min(self.histo.nx, int(np.floor(rect.left() + 0.5))))
-        x1 = max(0, min(self.histo.nx, int(np.floor(rect.right() + 0.5))))
-        y0 = max(0, min(self.histo.ny, int(np.floor(rect.top() + 0.5))))
-        y1 = max(0, min(self.histo.ny, int(np.floor(rect.bottom() + 0.5))))
-        if x1 <= x0 or y1 <= y0:
-            return  # degenerate drag (e.g. a plain click) -- ignore
-        self._set_roi((x0, y0, x1, y1))
-
-    def _set_roi(self, roi):
-        self.roi = roi
-        self.roi_rate_samples.clear()
-        x0, y0, x1, y1 = roi
-        self.roi_rect_item.setRect(x0 - 0.5, y0 - 0.5, x1 - x0, y1 - y0)
-        self.roi_rect_item.show()
+        if not checked:
+            self.roi_item.hide()
+            return
+        size = self.roi_item.size()
+        if size.x() <= 0 or size.y() <= 0:
+            # never configured (or just Cleared) -- start from a sensible
+            # default the user can then drag/resize into place
+            nx, ny = self.histo.nx, self.histo.ny
+            x0, x1 = nx // 4, nx - nx // 4
+            y0, y1 = ny // 4, ny - ny // 4
+            self.roi_item.setPos((x0 - 0.5, y0 - 0.5))
+            self.roi_item.setSize((x1 - x0, y1 - y0))
+        self.roi_item.show()
 
     def _clear_roi(self):
-        self.roi = None
+        self.events_panel.set_roi_btn.setChecked(False)
+        self.roi_item.hide()
+        self.roi_item.setSize((0, 0))
         self.roi_rate_samples.clear()
-        self.roi_rect_item.hide()
+
+    def _on_roi_region_changed(self):
+        self.roi_rate_samples.clear()
+
+    def _roi_bounds(self):
+        """Return the current ROI as `(x0, y0, x1, y1)` bin-index bounds.
+
+        `None` while the ROI is hidden/unset, or degenerate (e.g. dragged
+        down to zero size).
+        """
+        if not self.roi_item.isVisible():
+            return None
+        pos = self.roi_item.pos()
+        size = self.roi_item.size()
+        # same pixel-center convention as on_mouse_moved() -- pixel i spans
+        # [i-0.5, i+0.5], so floor(v + 0.5) gives the nearest bin boundary
+        x0 = max(0, min(self.histo.nx, int(np.floor(pos.x() + 0.5))))
+        x1 = max(0, min(self.histo.nx, int(np.floor(pos.x() + size.x() + 0.5))))
+        y0 = max(0, min(self.histo.ny, int(np.floor(pos.y() + 0.5))))
+        y1 = max(0, min(self.histo.ny, int(np.floor(pos.y() + size.y() + 0.5))))
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return x0, y0, x1, y1
 
     def _build_right_tabs(self):
         tabs = QtWidgets.QTabWidget()
@@ -877,10 +893,15 @@ class MainWindow(QtWidgets.QWidget):
         raw_dump_path = self.settings.value('raw_dump_path')
         if raw_dump_path is not None:
             self.raw_dump_path.setText(raw_dump_path)
-        if self.settings.contains('roi_x0'):
-            roi = tuple(self.settings.value(f'roi_{k}', type=int)
-                       for k in ('x0', 'y0', 'x1', 'y1'))
-            self._set_roi(roi)
+        if self.settings.contains('roi_active'):
+            self.roi_item.setPos((self.settings.value('roi_x', type=float),
+                                  self.settings.value('roi_y', type=float)))
+            self.roi_item.setSize((self.settings.value('roi_w', type=float),
+                                   self.settings.value('roi_h', type=float)))
+            # setChecked triggers _on_set_roi_toggled(), which shows/hides
+            # the already-restored geometry rather than defaulting it
+            self.events_panel.set_roi_btn.setChecked(
+                self.settings.value('roi_active', type=bool))
 
     def _save_settings(self):
         self.settings.setValue('geometry', self.saveGeometry())
@@ -892,9 +913,9 @@ class MainWindow(QtWidgets.QWidget):
         self.settings.setValue('level_min', self.level_min_spin.value())
         self.settings.setValue('level_max', self.level_max_spin.value())
         self.settings.setValue('raw_dump_path', self.raw_dump_path.text())
-        if self.roi is not None:
-            for k, v in zip(('x0', 'y0', 'x1', 'y1'), self.roi):
-                self.settings.setValue(f'roi_{k}', v)
-        else:
-            for k in ('x0', 'y0', 'x1', 'y1'):
-                self.settings.remove(f'roi_{k}')
+        pos, size = self.roi_item.pos(), self.roi_item.size()
+        self.settings.setValue('roi_x', pos.x())
+        self.settings.setValue('roi_y', pos.y())
+        self.settings.setValue('roi_w', size.x())
+        self.settings.setValue('roi_h', size.y())
+        self.settings.setValue('roi_active', self.roi_item.isVisible())
