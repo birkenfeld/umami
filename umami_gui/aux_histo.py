@@ -221,8 +221,7 @@ class AuxHistoWindow(QtWidgets.QWidget):
     convenience assumption), lets the user add/edit/delete definitions
     through a form instead of hand-written JSON, and live-plots each one
     (1-D as a step curve, 2-D as a log-scale image) from its own shm
-    segment. Follows the same "closing just hides, state is kept" pattern
-    as the diffractogram/TOF-spectrum windows -- reopening is instant.
+    segment.
     """
 
     REFRESH_MS = 500

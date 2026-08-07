@@ -17,6 +17,7 @@ from . import __version__
 from .aux_histo import AuxHistoWindow, discover_aux_histo_output
 from .axis_items import ZoomViewBox
 from .client import UmamiClient
+from .events_panel import EventsPanel
 from .icons import icon_button, load_icon
 from .log_panel import LogPanel
 from .logo_widget import LogoBuildupWidget
@@ -103,6 +104,8 @@ class MainWindow(QtWidgets.QWidget):
         self._build_display_controls()
         self._build_dump_controls()
         self._build_params_panel()
+        self._build_events_panel()
+        self._build_right_tabs()
         self._assemble()
         self._load_settings()
         QtWidgets.QApplication.instance().aboutToQuit.connect(self._save_settings)
@@ -236,7 +239,7 @@ class MainWindow(QtWidgets.QWidget):
 
         total_events, total_neutrons, lifetime_ns, tzero_count, monitor_counts = \
             self.histo.read_counters()
-        counters = (total_events, total_neutrons, tzero_count, *monitor_counts)
+        counters = (total_neutrons, total_events, tzero_count, *monitor_counts)
         self.counter_samples.append((now, counters))
         if len(self.counter_samples) > RATE_SAMPLES:
             self.counter_samples.pop(0)
@@ -246,9 +249,9 @@ class MainWindow(QtWidgets.QWidget):
             for i, (cur, old) in enumerate(zip(counters, old_counters)):
                 if cur >= old:
                     counter_rates[i] = (cur - old) / (now - old_time)
-        self.status_panel.update_counters(
-            total_events, total_neutrons, tzero_count, monitor_counts,
-            lifetime_ns, counter_rates)
+        self.events_panel.update_counts(
+            total, rate, total_neutrons, total_events, tzero_count,
+            monitor_counts, lifetime_ns, counter_rates)
 
     def _compute_elapsed_s(self):
         """Seconds since the last StartOfRun, frozen once the run has ended.
@@ -706,11 +709,22 @@ class MainWindow(QtWidgets.QWidget):
     def _build_params_panel(self):
         panel = QtWidgets.QWidget()
         panel.setLayout(QtWidgets.QVBoxLayout())
-        panel.layout().setContentsMargins(5, 0, 8, 5)
+        panel.layout().setContentsMargins(5, 8, 0, 0)
         self.params_table = ParamsTable(self.client)
+
+        top_row = QtWidgets.QHBoxLayout()
         refresh_btn = icon_button('refresh', 'Refresh Params')
         refresh_btn.clicked.connect(self.refresh_params)
-        panel.layout().addWidget(refresh_btn)
+        top_row.addWidget(refresh_btn)
+
+        save_config_btn = icon_button('save', 'Save Config')
+        save_config_menu = QtWidgets.QMenu(save_config_btn)
+        save_config_menu.addAction('Same config file', self.save_config_same_file)
+        save_config_menu.addAction('Select new file...', self.save_config_dialog)
+        save_config_btn.setMenu(save_config_menu)
+        top_row.addWidget(save_config_btn)
+        top_row.addStretch()
+        panel.layout().addLayout(top_row)
 
         # quick-setup dialogs for specific input types, shown only when
         # relevant to the current config -- MCPD Setup is the first of these
@@ -728,14 +742,19 @@ class MainWindow(QtWidgets.QWidget):
 
         panel.layout().addWidget(self.params_table)
 
-        save_config_btn = icon_button('save', 'Save Config')
-        save_config_menu = QtWidgets.QMenu(save_config_btn)
-        save_config_menu.addAction('Same config file', self.save_config_same_file)
-        save_config_menu.addAction('Select new file...', self.save_config_dialog)
-        save_config_btn.setMenu(save_config_menu)
-        panel.layout().addWidget(save_config_btn)
-
         self.params_panel = panel
+
+    def _build_events_panel(self):
+        self.events_panel = EventsPanel()
+
+    def _build_right_tabs(self):
+        tabs = QtWidgets.QTabWidget()
+        tabs.setTabPosition(QtWidgets.QTabWidget.TabPosition.North)
+        tabs.setStyleSheet('QTabWidget::pane { border: 0; }')
+        tabs.addTab(self.events_panel, 'Events')
+        tabs.addTab(self.params_panel, 'Parameters')
+        tabs.setCurrentWidget(self.events_panel)
+        self.right_tabs = tabs
 
     # ---- assembly ----
 
@@ -751,7 +770,7 @@ class MainWindow(QtWidgets.QWidget):
 
         self.main_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         self.main_splitter.addWidget(self.left_splitter)
-        self.main_splitter.addWidget(self.params_panel)
+        self.main_splitter.addWidget(self.right_tabs)
         self.main_splitter.setSizes([800, 300])
         self.main_splitter.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
                                          QtWidgets.QSizePolicy.Policy.Expanding)
@@ -783,8 +802,6 @@ class MainWindow(QtWidgets.QWidget):
         left_state = self.settings.value('left_splitter')
         if left_state is not None:
             self.left_splitter.restoreState(left_state)
-        self.log_toggle.setChecked(
-            self.settings.value('log_visible', False, type=bool))
         colormap = self.settings.value('colormap')
         if colormap in COLORMAPS:
             self.colormap_combo.setCurrentText(colormap)
@@ -806,7 +823,6 @@ class MainWindow(QtWidgets.QWidget):
         self.settings.setValue('geometry', self.saveGeometry())
         self.settings.setValue('main_splitter', self.main_splitter.saveState())
         self.settings.setValue('left_splitter', self.left_splitter.saveState())
-        self.settings.setValue('log_visible', self.log_toggle.isChecked())
         self.settings.setValue('colormap', self.colormap_combo.currentText())
         self.settings.setValue('log_scale', self.log_scale_check.isChecked())
         self.settings.setValue('auto_levels', self.auto_levels_check.isChecked())

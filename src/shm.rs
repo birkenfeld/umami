@@ -18,11 +18,11 @@ use crate::event::{EventHisto, EventTime};
 pub const MAX_HISTO_SIZE: usize = 1024 * 1024 * 1024;  // 4 GB shmem
 
 /// "UMAMI" + a two-digit ASCII version, lets a reader detect a layout version
-/// mismatch by comparing against `SHM_MAGIC`.
+/// mismatch by comparing against `SHM_MAGIC`. When changing this, adapt client
+/// code too.
 pub const SHM_MAGIC: [u8; 8] = *b"UMAMI01 ";
 
-/// Size of the `ShmInterface` header.  Changing this must change SHM_MAGIC, and
-/// also be reflected in the client code.
+/// Size of the `ShmInterface` header.  Changing this must change SHM_MAGIC.
 #[allow(unused)]
 const SHM_HEADER_SIZE: usize = 224;
 
