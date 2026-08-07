@@ -3,9 +3,8 @@
 
 """Replay-directory picker: point file-backed inputs at a captured run.
 
-Mirrors the layout raw-dump output already writes (`<raw_dir>/<run_id>/
-<input_name>`, see `DumpHandler` in `src/input.rs`), so a "run" here is just
-one of those `<run_id>` subdirectories.
+Mirrors the layout raw-dump output writes (`<raw_dir>/<run_id>/<input_name>`),
+so a "run" here is one of those `<run_id>` subdirectories.
 """
 
 from pathlib import Path

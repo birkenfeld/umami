@@ -1,16 +1,7 @@
 # Part of the Unified Mechanism for Acquisition of Measured Intensity
 # (UMAMI), see README and LICENSE files for more info.
 
-"""Animated build-up of the pixel-grid logo, for the About dialog.
-
-Replays the concept the original logo artwork was drawn from, but generated
-fresh each time rather than replayed from a fixed image: a random letter out
-of UMAMI is rasterized to a coverage mask, each tile gets a noisy "heat"
-value biased by that mask, and every tile starts cold (heat 0) and, after a
-random per-tile delay, ramps up to its generated heat -- mimicking counts
-randomly accumulating into a live detector histogram, with a hot letter
-shape emerging from the noise.
-"""
+"""Animated build-up of the pixel-grid logo, for the About dialog."""
 
 import random
 import time
@@ -24,16 +15,15 @@ VIEWBOX = 300
 CELL = 12.6
 BACKGROUND_COLOR = '#0a1224'
 
-LETTERS = ('U', 'M', 'A', 'I')
-LETTER_FONT_FAMILY = 'Fira Sans'  # matches icons/wordmark.svg; falls back if missing
-LETTER_SIZE_FRACTION = 1.05  # of the supersampled canvas height
+LETTERS = ('U', 'M', 'A', 'I', '☺')
+LETTER_FONT_FAMILY = 'Fira Sans'  # falls back if missing
+LETTER_SIZE_FRACTION = 1.05
 ROTATION_RANGE_DEG = (-15, 15)
 # how much of a tile's heat comes from the letter mask vs. plain noise
 NOISE_HEAT_RANGE = (0.0, 0.4)
 LETTER_BOOST_RANGE = (0.55, 1.0)
 
-# Blue -> yellow -> red thermal colormap (no green) -- the same one the
-# original logo's tile colors were generated from.
+# Blue -> yellow -> red thermal colormap (no green)
 THERMAL_STOPS = [
     (0.00, (10, 20, 60)),
     (0.35, (30, 110, 190)),
@@ -54,11 +44,7 @@ def thermal_rgb(t):
 
 
 def _letter_font(pixel_size):
-    """Bold font for rasterizing a letter.
-
-    Uses `LETTER_FONT_FAMILY`, or the platform's default sans-serif if that
-    family isn't installed.
-    """
+    """Font for rasterizing a letter."""
     font = QtGui.QFont(LETTER_FONT_FAMILY)
     if QtGui.QFontInfo(font).family() != LETTER_FONT_FAMILY:
         font = QtGui.QFont()
@@ -71,9 +57,9 @@ def _letter_font(pixel_size):
 def _letter_coverage(letter, grid, rng):
     """Rasterize `letter` to a grid x grid coverage map in [0, 1].
 
-    Renders bold at high resolution, slightly rotated, and lets QImage's
-    smooth downscale do the antialiased box-filtering, so letter edges land
-    as partial coverage instead of a hard on/off mask.
+    Renders at high resolution, slightly rotated, and lets QImage's smooth
+    downscale do the antialiased box-filtering, so letter edges land as partial
+    coverage instead of a hard on/off mask.
     """
     supersample = grid * 8
     image_format = QtGui.QImage.Format.Format_Grayscale8
@@ -120,7 +106,7 @@ class LogoBuildupWidget(QtWidgets.QWidget):
         scale = width / VIEWBOX
         pitch = VIEWBOX / GRID * scale
         cell = CELL * scale
-        rng = random.Random()  # noqa: S311 -- cosmetic animation, not security-sensitive
+        rng = random.Random()  # noqa: S311 -- not security-sensitive
         heats = _generate_heat(letter or rng.choice(LETTERS), GRID, rng)
         self._tiles = [
             (col * pitch, row * pitch, cell, cell, heat,

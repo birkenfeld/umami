@@ -1,14 +1,7 @@
 # Part of the Unified Mechanism for Acquisition of Measured Intensity
 # (UMAMI), see README and LICENSE files for more info.
 
-"""Mesytec MCPD live configuration: friendly per-slot cells/modules/pulser tables.
-
-`MesyCellsTable`, `MesyModulesTable`, and `MesyPulserTable` only load/report
-plain dicts shaped like the `cells`/`modules`/`pulser` get-params/set-params
-values -- no client or networking dependency -- so they can be reused by an
-offline config-file editor later, not just `McpdConfigWindow`. Edits are
-local until explicitly applied (see `McpdConfigWindow`'s Apply button).
-"""
+"""Mesytec MCPD live configuration."""
 
 import typing
 
@@ -24,11 +17,7 @@ CELL_TRIGGERS = (
 
 
 def discover_mesy_inputs(params):
-    """Names of mesy inputs present in a `full` get-params map, sorted.
-
-    Identified via each module's `<name>._info` entry reporting kind
-    "input" and type "mesy".
-    """
+    """Names of mesy inputs present in a `full` get-params map, sorted."""
     return sorted(
         key[:-len('._info')] for key, info in params.items()
         if key.endswith('._info') and info['kind'] == 'input' and info['type'] == 'mesy'

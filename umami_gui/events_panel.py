@@ -23,9 +23,7 @@ ROW_NAMES = [
 class EventsPanel(QtWidgets.QWidget):
     """Name/value/rate grid of counters, extending the compact status line.
 
-    `set_roi_btn` is exposed for `MainWindow` to wire up -- picking a region
-    on the main plot and drawing/persisting it there is
-    that plot's business, this panel only displays the resulting ROI count.
+    `set_roi_btn` is exposed for `MainWindow` to wire up.
     """
 
     def __init__(self):

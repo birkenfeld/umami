@@ -1,13 +1,7 @@
 # Part of the Unified Mechanism for Acquisition of Measured Intensity
 # (UMAMI), see README and LICENSE files for more info.
 
-"""One auxiliary histogram's plot widget, with its own display controls.
-
-Factored out of `aux_histo.py` since each `aux_histo` plot now carries
-enough display state (log scale, colormap, manual z-limits, cursor
-readout) that folding it into `AuxHistoWindow`'s own bookkeeping would
-make that file's already-large state dict unreadable.
-"""
+"""One auxiliary histogram's plot widget, with its own display controls."""
 
 import html
 
@@ -32,9 +26,9 @@ DEFAULT_STATE = {
 def bin_values(axis):
     """Each bin's lower edge, in the axis expression's own units.
 
-    Inverts the binning done server-side: `bin = (v - min) * bins /
-    (max - min + 1)`, where `max` is inclusive. E.g. bins=8, min=0,
-    max=7 (one bin per representable integer) gives 0, 1, ..., 7.
+    Inverts the binning done server-side: `bin = (v - min) * bins / (max - min
+    + 1)`, where `max` is inclusive. E.g. bins=8, min=0, max=7 (one bin per
+    representable integer) gives 0, 1, ..., 7.
     """
     bins, lo, hi = axis['bins'], axis['min'], axis['max']
     width = (hi - lo + 1) / bins
@@ -46,49 +40,24 @@ def bin_width(axis):
 
 
 def bin_edges(axis):
-    """Real-value edges of every bin (bins+1 points), for step-mode plots.
-
-    Shifted back by half a bin width so the value a bin represents sits
-    at the center of its rendered bar -- e.g. bin 0 of bins=8, min=0,
-    max=7 renders as a bar centered on 0, spanning [-0.5, 0.5], matching
-    the old bin-index convention (there, an implicit width of 1) rather
-    than a plain edge-aligned histogram.
-    """
+    """Real-value edges of each bin (bins+1 points), for step-mode 1d plots."""
     edges = np.append(bin_values(axis), axis['max'] + 1)
+    # shift back by half a bin width so the value a bin represents sits
+    # at the center of its rendered bar
     return edges - bin_width(axis) / 2
 
 
 def axis_extent(axis):
-    """(low, span) of an axis's real-value range, for setRect().
-
-    Also shifted by half a bin width, for the same reason as
-    `bin_edges` -- see there.
-    """
+    """(low, span) of an axis's real-value range, for setRect() in 2d plots."""
+    # shifted by half a bin width, for the same reason as `bin_edges`
     return axis['min'] - bin_width(axis) / 2, axis['max'] - axis['min'] + 1
-
-
-class _WheelBlocker(QtCore.QObject):
-    """Discards wheel events on a control that doesn't have focus.
-
-    Installed on the colormap combo and level spinboxes -- they sit right
-    above a plot the user scrolls to zoom, and an unintended wheel-over
-    would otherwise silently change a setting instead.
-    """
-
-    def eventFilter(self, obj, event):  # noqa: N802
-        if (event.type() == QtCore.QEvent.Type.Wheel
-                and not obj.hasFocus()):
-            return True
-        return super().eventFilter(obj, event)
 
 
 class AuxPlot(QtWidgets.QWidget):
     """One auxiliary histogram's plot, with its own compact control strip.
 
-    1-D histograms get a step curve with a log-y toggle; 2-D histograms get
-    an image with log scale, colormap, and manual z-limit controls -- the
-    same conventions as the main window's histogram display, applied
-    per-plot since aux histograms routinely have unrelated count scales.
+    1-D histograms get a step curve with a log-y toggle; 2-D histograms get an
+    image with log scale, colormap, and manual z-limit controls per plot.
     """
 
     cursor_moved = QtCore.pyqtSignal(str)
@@ -100,7 +69,6 @@ class AuxPlot(QtWidgets.QWidget):
         self._extent = None  # 2-D only: QRectF real-value extent
         self._edges = None   # 1-D only: bin edges
         self._counts = None  # cached raw-counts buffer, see update_data()
-        self._wheel_blocker = _WheelBlocker(self)
 
         state = {**DEFAULT_STATE, **state}
         if state['log'] is None:
@@ -116,7 +84,8 @@ class AuxPlot(QtWidgets.QWidget):
     # ---- construction ----
 
     def _build_plot(self, name, spec):
-        self.plot_widget = pg.PlotWidget(title=html.escape(name), viewBox=ZoomViewBox())
+        self.plot_widget = pg.PlotWidget(title=html.escape(name),
+                                         viewBox=ZoomViewBox())
         plot_item = self.plot_widget.getPlotItem()
         plot_item.setLabel('bottom', html.escape(spec['x']['expr']))
         if self.is_2d:
@@ -156,7 +125,6 @@ class AuxPlot(QtWidgets.QWidget):
             self.colormap_combo.setCurrentText(state['colormap'])
             self.colormap_combo.setFixedWidth(84)
             self.colormap_combo.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
-            self.colormap_combo.installEventFilter(self._wheel_blocker)
             row.addWidget(self.colormap_combo)
 
             self.auto_check = QtWidgets.QCheckBox('Auto')
@@ -193,7 +161,6 @@ class AuxPlot(QtWidgets.QWidget):
         box.setFixedWidth(64)
         box.setKeyboardTracking(False)
         box.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
-        box.installEventFilter(self._wheel_blocker)
         return box
 
     # ---- display state ----
@@ -215,22 +182,18 @@ class AuxPlot(QtWidgets.QWidget):
 
     def _on_log_toggled(self, checked):
         if not self.is_2d:
-            # setLogMode() auto-fits the range on every toggle, discarding
-            # any manual zoom -- acceptable here, it's the same trade-off
-            # ZoomViewBox's own middle-click autoRange() makes
+            # setLogMode() auto-fits the range, acceptable here
             self.plot_widget.getPlotItem().setLogMode(y=checked)
         self._redraw()
 
     # ---- data ----
 
     def update_data(self, buf):
-        """Feed a freshly-read plane (`shm.read_plane(0)`) to this plot.
+        """Feed a freshly-read data (`shm.read_plane(0)`) to this plot.
 
-        Caches a copy of the raw counts -- not the raw mmap view, which
-        pyqtgraph would keep alive indefinitely (until the next setData),
-        blocking the shm segment from ever closing -- for the cursor
-        readout and for redrawing without re-reading shm on every control
-        change.
+        Caches a *copy* of the raw counts (we should not keep the mmap alive)
+        for the cursor readout and for redrawing without re-reading shm on
+        every control change.
         """
         if self.is_2d:
             self._counts = buf.copy()

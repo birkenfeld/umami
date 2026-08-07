@@ -1,18 +1,11 @@
 # Part of the Unified Mechanism for Acquisition of Measured Intensity
 # (UMAMI), see README and LICENSE files for more info.
 
-"""Small helpers shared by UMAMI's plots.
-
-Used by `projection_windows.py`, `aux_histo.py` and `aux_plot.py` --
-consistent curve styling and the log-scale/colormap/levels convention for
-2-D images -- factored out since these were previously copy-pasted at each
-plot with only minor details differing.
-"""
+"""Small helpers shared by UMAMI's plots."""
 
 import numpy as np
 
-# display name -> pyqtgraph colormap name; pyqtgraph has no plain 'grey'/'gray'
-# map, so this points at CET-L1, its linear (grayscale) perceptual map
+# display name -> pyqtgraph colormap name
 COLORMAPS = {
     'viridis': 'viridis',
     'inferno': 'inferno',
@@ -29,9 +22,9 @@ LOG_OFFSET = 0.1
 def set_image_data(img, counts, *, log, auto_levels, level_min, level_max):
     """Apply `counts` to an `ImageItem`, handling log scale and z-limits.
 
-    `level_min`/`level_max` are always in raw count units -- when `log` is
-    set, they're transformed to log space at apply time, so the caller's
-    UI never has to show/enter log values directly.
+    `level_min`/`level_max` are in raw count units -- when `log` is set,
+    they're transformed to log space in here, so the caller's UI doesn't have
+    to show/enter log values directly.
     """
     display = counts.astype(float)
     if log:
@@ -48,6 +41,6 @@ def set_image_data(img, counts, *, log, auto_levels, level_min, level_max):
 
 
 def step_histogram_curve(plot_item_or_widget):
-    """Add a step-mode histogram curve, styled consistently across UMAMI's plots."""
+    """Add a step-mode histogram curve."""
     return plot_item_or_widget.plot(
         stepMode='center', fillLevel=0, brush=(0, 0, 255, 80))

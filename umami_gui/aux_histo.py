@@ -19,12 +19,11 @@ from .icons import icon_button
 from .shm import ShmHistogram
 
 # QSettings key for all aux plots' display state, one JSON blob keyed by
-# histo name -- not a QSettings subgroup per histo, since a name containing
-# '/' would otherwise be silently split into nested groups
+# histo name.
 AUX_DISPLAY_KEY = 'aux_histo_display'
 
 # Kept in sync by hand with the grammar/field table documented in
-# src/expr.rs -- there is no machine-readable source for this on the wire.
+# src/expr.rs.
 EXPR_SYNTAX_HELP = '''\
 Fields: time, rel_time, raw_0, raw_1, channel, ampl, x, y, t, i, \
 flags, evtype, auxnum, monnum, gateup
@@ -46,12 +45,7 @@ that range are silently dropped, not clamped.'''
 
 
 def discover_aux_histo_output(params):
-    """Name of the first aux_histo output in a `full` get-params map, or None.
-
-    Identified via its `<name>._info` entry reporting kind "output" and type
-    "aux_histo" -- only one such output is supported here, matching the
-    backend's own one-output convenience assumption.
-    """
+    """Get the name of the aux_histo output in a `full` get-params map."""
     return next(
         (key[:-len('._info')] for key, info in sorted(params.items())
          if key.endswith('._info') and info['kind'] == 'output'
@@ -257,8 +251,10 @@ class AuxHistoWindow(QtWidgets.QWidget):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.cellDoubleClicked.connect(self._on_row_double_clicked)
 
         btn_col = QtWidgets.QVBoxLayout()

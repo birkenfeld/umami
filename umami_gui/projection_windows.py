@@ -1,11 +1,7 @@
 # Part of the Unified Mechanism for Acquisition of Measured Intensity
 # (UMAMI), see README and LICENSE files for more info.
 
-"""Diffractogram and TOF spectrum windows.
-
-Separate windows projecting the main histogram onto one axis, created
-lazily on request by `MainWindow`.
-"""
+"""Diffractogram and TOF spectrum windows."""
 
 import math
 
@@ -16,9 +12,8 @@ from pyqtgraph.Qt import QtCore, QtWidgets
 from .axis_items import RotatedAxisItem, ZoomViewBox
 from .plot_utils import step_histogram_curve
 
-# Cap on labeled bin-edge ticks on the TOF spectrum's x axis -- with many
-# TOF bins, labeling every one overlaps into unreadable clutter, so they're
-# thinned out like pyqtgraph's own automatic ticks would.
+# Cap on labeled bin-edge ticks on the TOF spectrum's x axis -- with too many
+# TOF bins, labeling every one overlaps into unreadable clutter.
 MAX_T_AXIS_LABELS = 20
 
 
@@ -26,9 +21,7 @@ class _ScalarPlotWindow(QtWidgets.QWidget):
     """Shared scaffolding for a standalone single-curve plot window.
 
     Common to `DiffractogramWindow` and `TofSpectrumWindow`: a log-scale
-    checkbox above the plot, and a cursor readout label below it (the same
-    "controls above, readout below" shape as `aux_plot.AuxPlot`, scaled
-    down to the one control a 1-D plot needs).
+    checkbox above the plot, and a cursor readout label below it.
     """
 
     def __init__(self, title, window_title, bottom_label, axis_items=None):
@@ -85,11 +78,7 @@ class _ScalarPlotWindow(QtWidgets.QWidget):
 
 
 class DiffractogramWindow(_ScalarPlotWindow):
-    """X-projection (sum over t) of the main histogram.
-
-    Follows the same "closing just hides" pattern as the other quick-setup
-    windows -- created lazily on first open, kept around after.
-    """
+    """X-projection (sum over t) of the main histogram."""
 
     def __init__(self):
         super().__init__('Diffractogram', 'UMAMI diffractogram', 'x channel')
@@ -109,10 +98,9 @@ class DiffractogramWindow(_ScalarPlotWindow):
 class TofSpectrumWindow(_ScalarPlotWindow):
     """Time-projection (sum over x/y) of the main histogram.
 
-    Labels the x axis with actual time-of-flight values (in ms) when the
-    active mode's `time_bins` are known (see `set_bin_edges_ns`), falling
-    back to plain bin-index labeling otherwise. Follows the same "closing
-    just hides" pattern as the other quick-setup windows.
+    Labels the x axis with actual time-of-flight values (in ms) when the active
+    mode's `time_bins` are known (see `set_bin_edges_ns`), falling back to
+    plain bin-index labeling otherwise.
     """
 
     def __init__(self):
@@ -146,14 +134,8 @@ class TofSpectrumWindow(_ScalarPlotWindow):
     def _tick_labels(edges_ns):
         """[major, minor] tick levels for `AxisItem.setTicks()`.
 
-        Position is the plot's bin-index x-coordinate (bin i spans
-        [i-0.5, i+0.5)); edges_ns holds each real bin's upper edge in ns,
-        plus a trailing overflow sentinel that isn't itself a plotted edge.
-        Labeling every one of e.g. 4096 bins would overlap into mush, so
-        only an evenly-spaced subset (at most `MAX_T_AXIS_LABELS`) is
-        labeled -- offset by one stride from the fixed leading "0" tick, so
-        it doesn't crowd its neighbor -- while every real edge still gets an
-        unlabeled minor tick, like automatic ticks would show.
+        For the bins with actual time edges, put ticks at the edges of bins.
+        The "overflow" tick is drawn in the center of the last bin.
         """
         real_edges = edges_ns[:-1]
         n = len(real_edges)
