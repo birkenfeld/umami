@@ -132,8 +132,10 @@ class MesyModulesTable(QTableWidget):
     spinbox) or an already-per-channel array; `current()` always reports a
     full per-channel array (functionally identical to a uniform value on the
     wire, just explicit). `mpsd` modules have 8 channels, `mstd` 16 -- the
-    unused upper gain columns are disabled for an `mpsd` row. Edits are local
-    until read via `current()`.
+    unused upper gain columns are disabled for an `mpsd` row, and hidden
+    entirely (not just disabled) when no configured row is `mstd` -- the
+    common case, where showing 8 always-empty columns is pure clutter.
+    Edits are local until read via `current()`.
     """
 
     N_GAIN_CHANS = 16
@@ -167,7 +169,7 @@ class MesyModulesTable(QTableWidget):
             combo = QComboBox()
             combo.addItems(MODULE_TYPES)
             combo.currentIndexChanged.connect(
-                lambda _idx, r=row: self._update_gain_enabled(r))
+                lambda _idx, r=row: self._on_type_changed(r))
             self.setCellWidget(row, 2, combo)
             self._types.append(combo)
 
@@ -184,6 +186,7 @@ class MesyModulesTable(QTableWidget):
                 self.setCellWidget(row, 4 + chan, gain)
                 row_gains.append(gain)
             self._gains.append(row_gains)
+        self._update_gain_columns()
 
     def _channels(self, row):
         return self.CHANNELS_BY_TYPE[self._types[row].currentText()]
@@ -195,6 +198,18 @@ class MesyModulesTable(QTableWidget):
         channels = self._channels(row)
         for chan, spin in enumerate(self._gains[row]):
             spin.setEnabled(enabled and chan < channels)
+
+    def _update_gain_columns(self):
+        """Hide the mstd-only gain columns unless a configured row needs them."""
+        any_mstd = any(self._checks[row].isChecked()
+                       and self._types[row].currentText() == 'mstd'
+                       for row in range(N_SLOTS))
+        for chan in range(self.CHANNELS_BY_TYPE['mpsd'], self.N_GAIN_CHANS):
+            self.setColumnHidden(4 + chan, not any_mstd)
+
+    def _on_type_changed(self, row):
+        self._update_gain_enabled(row)
+        self._update_gain_columns()
 
     def set_detected_types(self, found):
         """Load the 8 `{mod_type, fw_version}` entries from the `found` param."""
@@ -226,6 +241,7 @@ class MesyModulesTable(QTableWidget):
         self._loading = False
         for row in range(N_SLOTS):
             self._update_gain_enabled(row)
+        self._update_gain_columns()
 
     def _on_toggle(self, *_args):
         if self._loading:
@@ -235,6 +251,7 @@ class MesyModulesTable(QTableWidget):
             self._types[row].setEnabled(enabled)
             self._thresholds[row].setEnabled(enabled)
             self._update_gain_enabled(row)
+        self._update_gain_columns()
 
     def current(self):
         result = {}
