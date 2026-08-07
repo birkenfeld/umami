@@ -134,7 +134,6 @@ class AuxPlot(QWidget):
             self.colormap_combo.addItems(list(COLORMAPS))
             self.colormap_combo.setCurrentText(state['colormap'])
             self.colormap_combo.setFixedWidth(84)
-            self.colormap_combo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             row.addWidget(self.colormap_combo)
 
             self.auto_check = QCheckBox('Auto')
@@ -169,8 +168,6 @@ class AuxPlot(QWidget):
         box.setDecimals(0)
         box.setValue(value)
         box.setFixedWidth(64)
-        box.setKeyboardTracking(False)
-        box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         return box
 
     # ---- display state ----
