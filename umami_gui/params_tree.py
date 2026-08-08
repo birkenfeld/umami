@@ -17,13 +17,14 @@ from pyqtgraph.Qt.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QStyledItemDelegate,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from .icons import icon_button
+from .icons import ICON_SIZE, load_icon
 
 
 class ValueEditDialog(QDialog):
@@ -102,17 +103,34 @@ class ParamsTree(QTreeWidget):
     def __init__(self, client):
         super().__init__()
         self.client = client
-        self.setColumnCount(3)
-        self.setHeaderLabels(['Parameter', 'Value', ''])
+        self.setColumnCount(2)
+        self.setHeaderLabels(['Parameter', 'Value'])
         header = self.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.setItemDelegate(_ValueColumnDelegate(self))
         self.itemChanged.connect(self._on_item_changed)
         self.params = None
 
-    def _build_value_cell(self, item, key, value, readonly):
+    def _make_tool_button(self, name, tooltip):
+        # a small flat icon button, sized to actually fit in a tree row --
+        # icon_button()'s QPushButton reserves too much horizontal padding
+        color = self.palette().color(QPalette.ColorRole.ButtonText)
+        btn = QToolButton()
+        btn.setIcon(load_icon(name, color=color))
+        btn.setIconSize(ICON_SIZE)
+        btn.setAutoRaise(True)
+        btn.setToolTip(tooltip)
+        return btn
+
+    def _build_param_item(self, parent, key, name, info):
+        item = QTreeWidgetItem(parent, [name])
+        item.setData(0, Qt.ItemDataRole.UserRole, key)
+        readonly = info.get('readonly', False)
+        tooltip = f"{info.get('datatype', '')}: {info.get('help', '')}"
+        item.setToolTip(0, f'{tooltip} (read-only)' if readonly else tooltip)
+
+        value = info.get('value')
         if isinstance(value, bool):
             checkbox = QCheckBox()
             checkbox.setChecked(value)
@@ -123,40 +141,30 @@ class ParamsTree(QTreeWidget):
             cell_layout.setContentsMargins(6, 0, 0, 0)
             cell_layout.addWidget(checkbox)
             self.setItemWidget(item, 1, cell)
-        else:
-            if isinstance(value, (list, dict)):
-                text = json.dumps(value)
-            elif value is None:
-                text = ''
-            else:
-                text = str(value)
-            item.setText(1, text)
-            flags = item.flags() | Qt.ItemFlag.ItemIsEditable
-            if readonly:
-                flags &= ~Qt.ItemFlag.ItemIsEditable
-            item.setFlags(flags)
-
-    def _build_param_item(self, parent, key, name, info):
-        item = QTreeWidgetItem(parent, [name])
-        item.setData(0, Qt.ItemDataRole.UserRole, key)
-        readonly = info.get('readonly', False)
-        tooltip = f"{info.get('datatype', '')}: {info.get('help', '')}"
-        item.setToolTip(0, f'{tooltip} (read-only)' if readonly else tooltip)
-
-        value = info.get('value')
-        self._build_value_cell(item, key, value, readonly)
-
-        if isinstance(value, (list, dict)):
-            edit_btn = icon_button('view' if readonly else 'edit')
-            edit_btn.setToolTip('View in a larger dialog' if readonly else
-                                 'Edit in a larger dialog')
+        elif isinstance(value, (list, dict)):
+            # editing happens exclusively via the dialog below -- no
+            # separate double-click-to-edit-raw-json text representation,
+            # so this cell can dedicate its whole width to label + button
+            # instead of splitting it with a third, mostly-empty column
+            label = QLabel(json.dumps(value))
+            label.setToolTip(json.dumps(value, indent=2))
+            edit_btn = self._make_tool_button(
+                'view' if readonly else 'edit',
+                'View in a larger dialog' if readonly else 'Edit in a larger dialog')
             edit_btn.clicked.connect(
                 lambda _, k=key, i=info: self._edit_dialog(k, i))
             cell = QWidget()
             cell_layout = QHBoxLayout(cell)
-            cell_layout.setContentsMargins(2, 0, 2, 0)
+            cell_layout.setContentsMargins(4, 0, 2, 0)
+            cell_layout.addWidget(label, 1)
             cell_layout.addWidget(edit_btn)
-            self.setItemWidget(item, 2, cell)
+            self.setItemWidget(item, 1, cell)
+        else:
+            item.setText(1, '' if value is None else str(value))
+            flags = item.flags() | Qt.ItemFlag.ItemIsEditable
+            if readonly:
+                flags &= ~Qt.ItemFlag.ItemIsEditable
+            item.setFlags(flags)
 
     def refresh(self):
         params = self.client.get_params(full=True)
