@@ -60,18 +60,16 @@ Mesytec MCPD input.
   the transmission mode if the MCPD and modules support it, vs. capping at
   time+position for lower per-event overhead at high count rates
 * `mcpd_id` (required): MCPD numeric ID
-* `cells` (required): map of cell index -> `{ source, compare }`, where
-  `source` is one of `"none"`, `"aux1"`-`"aux4"`, `"digital1"`, `"digital2"`,
-  `"compare"`, and `compare` (only used when `source` is `"compare"`) is a
-  compare/status register bit index 0-20, or 21/22 for the counter-overflow/
-  rising-edge pseudo-bits
 * `modules` (required): map of module index -> module config (see below)
+* `cells` (optional): map of cell index -> `{ source, compare }`, where
+  `source` is one of `"none"`, `"aux1"`-`"aux4"`, `"digital1"`, `"digital2"`,
+  `"compare"`, and `compare` is a compare/status register bit index 0-20,
+  or 21/22 for the counter-overflow/rising-edge pseudo-bits. Default is to
+  trigger on each rising edge.
+* `aux_timers` (optional): preset values for the 4 auxiliary timers; a timer
+  left at `0` is unused
 
-Both `cells` and `modules` are runtime-settable via `set-params` and are
-pushed live to the hardware when changed. `found` (the module type and
-firmware version detected per slot at startup) and `mcpd_version` (the
-MCPD's own CPU/FPGA firmware version) are also reported via `get-params`,
-read-only.
+`modules`, `cells` and `aux_timers` are runtime-settable via `set-params`.
 
 Each module entry:
 

@@ -1,6 +1,7 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::mem::size_of;
 use std::net::{SocketAddr, UdpSocket};
@@ -16,7 +17,8 @@ use crate::command::ModuleId;
 use crate::config::SourceConfig;
 use crate::error::UResult;
 use crate::util::resolve;
-use super::{CellConfig, MesyConfig, ModuleConfig, MpsdGain, MstdGain, PulserConfig};
+use super::{default_cell_config, CellConfig, MesyConfig, ModuleConfig,
+            MpsdGain, MstdGain, PulserConfig};
 
 const HEADER_WORDS: u16 = 10;
 const BUFFERTYPE: u16 = 0x8000;
@@ -40,6 +42,7 @@ pub enum Cmd {
     SetCommPars = 5,
     SetTiming = 6,
     SetCell = 9,
+    SetAuxTimer = 10,
     SetGainMpsd = 13,
     SetThreshold = 14,
     SetPulser = 15,
@@ -206,9 +209,11 @@ pub trait MesyCommandHandler: Send + 'static {
         self.set_timing(name, config.is_master, config.terminate, config.ext_sync)?;
         self.set_tx_mode(name, found, mod_xmit_caps, config.transmit_ampl)?;
 
-        for i in 0..8 {
-            if let Some(cfg) = config.cells.get(&i) {
-                self.set_up_cell(name, i, cfg)?;
+        self.set_up_cells(name, &config.cells)?;
+
+        for (i, &value) in config.aux_timers.iter().enumerate() {
+            if value != 0 {
+                self.set_aux_timer(name, i, value)?;
             }
         }
 
@@ -279,6 +284,17 @@ pub trait MesyCommandHandler: Send + 'static {
         Ok(())
     }
 
+    /// Push every one of the 8 cells' trigger source/compare wiring to
+    /// hardware, filling in [`default_cell_config`] for any cell not
+    /// present in `cells`.
+    fn set_up_cells(&mut self, name: ModuleId, cells: &BTreeMap<usize, CellConfig>) -> UResult<()> {
+        for i in 0..8 {
+            let cfg = cells.get(&i).cloned().unwrap_or_else(|| default_cell_config(i));
+            self.set_up_cell(name, i, &cfg)?;
+        }
+        Ok(())
+    }
+
     /// Push one cell's trigger source/compare wiring to hardware. Also used
     /// to apply a live `SetParams` update to a running input.
     fn set_up_cell(&mut self, name: ModuleId, idx: usize, cfg: &CellConfig) -> UResult<()> {
@@ -287,6 +303,17 @@ pub trait MesyCommandHandler: Send + 'static {
         let _res: [U16; 3] = self.do_command(
             Cmd::SetCell,
             [U16::new(idx as _), U16::new(cfg.source as u16), U16::new(cfg.compare.get())],
+        )?;
+        Ok(())
+    }
+
+    /// Push one MCPD-wide auxiliary timer preset value to hardware. Also
+    /// used to apply a live `SetParams` update to a running input.
+    fn set_aux_timer(&mut self, name: ModuleId, idx: usize, value: u16) -> UResult<()> {
+        lprintln!(INFO, [name] "Setting aux timer {idx} to {value}");
+        let _res: [U16; 2] = self.do_command(
+            Cmd::SetAuxTimer,
+            [U16::new(idx as _), U16::new(value)],
         )?;
         Ok(())
     }
@@ -567,6 +594,7 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use super::*;
+    use super::super::{CellTrigger, CompareBit};
 
     /// Records every `do_command` call, and replies to them in order from a
     /// pre-scripted queue (falling back to a zeroed reply once exhausted).
@@ -689,5 +717,56 @@ mod tests {
         let (_, found, _) = rec.scan(ModuleId::new("m".into())).unwrap();
         assert_eq!(found[0].mod_type, ModType::Mstd16);
         assert_eq!(found[0].fw_version, (5, 9));
+    }
+
+    /// (idx, value) pairs for every call to a 2-word command.
+    fn two_word_calls(rec: &Scripted, cmd: Cmd) -> Vec<(u16, u16)> {
+        let cmd = cmd as u16;
+        rec.calls.borrow().iter()
+            .filter(|(c, _)| *c == cmd)
+            .map(|(_, data)| (LE::read_u16(&data[0..2]), LE::read_u16(&data[2..4])))
+            .collect()
+    }
+
+    #[test]
+    fn test_set_up_cells_fills_unconfigured_slots_with_default_cell_config() {
+        let mut rec = Scripted::default();
+        let mut cells = BTreeMap::new();
+        cells.insert(2, CellConfig { source: CellTrigger::Aux1, compare: CompareBit::new(0).unwrap() });
+        rec.set_up_cells(ModuleId::new("m".into()), &cells).unwrap();
+        let calls = gain_calls(&rec, Cmd::SetCell);
+        assert_eq!(calls.len(), 8);
+        // explicitly configured
+        assert_eq!(calls[2], (2, CellTrigger::Aux1 as u16, 0));
+        // default for cells 0-5: compare/22 (any status bit's rising edge)
+        assert_eq!(calls[0], (0, CellTrigger::Compare as u16, 22));
+        assert_eq!(calls[5], (5, CellTrigger::Compare as u16, 22));
+        // default for cells 6/7: none/0, not wired to the compare register
+        assert_eq!(calls[6], (6, CellTrigger::None as u16, 0));
+        assert_eq!(calls[7], (7, CellTrigger::None as u16, 0));
+    }
+
+    #[test]
+    fn test_set_up_skips_aux_timers_left_at_zero() {
+        let mut rec = Scripted::default();
+        rec.reply(&[0, 0]);                        // GetCapabilities
+        let config = MesyConfig {
+            local: SourceConfig::IP("localhost:50000".into()),
+            remote: "localhost:50001".into(),
+            is_master: true,
+            terminate: true,
+            ext_sync: false,
+            transmit_ampl: true,
+            mcpd_id: 0,
+            default_reset: false,
+            skip_empty_dump: false,
+            cells: BTreeMap::new(),
+            modules: BTreeMap::new(),
+            aux_timers: [0, 5, 0, 9],
+        };
+        rec.set_up(ModuleId::new("m".into()), McpdVersion::default(),
+                   &[FoundModule { mod_type: ModType::None, fw_version: (0, 0) }; 8],
+                   &[0; 8], &config).unwrap();
+        assert_eq!(two_word_calls(&rec, Cmd::SetAuxTimer), vec![(1, 5), (3, 9)]);
     }
 }

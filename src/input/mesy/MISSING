@@ -1,5 +1,0 @@
-- `Mpsd8Old` (module type 1) is unconfigured
-- Position/amplitude mode (`SETMODE`, cmd 16) isn't implemented for old mods
-- Aux timers (`SETAUXTIMER`, cmd 10) aren't implemented
-- `SETPARAM`/`GETPARAM` (per-buffer header "parameter" values: monitor/ADC/
-  counter/clock sources) aren't exposed

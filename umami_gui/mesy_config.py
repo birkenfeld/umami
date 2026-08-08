@@ -9,6 +9,7 @@ from pyqtgraph.Qt.QtCore import Qt, pyqtSignal
 from pyqtgraph.Qt.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -29,6 +30,14 @@ MODULE_TYPES = ('mpsd', 'mstd')
 PULSER_POSITIONS = ('left', 'right', 'middle')
 CELL_TRIGGERS = (
     'none', 'aux1', 'aux2', 'aux3', 'aux4', 'digital1', 'digital2', 'compare')
+CELL_TRIGGERS_NO_COMPARE = CELL_TRIGGERS[:-1]
+
+# Compare-register value -> combo label
+COMPARE_BIT_ITEMS = (
+    [(22, 'every edge')]
+    + [(n, f'bit {n} (every {2 ** (n + 1)})') for n in range(21)]
+    + [(21, 'overflow')]
+)
 
 
 def discover_mesy_inputs(params):
@@ -49,75 +58,58 @@ def _centered(widget):
 
 
 class MesyCellsTable(QTableWidget):
-    """8 fixed rows (cell index 0-7): Configure / Source / Compare.
+    """8 fixed rows (cell index 0-7): Source / Compare.
 
     Loads/reports a dict shaped like the `cells` param value, e.g.
-    `{"1": {"source": "aux2", "compare": 5}}` -- "Configure" means umami
-    manages that slot, not that the cell is enabled; unset rows are
-    omitted. Edits are local until read via `current()`.
+    `{"1": {"source": "aux2", "compare": 5}}`.
     """
 
     def __init__(self):
-        super().__init__(N_SLOTS, 3)
-        self.setHorizontalHeaderLabels(['Configure', 'Source', 'Compare'])
+        super().__init__(N_SLOTS, 2)
+        self.setHorizontalHeaderLabels(['Source', 'Compare'])
         self.setVerticalHeaderLabels([f'Cell {i}' for i in range(N_SLOTS)])
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._loading = False
-        self._checks = []
         self._sources = []
         self._compares = []
         for row in range(N_SLOTS):
-            check = QCheckBox()
-            check.setToolTip("Manage this cell's settings from umami")
-            check.toggled.connect(self._on_toggle)
-            self.setCellWidget(row, 0, _centered(check))
-            self._checks.append(check)
-
+            has_compare = row < 6
             source = QComboBox()
-            source.addItems(CELL_TRIGGERS)
+            source.addItems(CELL_TRIGGERS if has_compare else CELL_TRIGGERS_NO_COMPARE)
             source.setToolTip(
-                'Trigger source: none, one of 4 aux timers, one of 2 digital inputs, '
-                'or a bit of the compare register (see Compare)')
-            self.setCellWidget(row, 1, source)
+                'Trigger source: none, an aux timer, a rear digital input'
+                + (', or a bit of the compare register (see Compare)' if has_compare
+                   else ' -- cells 6/7 have no compare register source'))
+            self.setCellWidget(row, 0, source)
             self._sources.append(source)
 
-            compare = QSpinBox()
-            compare.setRange(0, 22)
-            compare.setToolTip(
-                'Only used when source = compare: bit 0-20 of the compare/status '
-                'register, 21 = counter overflow, 22 = rising edge')
-            self.setCellWidget(row, 2, compare)
+            compare = QComboBox()
+            for value, label in COMPARE_BIT_ITEMS:
+                compare.addItem(label, value)
+            self.setCellWidget(row, 1, compare)
             self._compares.append(compare)
+
+    @staticmethod
+    def _default_entry(row):
+        if row >= 6:
+            return {'source': 'none', 'compare': 0}
+        return {'source': 'compare', 'compare': 22}
 
     def set_cells(self, cells):
         """Load from a get-params `cells` value: `{"<idx>": {source, compare}}`."""
-        self._loading = True
         for row in range(N_SLOTS):
-            entry = cells.get(str(row))
-            enabled = entry is not None
-            self._checks[row].setChecked(enabled)
-            if enabled:
-                index = self._sources[row].findText(entry['source'])
-                if index >= 0:
-                    self._sources[row].setCurrentIndex(index)
-                self._compares[row].setValue(entry['compare'])
-            self._sources[row].setEnabled(enabled)
-            self._compares[row].setEnabled(enabled)
-        self._loading = False
-
-    def _on_toggle(self, *_args):
-        if self._loading:
-            return
-        for row in range(N_SLOTS):
-            enabled = self._checks[row].isChecked()
-            self._sources[row].setEnabled(enabled)
-            self._compares[row].setEnabled(enabled)
+            entry = cells.get(str(row)) or self._default_entry(row)
+            index = self._sources[row].findText(entry['source'])
+            if index >= 0:
+                self._sources[row].setCurrentIndex(index)
+            index = self._compares[row].findData(entry['compare'])
+            if index >= 0:
+                self._compares[row].setCurrentIndex(index)
 
     def current(self):
         return {
             str(row): {'source': self._sources[row].currentText(),
-                       'compare': self._compares[row].value()}
-            for row in range(N_SLOTS) if self._checks[row].isChecked()
+                       'compare': self._compares[row].currentData()}
+            for row in range(N_SLOTS)
         }
 
 
@@ -133,9 +125,7 @@ class MesyModulesTable(QTableWidget):
     full per-channel array (functionally identical to a uniform value on the
     wire, just explicit). `mpsd` modules have 8 channels, `mstd` 16 -- the
     unused upper gain columns are disabled for an `mpsd` row, and hidden
-    entirely (not just disabled) when no configured row is `mstd` -- the
-    common case, where showing 8 always-empty columns is pure clutter.
-    Edits are local until read via `current()`.
+    when no configured row is `mstd`.
     """
 
     N_GAIN_CHANS = 16
@@ -357,6 +347,35 @@ class MesyPulserTable(QTableWidget):
         }
 
 
+class MesyAuxTimersWidget(QWidget):
+    """4 fixed fields (aux1-aux4): preset values for the MCPD-wide auxiliary timers.
+
+    Loads/reports a plain 4-element list, as the `aux_timers` param value.
+    A value of `0` means "leave hardware alone" -- it's not pushed at
+    startup.
+    """
+
+    N_TIMERS = 4
+
+    def __init__(self):
+        super().__init__()
+        layout = QFormLayout(self)
+        self._spins = []
+        for i in range(self.N_TIMERS):
+            spin = QSpinBox()
+            spin.setRange(0, 0xFFFF)
+            spin.setToolTip('Period in 10us units; 0 = leave hardware alone')
+            layout.addRow(f'Aux{i + 1}:', spin)
+            self._spins.append(spin)
+
+    def set_aux_timers(self, values):
+        for spin, value in zip(self._spins, values, strict=True):
+            spin.setValue(value)
+
+    def current(self):
+        return [spin.value() for spin in self._spins]
+
+
 class McpdConfigWindow(QWidget):
     """Separate window with one tab per detected Mesytec MCPD input.
 
@@ -409,37 +428,43 @@ class McpdConfigWindow(QWidget):
         modules_table = MesyModulesTable()
         QVBoxLayout(modules_box).addWidget(modules_table)
 
-        cells_box = QGroupBox('Cells')
+        cells_box = QGroupBox('Input trigger cells')
         cells_table = MesyCellsTable()
         QVBoxLayout(cells_box).addWidget(cells_table)
 
-        pulser_box = QGroupBox('Pulser')
+        pulser_box = QGroupBox('Pulsers')
         pulser_table = MesyPulserTable()
         QVBoxLayout(pulser_box).addWidget(pulser_table)
+
+        aux_box = QGroupBox('Aux timers')
+        aux_widget = MesyAuxTimersWidget()
+        QVBoxLayout(aux_box).addWidget(aux_widget)
 
         bottom_row = QHBoxLayout()
         bottom_row.addWidget(cells_box)
         bottom_row.addWidget(pulser_box)
+        bottom_row.addWidget(aux_box)
 
         page_layout.addWidget(modules_box)
         page_layout.addLayout(bottom_row)
         self.tabs.addTab(page, name)
-        return cells_table, modules_table, pulser_table, version_label
+        return cells_table, modules_table, pulser_table, aux_widget, version_label
 
     def _apply_all(self):
-        """Push every tab's cells/modules/pulser edits live, in one set_params call."""
+        """Push every tab's edits live, in one set_params call."""
         params = {}
         for name, tables in self._tables.items():
-            cells_table, modules_table, pulser_table, _version_label = tables
+            cells_table, modules_table, pulser_table, aux_widget, _label = tables
             params[f'{name}.cells'] = cells_table.current()
             params[f'{name}.modules'] = modules_table.current()
             params[f'{name}.pulser'] = pulser_table.current()
+            params[f'{name}.aux_timers'] = aux_widget.current()
         if params:
             self.client.set_params(params)
             self.applied.emit()
 
     def refresh(self):
-        """Re-pull cells/modules/found/mcpd_version/pulser for every mesy input."""
+        """Re-pull every tab's live config for every mesy input."""
         params = self.client.get_params(full=True)
         if params is None:
             return
@@ -451,10 +476,12 @@ class McpdConfigWindow(QWidget):
             self._tables = {name: self._add_tab(name) for name in names}
 
         for name, tables in self._tables.items():
-            cells_table, modules_table, pulser_table, version_label = tables
+            cells_table, modules_table, pulser_table, aux_widget, version_label = tables
             cells = (params.get(f'{name}.cells') or {}).get('value') or {}
             modules = (params.get(f'{name}.modules') or {}).get('value') or {}
             pulser = (params.get(f'{name}.pulser') or {}).get('value') or {}
+            aux_timers = ((params.get(f'{name}.aux_timers') or {}).get('value')
+                          or [0, 0, 0, 0])
             found = ((params.get(f'{name}.found') or {}).get('value')
                      or [{'mod_type': '-', 'fw_version': (0, 0)}] * N_SLOTS)
             mcpd_version = (params.get(f'{name}.mcpd_version') or {}).get('value')
@@ -462,6 +489,7 @@ class McpdConfigWindow(QWidget):
             modules_table.set_modules(modules)
             modules_table.set_detected_types(found)
             pulser_table.set_pulser(pulser)
+            aux_widget.set_aux_timers(aux_timers)
             if mcpd_version:
                 cpu = mcpd_version['cpu']
                 fpga = mcpd_version['fpga']

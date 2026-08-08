@@ -54,10 +54,14 @@ pub struct MesyConfig {
     /// If set, don't raw-dump data buffers that contain no events.
     #[serde(default)]
     pub skip_empty_dump: bool,
-    #[serde(deserialize_with = "crate::util::deserialize_map_with_key")]
+    /// Cells not listed here get [`CellConfig::default`].
+    #[serde(default, deserialize_with = "crate::util::deserialize_map_with_key")]
     pub cells: BTreeMap<usize, CellConfig>,
     #[serde(deserialize_with = "crate::util::deserialize_map_with_key")]
     pub modules: BTreeMap<usize, ModuleConfig>,
+    /// Preset values for the 4 auxiliary timers (aux1-aux4).
+    #[serde(default)]
+    pub aux_timers: [u16; 4],
 }
 
 /// A cell's trigger source: which physical/logical signal counts into it.
@@ -108,6 +112,19 @@ impl<'de> Deserialize<'de> for CompareBit {
 pub struct CellConfig {
     pub source: CellTrigger,
     pub compare: CompareBit,
+}
+
+/// Default setting for a cell not listed in config: trigger on any status
+/// bit's rising edge, so it still counts something rather than reflecting
+/// whatever a previous session (or the hardware's power-on state) happened
+/// to leave it at. Cells 6 and 7 aren't wired to the compare register, so
+/// they default to `None`/0 instead.
+fn default_cell_config(idx: usize) -> CellConfig {
+    if idx < 6 {
+        CellConfig { source: CellTrigger::Compare, compare: CompareBit(22) }
+    } else {
+        CellConfig { source: CellTrigger::None, compare: CompareBit(0) }
+    }
 }
 
 /// An MPSD's gain, either the same for every channel or given per channel
@@ -171,12 +188,16 @@ where
             help = "Module type and firmware version detected per MCPD slot at startup")]
     found: [cmd::FoundModule; 8],
     #[param(has_setter = true, datatype = "map of cell index to (source, compare)",
-            help = "Per-cell trigger source/compare setting")]
+            help = "Per-input event trigger setting; cells not listed default \
+                    to every rising edge")]
     cells: BTreeMap<usize, CellConfig>,
     #[param(has_setter = true,
-            datatype = "map of module index to (type, threshold, gain: number or 8-array)",
-            help = "Per-MPSD threshold/gain")]
+            datatype = "map of module index to (type, threshold, gain: number or array)",
+            help = "Per-module threshold/gain settings")]
     modules: BTreeMap<usize, ModuleConfig>,
+    #[param(has_setter = true, datatype = "array of 4 auxiliary timer periods in 10us units",
+            help = "Preset values for the 4 auxiliary timers")]
+    aux_timers: [u16; 4],
     #[param(has_setter = true, runtime_only = true,
             datatype = "map of module index to (chan, pos, amp, on)",
             help = "Per-module test-pulse injection")]
@@ -217,6 +238,9 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
             SourceConfig::File(path) => path.clone(),
             SourceConfig::IP(_) => "<live>".into(),
         };
+        let cells = (0..8)
+            .map(|i| (i, config.cells.get(&i).cloned().unwrap_or_else(|| default_cell_config(i))))
+            .collect();
         let input = Self {
             source,
             command_handler: commands,
@@ -225,9 +249,10 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
             skip_empty_dump: config.skip_empty_dump,
             mcpd_version,
             found,
-            cells: config.cells,
+            cells,
             modules: config.modules,
             pulser: BTreeMap::new(),
+            aux_timers: config.aux_timers,
             replay_file,
             buf_serial: None,
             no_event_buffers: 0,
@@ -256,6 +281,14 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
             self.command_handler.set_up_module(self.name, idx, modtype, self.mcpd_version, Some(cfg))?;
         }
         self.modules = modules;
+        Ok(())
+    }
+
+    fn set_aux_timers(&mut self, aux_timers: [u16; 4]) -> UResult<()> {
+        for (idx, &value) in aux_timers.iter().enumerate() {
+            self.command_handler.set_aux_timer(self.name, idx, value)?;
+        }
+        self.aux_timers = aux_timers;
         Ok(())
     }
 
@@ -608,6 +641,7 @@ mod tests {
             cells: BTreeMap::new(),
             modules: BTreeMap::new(),
             pulser: BTreeMap::new(),
+            aux_timers: [0; 4],
             replay_file: "<live>".into(),
             buf_serial: None,
             no_event_buffers: 0,
@@ -641,6 +675,7 @@ mod tests {
             cells: BTreeMap::new(),
             modules: BTreeMap::new(),
             pulser: BTreeMap::new(),
+            aux_timers: [0; 4],
             replay_file: name.clone(),
             buf_serial: None,
             no_event_buffers: 0,
