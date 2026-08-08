@@ -32,6 +32,7 @@ from pyqtgraph.Qt.QtWidgets import (
     QSpinBox,
     QSplitter,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -420,18 +421,22 @@ class MainWindow(QWidget):
         frame.layout().addWidget(QLabel('Mode:'))
         frame.layout().addWidget(self.mode_combo)
 
+        frame.layout().addSpacing(20)
         frame.layout().addStretch()
 
         replay_btn = icon_button('replay', 'Replay')
         replay_btn.clicked.connect(self.show_replay_window)
         frame.layout().addWidget(replay_btn)
 
+        frame.layout().addSpacing(20)
+
         self.log_toggle = icon_button('show_log', 'Show Log')
         self.log_toggle.setCheckable(True)
         self.log_toggle.setShortcut(QKeySequence('Ctrl+L'))
         frame.layout().addWidget(self.log_toggle)
 
-        about_btn = QPushButton('About')
+        about_btn = QToolButton()
+        about_btn.setIcon(load_icon('live_help'))
         about_btn.clicked.connect(self.show_about)
         frame.layout().addWidget(about_btn)
 
