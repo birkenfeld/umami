@@ -46,7 +46,7 @@ from .icons import icon_button, load_icon
 from .log_panel import LogPanel
 from .logo_widget import LogoBuildupWidget
 from .mesy_config import McpdConfigWindow, discover_mesy_inputs
-from .params_table import ParamsTable
+from .params_tree import ParamsTree
 from .plot_utils import COLORMAPS, set_image_data
 from .projection_windows import DiffractogramWindow, TofSpectrumWindow
 from .replay_window import ReplayWindow
@@ -195,14 +195,14 @@ class MainWindow(QWidget):
     def update_t_axis_labels(self):
         if self.t_proj_window is None:
             return
-        info = (self.params_table.params or {}).get(f'{self.current_mode}.time_bins')
+        info = (self.params_tree.params or {}).get(f'{self.current_mode}.time_bins')
         value = info.get('value') if info else None
         self.t_proj_window.set_bin_edges_ns(value)
 
     def refresh_params(self):
-        self.params_table.refresh()
+        self.params_tree.refresh()
         self.update_t_axis_labels()
-        params = self.params_table.params or {}
+        params = self.params_tree.params or {}
         self.mcpd_config_btn.setVisible(bool(discover_mesy_inputs(params)))
         self.tof_config_btn.setVisible(bool(discover_tof_recipes(params)))
         self.aux_histo_btn.setVisible(discover_aux_histo_output(params) is not None)
@@ -770,7 +770,7 @@ class MainWindow(QWidget):
         panel = QWidget()
         panel.setLayout(QVBoxLayout())
         panel.layout().setContentsMargins(5, 8, 0, 0)
-        self.params_table = ParamsTable(self.client)
+        self.params_tree = ParamsTree(self.client)
 
         top_row = QHBoxLayout()
         refresh_btn = icon_button('refresh', 'Refresh Params')
@@ -800,7 +800,7 @@ class MainWindow(QWidget):
         setup_row.addStretch()
         panel.layout().addLayout(setup_row)
 
-        panel.layout().addWidget(self.params_table)
+        panel.layout().addWidget(self.params_tree)
 
         self.params_panel = panel
 
