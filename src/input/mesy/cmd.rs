@@ -16,7 +16,7 @@ use crate::command::ModuleId;
 use crate::config::SourceConfig;
 use crate::error::UResult;
 use crate::util::resolve;
-use super::{MesyCellConfig, MesyConfig, MesyModuleConfig, MpsdGain, MstdGain, PulserConfig};
+use super::{CellConfig, MesyConfig, ModuleConfig, MpsdGain, MstdGain, PulserConfig};
 
 const HEADER_WORDS: u16 = 10;
 const BUFFERTYPE: u16 = 0x8000;
@@ -281,7 +281,7 @@ pub trait MesyCommandHandler: Send + 'static {
 
     /// Push one cell's trigger source/compare wiring to hardware. Also used
     /// to apply a live `SetParams` update to a running input.
-    fn set_up_cell(&mut self, name: ModuleId, idx: usize, cfg: &MesyCellConfig) -> UResult<()> {
+    fn set_up_cell(&mut self, name: ModuleId, idx: usize, cfg: &CellConfig) -> UResult<()> {
         lprintln!(INFO, [name] "Setting up cell {idx} with source {:?}, compare {}",
                   cfg.source, cfg.compare.get());
         let _res: [U16; 3] = self.do_command(
@@ -295,10 +295,10 @@ pub trait MesyCommandHandler: Send + 'static {
     /// configurable MPSD- or MSTD-class module. Also used to apply a live
     /// `SetParams` update to a running input.
     fn set_up_module(&mut self, name: ModuleId, idx: usize, modtype: ModType,
-                     mcpd_version: McpdVersion, cfg: Option<&MesyModuleConfig>) -> UResult<()> {
+                     mcpd_version: McpdVersion, cfg: Option<&ModuleConfig>) -> UResult<()> {
         match modtype {
             m if m.is_mpsd() => match cfg {
-                Some(MesyModuleConfig::Mpsd { threshold, gain }) =>
+                Some(ModuleConfig::Mpsd { threshold, gain }) =>
                     self.set_up_mpsd(name, idx, *threshold, *gain),
                 Some(_) => {
                     lprintln!(WARN, [name] "Module {idx} is not an MPSD, not configuring");
@@ -310,7 +310,7 @@ pub trait MesyCommandHandler: Send + 'static {
                 }
             },
             m if m.is_mstd() => match cfg {
-                Some(MesyModuleConfig::Mstd { threshold, gain }) => {
+                Some(ModuleConfig::Mstd { threshold, gain }) => {
                     // Original MSTD-16 modules only gained a dedicated gain
                     // command once the MCPD's own firmware reached 9.8; below
                     // that, gain has to go through the MPSD-8 gain command,
@@ -631,7 +631,7 @@ mod tests {
     #[test]
     fn test_set_up_module_uses_mstd_gain_command_once_mcpd_firmware_reaches_9_8() {
         let mut rec = Scripted::default();
-        let cfg = MesyModuleConfig::Mstd { threshold: 1, gain: MstdGain::Uniform(5) };
+        let cfg = ModuleConfig::Mstd { threshold: 1, gain: MstdGain::Uniform(5) };
         rec.set_up_module(ModuleId::new("m".into()), 2, ModType::Mstd16,
                            McpdVersion { cpu: (9, 8), fpga: (0, 0) }, Some(&cfg)).unwrap();
         assert_eq!(gain_calls(&rec, Cmd::SetGainMstd), vec![(2, 16, 5)]);
@@ -640,7 +640,7 @@ mod tests {
     #[test]
     fn test_set_up_module_falls_back_below_mcpd_firmware_9_8() {
         let mut rec = Scripted::default();
-        let cfg = MesyModuleConfig::Mstd { threshold: 1, gain: MstdGain::Uniform(5) };
+        let cfg = ModuleConfig::Mstd { threshold: 1, gain: MstdGain::Uniform(5) };
         rec.set_up_module(ModuleId::new("m".into()), 2, ModType::Mstd16,
                            McpdVersion { cpu: (9, 7), fpga: (0, 0) }, Some(&cfg)).unwrap();
         assert_eq!(gain_calls(&rec, Cmd::SetGainMpsd), vec![(2, 8, 5)]);
@@ -649,7 +649,7 @@ mod tests {
     #[test]
     fn test_set_up_module_promoted_mstd16p_always_uses_dedicated_gain_command() {
         let mut rec = Scripted::default();
-        let cfg = MesyModuleConfig::Mstd { threshold: 1, gain: MstdGain::Uniform(5) };
+        let cfg = ModuleConfig::Mstd { threshold: 1, gain: MstdGain::Uniform(5) };
         rec.set_up_module(ModuleId::new("m".into()), 2, ModType::Mstd16P,
                            McpdVersion { cpu: (0, 0), fpga: (0, 0) }, Some(&cfg)).unwrap();
         assert_eq!(gain_calls(&rec, Cmd::SetGainMstd), vec![(2, 16, 5)]);
@@ -658,7 +658,7 @@ mod tests {
     #[test]
     fn test_set_up_module_warns_instead_of_erroring_on_mismatched_mstd_config() {
         let mut rec = Scripted::default();
-        let cfg = MesyModuleConfig::Mpsd { threshold: 1, gain: MpsdGain::Uniform(5) };
+        let cfg = ModuleConfig::Mpsd { threshold: 1, gain: MpsdGain::Uniform(5) };
         rec.set_up_module(ModuleId::new("m".into()), 2, ModType::Mstd16,
                            McpdVersion::default(), Some(&cfg)).unwrap();
         assert!(gain_calls(&rec, Cmd::SetGainMpsd).is_empty());

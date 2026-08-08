@@ -55,9 +55,9 @@ pub struct MesyConfig {
     #[serde(default)]
     pub skip_empty_dump: bool,
     #[serde(deserialize_with = "crate::util::deserialize_map_with_key")]
-    pub cells: BTreeMap<usize, MesyCellConfig>,
+    pub cells: BTreeMap<usize, CellConfig>,
     #[serde(deserialize_with = "crate::util::deserialize_map_with_key")]
-    pub modules: BTreeMap<usize, MesyModuleConfig>,
+    pub modules: BTreeMap<usize, ModuleConfig>,
 }
 
 /// A cell's trigger source: which physical/logical signal counts into it.
@@ -105,7 +105,7 @@ impl<'de> Deserialize<'de> for CompareBit {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MesyCellConfig {
+pub struct CellConfig {
     pub source: CellTrigger,
     pub compare: CompareBit,
 }
@@ -130,7 +130,7 @@ pub enum MstdGain {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum MesyModuleConfig {
+pub enum ModuleConfig {
     Mpsd { threshold: u16, gain: MpsdGain },
     Mstd { threshold: u16, gain: MstdGain },
 }
@@ -172,11 +172,11 @@ where
     found: [cmd::FoundModule; 8],
     #[param(has_setter = true, datatype = "map of cell index to (source, compare)",
             help = "Per-cell trigger source/compare setting")]
-    cells: BTreeMap<usize, MesyCellConfig>,
+    cells: BTreeMap<usize, CellConfig>,
     #[param(has_setter = true,
             datatype = "map of module index to (type, threshold, gain: number or 8-array)",
             help = "Per-MPSD threshold/gain")]
-    modules: BTreeMap<usize, MesyModuleConfig>,
+    modules: BTreeMap<usize, ModuleConfig>,
     #[param(has_setter = true, runtime_only = true,
             datatype = "map of module index to (chan, pos, amp, on)",
             help = "Per-module test-pulse injection")]
@@ -242,7 +242,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
         Ok(())
     }
 
-    fn set_cells(&mut self, cells: BTreeMap<usize, MesyCellConfig>) -> UResult<()> {
+    fn set_cells(&mut self, cells: BTreeMap<usize, CellConfig>) -> UResult<()> {
         for (&idx, cfg) in &cells {
             self.command_handler.set_up_cell(self.name, idx, cfg)?;
         }
@@ -250,7 +250,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
         Ok(())
     }
 
-    fn set_modules(&mut self, modules: BTreeMap<usize, MesyModuleConfig>) -> UResult<()> {
+    fn set_modules(&mut self, modules: BTreeMap<usize, ModuleConfig>) -> UResult<()> {
         for (&idx, cfg) in &modules {
             let modtype = self.found.get(idx).map(|f| f.mod_type).unwrap_or(cmd::ModType::None);
             self.command_handler.set_up_module(self.name, idx, modtype, self.mcpd_version, Some(cfg))?;
@@ -550,7 +550,7 @@ mod tests {
         assert!(matches!(cfg.cells[&1].source, CellTrigger::Aux2));
         assert_eq!(cfg.cells[&1].compare.get(), 5);
         assert!(matches!(cfg.modules[&3],
-                MesyModuleConfig::Mpsd { threshold: 42, gain: MpsdGain::Uniform(7) }));
+                ModuleConfig::Mpsd { threshold: 42, gain: MpsdGain::Uniform(7) }));
     }
 
     #[test]
@@ -684,7 +684,7 @@ mod tests {
         input.update_params(ModuleId::new("mesy".into()), set).unwrap();
 
         assert!(matches!(input.modules[&3],
-                MesyModuleConfig::Mpsd { threshold: 42, gain: MpsdGain::Uniform(7) }));
+                ModuleConfig::Mpsd { threshold: 42, gain: MpsdGain::Uniform(7) }));
         assert!(matches!(input.cells[&1].source, CellTrigger::Aux2));
         assert_eq!(input.cells[&1].compare.get(), 5);
     }
@@ -709,7 +709,7 @@ mod tests {
         input.update_params(ModuleId::new("mesy".into()), set).unwrap();
 
         assert!(matches!(input.modules[&3],
-                MesyModuleConfig::Mpsd { threshold: 42, gain: MpsdGain::PerChannel(
+                ModuleConfig::Mpsd { threshold: 42, gain: MpsdGain::PerChannel(
                     [1, 2, 3, 4, 5, 6, 7, 8]) }));
     }
 
@@ -763,6 +763,6 @@ mod tests {
         }));
         // does not error even though module 2 isn't an MPSD
         input.update_params(ModuleId::new("mesy".into()), set).unwrap();
-        assert!(matches!(input.modules[&2], MesyModuleConfig::Mpsd { .. }));
+        assert!(matches!(input.modules[&2], ModuleConfig::Mpsd { .. }));
     }
 }
