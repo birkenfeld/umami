@@ -14,6 +14,7 @@ from pyqtgraph.Qt.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QStyledItemDelegate,
@@ -85,12 +86,31 @@ class _ValueColumnDelegate(QStyledItemDelegate):
 
     A `QTreeWidgetItem`'s `ItemIsEditable` flag applies to the whole row, so
     without this a param leaf's name in column 0 would open an editor too.
+
+    A writable scalar's cell (1) normally shows a persistent label+button
+    widget rather than the item's own text -- setting both at once paints
+    one on top of the other. So the item's real text is never populated at
+    rest, which also means the default `setEditorData` would open the
+    editor pre-filled with nothing to edit; look the current value up from
+    the tree's own `params` (keyed by the item's stored param key) instead.
     """
 
     def createEditor(self, parent, option, index):  # noqa: N802
         if index.column() != 1:
             return None
         return super().createEditor(parent, option, index)
+
+    def setEditorData(self, editor, index):  # noqa: N802
+        if index.column() == 1 and isinstance(editor, QLineEdit):
+            tree = self.parent()
+            item = tree.itemFromIndex(index)
+            key = item.data(0, Qt.ItemDataRole.UserRole)
+            info = (tree.params or {}).get(key) if key is not None else None
+            if info is not None:
+                value = info.get('value')
+                editor.setText('' if value is None else str(value))
+                return
+        super().setEditorData(editor, index)
 
 
 class ParamsTree(QTreeWidget):
@@ -108,9 +128,13 @@ class ParamsTree(QTreeWidget):
         header = self.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.setItemDelegate(_ValueColumnDelegate(self))
+        delegate = _ValueColumnDelegate(self)
+        self.setItemDelegate(delegate)
+        delegate.closeEditor.connect(self._on_edit_closed)
         self.itemChanged.connect(self._on_item_changed)
         self.params = None
+        self._editing_item = None
+        self._edit_committed = False
 
     def _make_tool_button(self, name, tooltip):
         # a small flat icon button, sized to actually fit in a tree row --
@@ -127,10 +151,10 @@ class ParamsTree(QTreeWidget):
         """Value cell showing `text` plus a small button (edit/view/...).
 
         Used both for list/dict values (button opens `ValueEditDialog`) and
-        plain scalars (button starts in-place cell editing) -- either way,
-        the item's own text (column 1) is kept in sync even though this
-        widget visually covers it, since it's what the tree's own editor
-        and `_on_item_changed` read from.
+        plain scalars (button starts in-place cell editing). The item's own
+        text (column 1) is deliberately left unset while this widget is in
+        place -- setting both paints the item's native text underneath the
+        widget's own label, doubling up visibly.
         """
         label = QLabel(text)
         button = self._make_tool_button(icon, tooltip)
@@ -145,14 +169,28 @@ class ParamsTree(QTreeWidget):
 
     def _start_inline_edit(self, item):
         # a persistent cell widget hides the tree's own editor underneath
-        # it, so it has to be cleared first; refresh() -- triggered by the
-        # itemChanged this produces once the edit is committed -- rebuilds
-        # it. If the edit is cancelled instead, the cell is left without
-        # its button until the next refresh (Refresh button, or any other
-        # edit); a minor, self-healing rough edge, not worth the extra
-        # bookkeeping to avoid.
+        # it, so it has to be cleared first -- _on_edit_closed() restores it
+        # once editing finishes, whether committed or cancelled
+        self._editing_item = item
+        self._edit_committed = False
         self.removeItemWidget(item, 1)
         self.editItem(item, 1)
+
+    def _on_edit_closed(self, editor, hint):  # noqa: ARG002
+        item, committed = self._editing_item, self._edit_committed
+        self._editing_item = None
+        if item is None or committed or self.params is None:
+            # a committed edit is handled by the refresh() it triggers via
+            # _on_item_changed, which replaces this item outright
+            return
+        key = item.data(0, Qt.ItemDataRole.UserRole)
+        info = self.params.get(key) if key is not None else None
+        if info is None:
+            return
+        value = info.get('value')
+        text = '' if value is None else str(value)
+        self._build_button_cell(item, text, 'edit', 'Edit',
+                                 lambda _, i=item: self._start_inline_edit(i))
 
     def _build_param_item(self, parent, key, name, info):
         item = QTreeWidgetItem(parent, [name])
@@ -173,6 +211,9 @@ class ParamsTree(QTreeWidget):
             cell_layout.addWidget(checkbox)
             self.setItemWidget(item, 1, cell)
         elif isinstance(value, (list, dict)):
+            # editing happens exclusively via the dialog below, never via
+            # the tree's own in-place editor
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             text = json.dumps(value)
             label = self._build_button_cell(
                 item, text, 'view' if readonly else 'edit',
@@ -182,6 +223,9 @@ class ParamsTree(QTreeWidget):
         else:
             text = '' if value is None else str(value)
             if readonly:
+                # no cell widget here, so the item's own text is the only
+                # thing rendering it -- safe to set directly
+                item.setText(1, text)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             else:
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
