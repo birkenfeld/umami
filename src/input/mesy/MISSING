@@ -1,36 +1,5 @@
-Gaps found for MCPD/MPSD/MSTD config (MDLL excluded).
-
-Real bugs (config schema accepts it, hardware never gets it):
-
-- MSTD-16 is unconfigured. `MesyModuleConfig::Mstd { threshold, gain }` exists,
-  but `set_up_module()` only matches `Mpsd8SADC | Mpsd8 | Mpsd8P`; `Mstd16`/
-  `Mstd16P` fall into the `other` arm (warn + skip). Wiring it up properly
-  also needs: 16 channels (not 8) for per-channel gain, the separate
-  `SETGAIN_MSTD` (cmd 26) command on newer firmware vs. `SETGAIN_MPSD` with a
-  "channel index >7 gets halved" quirk on old firmware, and MSTD's differing
-  pulser/mode defaults.
-
-- `Mpsd8Old` (module type 1) is likewise unconfigured -- same match-arm gap,
-  same silent-skip warning.
-
-Missing feature (has a TODO already):
-
-- Position/amplitude mode (`SETMODE`, cmd 16) isn't implemented -- no
-  `Cmd::SetMode` variant exists; `MesyModuleConfig` has `// TODO amp mode`.
-  Needed for MPSD-8/MPSD-8old hardware that can only stream one of
-  position-or-amplitude at a time (MPSD-8+ can do both simultaneously, which
-  is what the existing TX-mode capability negotiation covers).
-
-Missing feature (no hook to configure it at all):
-
-- Aux timers (`SETAUXTIMER`, cmd 10) aren't implemented. `CellTrigger` lets a
-  cell select `Aux1..Aux4` as its trigger source, but nothing configures what
-  period each aux timer actually runs at.
-
-Lower priority / probably not worth chasing:
-
+- `Mpsd8Old` (module type 1) is unconfigured
+- Position/amplitude mode (`SETMODE`, cmd 16) isn't implemented for old mods
+- Aux timers (`SETAUXTIMER`, cmd 10) aren't implemented
 - `SETPARAM`/`GETPARAM` (per-buffer header "parameter" values: monitor/ADC/
-  counter/clock sources) aren't exposed.
-
-- `SETRUNID` isn't pushed to hardware; `run_id` stays a host-side/file-naming
-  concept only.
+  counter/clock sources) aren't exposed
