@@ -123,6 +123,37 @@ class ParamsTree(QTreeWidget):
         btn.setToolTip(tooltip)
         return btn
 
+    def _build_button_cell(self, item, text, icon, tooltip, on_click):
+        """Value cell showing `text` plus a small button (edit/view/...).
+
+        Used both for list/dict values (button opens `ValueEditDialog`) and
+        plain scalars (button starts in-place cell editing) -- either way,
+        the item's own text (column 1) is kept in sync even though this
+        widget visually covers it, since it's what the tree's own editor
+        and `_on_item_changed` read from.
+        """
+        label = QLabel(text)
+        button = self._make_tool_button(icon, tooltip)
+        button.clicked.connect(on_click)
+        cell = QWidget()
+        cell_layout = QHBoxLayout(cell)
+        cell_layout.setContentsMargins(4, 0, 2, 0)
+        cell_layout.addWidget(label, 1)
+        cell_layout.addWidget(button)
+        self.setItemWidget(item, 1, cell)
+        return label
+
+    def _start_inline_edit(self, item):
+        # a persistent cell widget hides the tree's own editor underneath
+        # it, so it has to be cleared first; refresh() -- triggered by the
+        # itemChanged this produces once the edit is committed -- rebuilds
+        # it. If the edit is cancelled instead, the cell is left without
+        # its button until the next refresh (Refresh button, or any other
+        # edit); a minor, self-healing rough edge, not worth the extra
+        # bookkeeping to avoid.
+        self.removeItemWidget(item, 1)
+        self.editItem(item, 1)
+
     def _build_param_item(self, parent, key, name, info):
         item = QTreeWidgetItem(parent, [name])
         item.setData(0, Qt.ItemDataRole.UserRole, key)
@@ -142,29 +173,23 @@ class ParamsTree(QTreeWidget):
             cell_layout.addWidget(checkbox)
             self.setItemWidget(item, 1, cell)
         elif isinstance(value, (list, dict)):
-            # editing happens exclusively via the dialog below -- no
-            # separate double-click-to-edit-raw-json text representation,
-            # so this cell can dedicate its whole width to label + button
-            # instead of splitting it with a third, mostly-empty column
-            label = QLabel(json.dumps(value))
-            label.setToolTip(json.dumps(value, indent=2))
-            edit_btn = self._make_tool_button(
-                'view' if readonly else 'edit',
-                'View in a larger dialog' if readonly else 'Edit in a larger dialog')
-            edit_btn.clicked.connect(
+            text = json.dumps(value)
+            item.setText(1, text)
+            label = self._build_button_cell(
+                item, text, 'view' if readonly else 'edit',
+                'View in a larger dialog' if readonly else 'Edit in a larger dialog',
                 lambda _, k=key, i=info: self._edit_dialog(k, i))
-            cell = QWidget()
-            cell_layout = QHBoxLayout(cell)
-            cell_layout.setContentsMargins(4, 0, 2, 0)
-            cell_layout.addWidget(label, 1)
-            cell_layout.addWidget(edit_btn)
-            self.setItemWidget(item, 1, cell)
+            label.setToolTip(json.dumps(value, indent=2))
         else:
-            item.setText(1, '' if value is None else str(value))
-            flags = item.flags() | Qt.ItemFlag.ItemIsEditable
+            text = '' if value is None else str(value)
+            item.setText(1, text)
             if readonly:
-                flags &= ~Qt.ItemFlag.ItemIsEditable
-            item.setFlags(flags)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            else:
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+                self._build_button_cell(
+                    item, text, 'edit', 'Edit',
+                    lambda _, i=item: self._start_inline_edit(i))
 
     def refresh(self):
         params = self.client.get_params(full=True)
