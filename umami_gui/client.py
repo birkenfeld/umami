@@ -71,13 +71,15 @@ class UmamiClient:
                 self.log.warning(f'Lost connection to {self.ipc_name!r}: {e}')
                 return None
             reply = json.loads(raw.decode())
-            if not quiet:
-                self.log.info(f'<- {reply}')
             if reply['result'] == 'error':
+                if quiet:
+                    self.log.warning(f'-> {msg}')
                 module = reply.get('module')
                 prefix = f'[{module}] ' if module else ''
                 self.log.error(f'{prefix}{reply["message"]}')
                 return None
+            if not quiet:
+                self.log.info(f'<- {reply}')
             return reply.get('value')
         finally:
             self._busy = False
@@ -104,13 +106,13 @@ class UmamiClient:
         return self._call('set_raw_dump', enable=enable, path=path)
 
     def get_modes(self):
-        return self._call('get_modes')
+        return self._call('get_modes', quiet=True)
 
     def set_mode(self, name):
         return self._call('set_mode', name=name)
 
     def get_params(self, full=False):
-        return self._call('get_params', full=full)
+        return self._call('get_params', full=full, quiet=True)
 
     def set_params(self, params):
         return self._call('set_params', params=params)
