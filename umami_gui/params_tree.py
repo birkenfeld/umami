@@ -174,7 +174,6 @@ class ParamsTree(QTreeWidget):
             self.setItemWidget(item, 1, cell)
         elif isinstance(value, (list, dict)):
             text = json.dumps(value)
-            item.setText(1, text)
             label = self._build_button_cell(
                 item, text, 'view' if readonly else 'edit',
                 'View in a larger dialog' if readonly else 'Edit in a larger dialog',
@@ -182,7 +181,6 @@ class ParamsTree(QTreeWidget):
             label.setToolTip(json.dumps(value, indent=2))
         else:
             text = '' if value is None else str(value)
-            item.setText(1, text)
             if readonly:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             else:
