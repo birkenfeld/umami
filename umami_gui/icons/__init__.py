@@ -8,19 +8,27 @@ Also includes dark/light theme detection.
 
 from pathlib import Path
 
-from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
+from pyqtgraph.Qt.QtCore import QSize, Qt
+from pyqtgraph.Qt.QtGui import (
+    QColor,
+    QGuiApplication,
+    QIcon,
+    QPainter,
+    QPalette,
+    QPixmap,
+)
+from pyqtgraph.Qt.QtWidgets import QApplication, QPushButton
 
 _ICONS_DIR = Path(__file__).parent
-ICON_SIZE = QtCore.QSize(16, 16)
+ICON_SIZE = QSize(16, 16)
 
 
 def is_dark_mode():
     """Best-effort dark-mode detection."""
-    scheme = QtGui.QGuiApplication.styleHints().colorScheme()
-    if scheme != QtCore.Qt.ColorScheme.Unknown:
-        return scheme == QtCore.Qt.ColorScheme.Dark
-    window_color = QtWidgets.QApplication.palette().color(
-        QtGui.QPalette.ColorRole.Window)
+    scheme = QGuiApplication.styleHints().colorScheme()
+    if scheme != Qt.ColorScheme.Unknown:
+        return scheme == Qt.ColorScheme.Dark
+    window_color = QApplication.palette().color(QPalette.ColorRole.Window)
     return window_color.lightness() < 128
 
 
@@ -30,29 +38,29 @@ def load_icon(name, color=None):
     If `color` is given, the icon (a fixed dark fill in the source SVG) is
     re-tinted to that solid color using its alpha channel as a mask.
     """
-    icon = QtGui.QIcon(str(_ICONS_DIR / f'{name}.svg'))
+    icon = QIcon(str(_ICONS_DIR / f'{name}.svg'))
     if color is None:
         return icon
     # tinting bakes the vector icon down to a plain QPixmap -- render it at
     # the screen's actual device-pixel-ratio (and tag it as such), or it
     # comes out a fixed 16x16 physical pixels and looks tiny on HiDPI
-    dpr = QtWidgets.QApplication.primaryScreen().devicePixelRatio()
-    physical_size = QtCore.QSize(round(ICON_SIZE.width() * dpr),
-                                  round(ICON_SIZE.height() * dpr))
+    dpr = QApplication.primaryScreen().devicePixelRatio()
+    physical_size = QSize(round(ICON_SIZE.width() * dpr),
+                          round(ICON_SIZE.height() * dpr))
     pixmap = icon.pixmap(physical_size)
     pixmap.setDevicePixelRatio(dpr)
-    tinted = QtGui.QPixmap(pixmap.size())
+    tinted = QPixmap(pixmap.size())
     tinted.setDevicePixelRatio(dpr)
-    tinted.fill(QtCore.Qt.GlobalColor.transparent)
-    painter = QtGui.QPainter(tinted)
+    tinted.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(tinted)
     painter.drawPixmap(0, 0, pixmap)
-    painter.setCompositionMode(QtGui.QPainter.CompositionMode.CompositionMode_SourceIn)
-    painter.fillRect(tinted.rect(), QtGui.QColor(color))
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(tinted.rect(), QColor(color))
     painter.end()
-    return QtGui.QIcon(tinted)
+    return QIcon(tinted)
 
 
-def icon_button(name, text='', tint=True):
+def icon_button(name, text='', tint=True, cls=QPushButton):
     """Create a QPushButton with one of the bundled icons.
 
     By default the icon is tinted to match the current palette's button-text
@@ -60,8 +68,9 @@ def icon_button(name, text='', tint=True):
     """
     color = None
     if tint:
-        color = QtWidgets.QApplication.palette().color(
-            QtGui.QPalette.ColorRole.ButtonText)
-    btn = QtWidgets.QPushButton(load_icon(name, color=color), text)
+        color = QApplication.palette().color(QPalette.ColorRole.ButtonText)
+    btn = cls()
+    btn.setIcon(load_icon(name, color=color))
+    btn.setText(text)
     btn.setIconSize(ICON_SIZE)
     return btn

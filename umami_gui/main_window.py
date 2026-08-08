@@ -435,8 +435,7 @@ class MainWindow(QWidget):
         self.log_toggle.setShortcut(QKeySequence('Ctrl+L'))
         frame.layout().addWidget(self.log_toggle)
 
-        about_btn = QToolButton()
-        about_btn.setIcon(load_icon('live_help'))
+        about_btn = icon_button('live_help', 'About', cls=QToolButton)
         about_btn.clicked.connect(self.show_about)
         frame.layout().addWidget(about_btn)
 
