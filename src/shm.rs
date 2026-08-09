@@ -223,9 +223,7 @@ impl ShmInterface {
 }
 
 /// Read-only view onto a histogram segment, for a long-lived client that
-/// repeatedly opens and drops segments (e.g. the aux-histo GUI panel
-/// re-opening after a `histos` param change) rather than holding one for the
-/// life of the process -- unlike `ShmBox`, this actually unmaps on drop.
+/// repeatedly opens and drops segments.
 pub struct ShmReader {
     ptr: NonNull<u8>,
     len: usize,
@@ -255,7 +253,9 @@ impl ShmReader {
         };
         let reader = Self { ptr: ptr.cast(), len: total_size };
         if reader.header().magic != SHM_MAGIC {
-            Err(anyhow!("Shared memory {name:?} has an incompatible layout version"))?;
+            Err(anyhow!("Shared memory {name:?} has an incompatible layout \
+                         version, expected {SHM_MAGIC:?}, got {:?}",
+                        reader.header().magic))?;
         }
         Ok(reader)
     }
@@ -263,6 +263,8 @@ impl ShmReader {
     fn header(&self) -> &ShmInterface {
         unsafe { self.ptr.cast::<ShmInterface>().as_ref() }
     }
+
+    // Accessors for the SHM fields
 
     pub fn run_id(&self) -> String {
         let raw = &self.header().run_id;
@@ -283,7 +285,9 @@ impl ShmReader {
     pub fn total_neutrons(&self) -> u64 { self.header().total_neutrons }
     pub fn lifetime_ns(&self) -> i64 { self.header().lifetime_ns }
     pub fn tzero_count(&self) -> u64 { self.header().tzero_count }
-    pub fn monitor_counts(&self) -> [u64; MONITOR_COUNTERS] { self.header().monitor_counts }
+    pub fn monitor_counts(&self) -> [u64; MONITOR_COUNTERS] {
+        self.header().monitor_counts
+    }
 
     /// The whole mapped segment (header followed by histogram bins), for a
     /// caller that wants to index into it directly by the documented byte

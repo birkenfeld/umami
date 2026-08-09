@@ -26,8 +26,8 @@ several components (many in separate threads) that act as a data pipeline:
 
 ## Building
 
-UMAMI is a Rust project and currently requires the Rust toolchain version
-declared in `Cargo.toml`.
+UMAMI is predominantly a Rust project and currently requires the Rust toolchain
+version declared in `Cargo.toml`.
 
 ```console
 cargo build            # development build
@@ -41,11 +41,8 @@ This produces two executables:
 
 Several features are defined for optional components.
 
-`umami-gui`, a PyQtGraph-based live viewer and control panel, is a Python
-package built with `uv` (`uv sync`), which also compiles `umami-client` --
-the native extension module wrapping this crate's command-socket and
-shared-memory client code for Python. Run it in-place with
-`uv run umami-gui [ipc_name]`.
+`umami-gui` is a PyQtGraph-based live viewer and control panel built as a Python
+package with `uv`.  You can run it in-place with `uv run umami-gui [ipc_name]`.
 
 ## Quickstart
 

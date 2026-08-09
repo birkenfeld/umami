@@ -26,7 +26,8 @@ import subprocess
 import time
 
 import numpy as np
-import umami_client
+import umami_client as umami
+
 from entangle import base
 from entangle.core import BUSY, FAULT, OFF, INIT, UNKNOWN, ON, Attr, Cmd, \
     Prop, nonemptystring, uint16, uint64
@@ -109,21 +110,21 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         while True:
             time.sleep(0.1)
             try:
-                self._cmd = umami_client.Client(self._ipc_name)
+                self._cmd = umami.Client(self._ipc_name)
                 self.hw_version = self._cmd.ping()
                 break
-            except umami_client.UmamiClientError:
+            except umami.UmamiClientError:
                 if self._proc.poll() is not None:
                     raise HardwareFailure('UMAMI exited during initialization')
 
         # set up histo readout via shared memory; nx/ny/nt come from the
         # segment's own header, not re-derived from the TOML config
-        self._shm = umami_client.Shm(self._ipc_name)
+        self._shm = umami.Shm(self._ipc_name)
         self._nx = self._shm.nx
         self._ny = self._shm.ny
         self._max_nt = self._shm.nt
         array_len = self._nx * self._ny * self._max_nt
-        self._data = np.frombuffer(self._shm, '<u4', array_len, umami_client.SHM_HEADER_SIZE)
+        self._data = np.frombuffer(self._shm, '<u4', array_len, umami.SHM_HEADER_SIZE)
 
         # enable raw data dumping
         if self.rawdatadir:
@@ -246,7 +247,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
     def _send_cmd(self, cmd, **kwargs):
         try:
             return getattr(self._cmd, cmd)(**kwargs)
-        except umami_client.UmamiError as e:
+        except umami.UmamiError as e:
             module, message = e.args
             raise InvalidOperation(
                 f'UMAMI error: {message} from {module or "unknown module"}')

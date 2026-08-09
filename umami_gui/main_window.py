@@ -221,7 +221,7 @@ class MainWindow(QWidget):
             self.rate_samples.clear()
             self.roi_rate_samples.clear()
             self.last_t = t
-        run_id = self.histo.read_run_id()
+        run_id = self.histo.run_id
         buf = self.histo.read_plane(t)
         # a copy, not the raw mmap view -- keeping a view alive across ticks
         # would block the mmap from ever closing (e.g. on reconnect)
@@ -297,11 +297,11 @@ class MainWindow(QWidget):
         active (e.g. the GUI was started after it ended), there's no
         last-known value to freeze at, so this reports unknown (None).
         """
-        run_start = self.histo.read_run_start()
+        run_start = self.histo.run_start
         if not run_start:
             self.last_elapsed_s = None
             return None
-        if self.histo.read_running():
+        if self.histo.running:
             self.last_elapsed_s = max(0, int(time.time() - run_start))
         return self.last_elapsed_s
 
@@ -728,7 +728,7 @@ class MainWindow(QWidget):
             self.histo.read_counters()
         lines = [
             'UMAMI histogram export',
-            f'run: {self.histo.read_run_id()}',
+            f'run: {self.histo.run_id}',
             f'mode: {self.current_mode or self.mode_combo.currentText()}',
             f't-slice: {t}',
             f'counts in slice: {int(buf.sum())}',

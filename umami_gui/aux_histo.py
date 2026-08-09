@@ -582,7 +582,7 @@ class AuxHistoWindow(QWidget):
             path += '.txt'
         is_2d = self._plots[name].is_2d
         spec = next(h for h in self._histos if h['name'] == name)
-        header = self._histogram_export_header(spec, shm.read_run_id())
+        header = self._histogram_export_header(spec, shm.run_id)
         if is_2d:
             x = bin_values(spec['x'])
             y = bin_values(spec['y'])

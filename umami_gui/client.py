@@ -12,18 +12,12 @@ class UmamiClient(umami_client.Client):
     """Talks to the UMAMI command socket.
 
     Never raises to callers; every failure is logged and the call returns
-    None instead. The native base class does the actual socket I/O,
-    reconnect-on-failure, and JSON (de)serialization; `connected` is one of
-    its inherited properties. This class only adds that never-raise contract
-    plus the GUI's logging conventions.
+    None instead.
     """
 
     def __new__(cls, ipc_name, log):  # noqa: ARG004
-        # The native base class's constructor doubles as `__new__` (PyO3
-        # `#[new]`), which Python calls with this class's own call args
-        # before `__init__` ever runs -- so its differing signature (an
-        # extra `timeout`, no `log`) has to be adapted here rather than in
-        # `__init__` below.
+        # PyO3's constructor is `__new__` not `__init__` so we need to override
+        # it here to not pass our `log` argument
         return super().__new__(cls, ipc_name, timeout=SOCKET_TIMEOUT)
 
     def __init__(self, ipc_name, log):

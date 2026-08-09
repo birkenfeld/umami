@@ -52,15 +52,12 @@ impl Client {
     /// (Re)binds a fresh local abstract address and, if the target is up,
     /// connects to it.
     ///
-    /// A fresh local address on every reconnect (rather than rebinding the
-    /// same one) matters: without it, a persistent client that just timed
-    /// out on one command could still receive that command's reply after
-    /// sending the next one, and misread it as the new command's answer.
+    /// Every reconnect gets a fresh local address: otherwise, a client that
+    /// just timed out on one command could still receive that command's reply
+    /// after sending the next one, and misread it as the new command's answer.
     ///
-    /// Nothing being bound at `ipc_name` yet (e.g. a GUI started before
-    /// `umami` itself) is not an error here: it just leaves `connected()`
-    /// false, for `send`/an explicit `reconnect` call to retry later. Only a
-    /// local problem (bad address, can't bind) fails outright.
+    /// Connection failure is not an error here: it just leaves `connected()`
+    /// false, for `send`/an explicit `reconnect` call to retry later.
     pub fn reconnect(&mut self) -> anyhow::Result<()> {
         self.sock = None;
         let unique_name = format!(
@@ -81,6 +78,11 @@ impl Client {
         Ok(())
     }
 
+    /// Main entry point: sends a command and waits for a reply.
+    ///
+    /// If the socket is not connected, attempts a reconnect first.  If the send
+    /// fails, the socket is dropped so that the next send will try to reconnect
+    /// again.
     pub fn send(&mut self, cmd: &Command) -> Result<CommandReply, ClientError> {
         if self.sock.is_none() {
             self.reconnect()?;
@@ -93,13 +95,14 @@ impl Client {
         }
         let result = self.send_once(cmd);
         if result.is_err() {
-            // Force a fresh address on the next attempt rather than retrying
-            // with a socket that may be desynced (see `reconnect`'s doc).
+            // force a fresh address on the next attempt rather than retrying
+            // with a socket that may be desynced
             self.sock = None;
         }
         result
     }
 
+    /// Sends a command and waits for a reply, without attempting to reconnect.
     fn send_once(&self, cmd: &Command) -> Result<CommandReply, ClientError> {
         let sock = self.sock.as_ref().expect("connected by send()");
         let cmd_json = serde_json::to_string(cmd)
@@ -108,7 +111,8 @@ impl Client {
         let mut buf = [0u8; RECV_BUFFER_SIZE];
         let n = match sock.recv(&mut buf) {
             Ok(n) => n,
-            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {
+            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock |
+                               io::ErrorKind::TimedOut) => {
                 return Err(ClientError::Timeout);
             }
             Err(e) => return Err(e.into()),

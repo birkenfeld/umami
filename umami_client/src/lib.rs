@@ -2,9 +2,7 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 //! Native Python bindings for UMAMI's command socket (`Client`) and
-//! shared-memory histogram (`Shm`), so the wire protocol and the 224-byte
-//! shm header layout exist in exactly one place (the `umami` crate) instead
-//! of being re-implemented in every Python client.
+//! shared-memory histogram (`Shm`).
 
 use std::ffi::{c_int, c_void, CString};
 use std::ptr;
@@ -23,7 +21,7 @@ create_exception!(umami_client, UmamiClientError, pyo3::exceptions::PyException,
 create_exception!(umami_client, UmamiError, UmamiClientError,
     "The running UMAMI instance rejected a command. `args` is \
      `(module, message)`, where `module` is the name of the module that \
-     raised the error, or `None` for an instance-wide error.");
+     raised the error or `None` for an instance-wide error.");
 create_exception!(umami_client, UmamiTimeout, UmamiClientError,
     "No reply was received within the client's configured timeout.");
 create_exception!(umami_client, UmamiConnectionError, UmamiClientError,
@@ -31,17 +29,16 @@ create_exception!(umami_client, UmamiConnectionError, UmamiClientError,
 
 fn client_error_to_py(e: ClientError) -> PyErr {
     match e {
-        ClientError::Timeout => UmamiTimeout::new_err("No reply received (timeout)"),
-        ClientError::Connection(io_err) => UmamiConnectionError::new_err(io_err.to_string()),
-        ClientError::Other(err) => UmamiConnectionError::new_err(format!("{err:#}")),
+        ClientError::Timeout =>
+            UmamiTimeout::new_err("No reply received (timeout)"),
+        ClientError::Connection(io_err) =>
+            UmamiConnectionError::new_err(io_err.to_string()),
+        ClientError::Other(err) =>
+            UmamiConnectionError::new_err(format!("{err:#}")),
     }
 }
 
 /// A connection to a running UMAMI instance's command socket.
-///
-/// One method per `Command` variant (see `command.rs`); an instance-wide or
-/// per-module error reply raises [`UmamiError`], a socket-level failure
-/// raises [`UmamiTimeout`] or [`UmamiConnectionError`].
 #[pyclass(module = "umami_client", subclass)]
 struct Client {
     inner: umami::Client,
@@ -53,6 +50,7 @@ impl Client {
     fn dispatch(&mut self, cmd: Command) -> PyResult<CommandReply> {
         let reply = self.inner.send(&cmd).map_err(client_error_to_py)?;
         if let CommandReply::Error { module, message } = reply {
+            // these errors map to UmamiError
             return Err(UmamiError::new_err((module.map(|m| m.to_string()), message)));
         }
         Ok(reply)
@@ -62,10 +60,13 @@ impl Client {
         self.dispatch(cmd).map(drop)
     }
 
-    fn dispatch_data<'py>(&mut self, py: Python<'py>, cmd: Command) -> PyResult<Bound<'py, PyAny>> {
+    fn dispatch_data<'py>(&mut self, py: Python<'py>, cmd: Command)
+                          -> PyResult<Bound<'py, PyAny>> {
         match self.dispatch(cmd)? {
             CommandReply::Data { value } => pythonize(py, &value)
-                .map_err(|e| PyValueError::new_err(format!("Converting reply to Python: {e}"))),
+                .map_err(|e| PyValueError::new_err(
+                    format!("Converting reply to Python: {e}")
+                )),
             _ => Ok(py.None().into_bound(py)),
         }
     }
@@ -97,7 +98,9 @@ impl Client {
 
     fn ping(&mut self) -> PyResult<String> {
         match self.dispatch(Command::Ping)? {
-            CommandReply::Data { value } => Ok(value.as_str().unwrap_or_default().to_string()),
+            CommandReply::Data { value } => Ok(
+                value.as_str().unwrap_or_default().to_string()
+            ),
             _ => Ok(String::new()),
         }
     }
@@ -135,7 +138,8 @@ impl Client {
     }
 
     #[pyo3(signature = (full=false))]
-    fn get_params<'py>(&mut self, py: Python<'py>, full: bool) -> PyResult<Bound<'py, PyAny>> {
+    fn get_params<'py>(&mut self, py: Python<'py>, full: bool)
+                       -> PyResult<Bound<'py, PyAny>> {
         self.dispatch_data(py, Command::GetParams { full })
     }
 
@@ -155,8 +159,8 @@ impl Client {
     }
 
     /// Sends a caller-built JSON command verbatim and returns the raw JSON
-    /// reply, bypassing all typed conversion -- for callers that already
-    /// speak the wire protocol directly (e.g. umami_det.py's Tango `Command`).
+    /// reply, bypassing all typed conversion -- for callers that want to speak
+    /// the wire protocol directly.
     fn send_json(&mut self, json: &str) -> PyResult<String> {
         let cmd: Command = serde_json::from_str(json)
             .map_err(|e| PyValueError::new_err(format!("Invalid command JSON: {e}")))?;
@@ -166,7 +170,7 @@ impl Client {
     }
 }
 
-/// Read-only view onto a UMAMI shared-memory histogram segment.
+/// Read-only view of a UMAMI shared-memory histogram segment.
 ///
 /// Exports the entire mapped segment (header followed by histogram bins) via
 /// the buffer protocol, so `np.frombuffer(shm, dtype, count, offset)` works
@@ -198,7 +202,9 @@ impl Shm {
     #[getter] fn total_neutrons(&self) -> u64 { self.reader.total_neutrons() }
     #[getter] fn lifetime_ns(&self) -> i64 { self.reader.lifetime_ns() }
     #[getter] fn tzero_count(&self) -> u64 { self.reader.tzero_count() }
-    #[getter] fn monitor_counts(&self) -> Vec<u64> { self.reader.monitor_counts().to_vec() }
+    #[getter] fn monitor_counts(&self) -> Vec<u64> {
+        self.reader.monitor_counts().to_vec()
+    }
 
     /// # Safety
     ///
@@ -211,7 +217,7 @@ impl Shm {
         flags: c_int,
     ) -> PyResult<()> {
         if view.is_null() {
-            return Err(PyBufferError::new_err("View is null"));
+            return Err(PyBufferError::new_err("Py_buffer view is null"));
         }
         if (flags & ffi::PyBUF_WRITABLE) == ffi::PyBUF_WRITABLE {
             return Err(PyBufferError::new_err("umami_client.Shm is read-only"));
@@ -223,6 +229,7 @@ impl Shm {
             (bytes.as_ptr(), bytes.len())
         };
 
+        // TODO: change to match the actual array properties (u32 values, 3 dimensions etc)
         unsafe {
             (*view).obj = slf.into_any().into_ptr();
             (*view).buf = ptr as *mut c_void;
@@ -230,6 +237,7 @@ impl Shm {
             (*view).readonly = 1;
             (*view).itemsize = 1;
             (*view).format = if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
+                // TODO: this can just as well be a static constant, no?
                 CString::new("B").expect("no interior NUL").into_raw()
             } else {
                 ptr::null_mut()

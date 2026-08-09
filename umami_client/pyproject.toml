@@ -4,12 +4,9 @@ build-backend = "maturin"
 
 [project]
 name = "umami-client"
-version = "0.8.0"
-description = "Native Python bindings for UMAMI's command socket and shared-memory histogram"
+dynamic = ["version"]
+description = "Python bindings for UMAMI's command socket and shared-memory histogram"
 requires-python = ">=3.9"
 
 [tool.maturin]
-# Pure-Rust extension module: the pymodule *is* the top-level package, no
-# separate Python source tree. Cargo.toml's own `default = ["extension-module"]`
-# already covers what maturin would otherwise inject automatically.
 module-name = "umami_client"
