@@ -29,7 +29,7 @@ pub use self::config::load_config;
 pub use self::error::UResult;
 pub use self::params::ParamMap;
 pub use self::pipeline::{start_pipeline, PipelineHandle};
-pub use self::shm::{ShmReader, RUNNING_BIT, SHM_MAGIC};
+pub use self::shm::{ShmReader, RUNNING_BIT, SHM_HEADER_SIZE, SHM_MAGIC};
 pub use self::util::wait_for_signal;
 
 static DEBUG: AtomicBool = AtomicBool::new(false);

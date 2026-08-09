@@ -272,5 +272,6 @@ fn umami_client(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("UmamiError", m.py().get_type::<UmamiError>())?;
     m.add("UmamiTimeout", m.py().get_type::<UmamiTimeout>())?;
     m.add("UmamiConnectionError", m.py().get_type::<UmamiConnectionError>())?;
+    m.add("SHM_HEADER_SIZE", umami::SHM_HEADER_SIZE)?;
     Ok(())
 }

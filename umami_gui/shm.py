@@ -29,7 +29,7 @@ numpy/pyqtgraph-facing readers on top.
 
 import numpy as np
 
-from umami_client import Shm
+from umami_client import SHM_HEADER_SIZE, Shm
 
 
 class ShmHistogram(Shm):
@@ -40,8 +40,6 @@ class ShmHistogram(Shm):
     is only ever sized for nx*ny*nt elements. It is read here only to be
     ignored; do not use it to size buffers or offsets.
     """
-
-    HEADER_SIZE = 224
 
     def read_run_id(self):
         return self.run_id
@@ -69,12 +67,12 @@ class ShmHistogram(Shm):
                 self.tzero_count, self.monitor_counts)
 
     def read_plane(self, t=0):
-        offset = self.HEADER_SIZE + t * self.nx * self.ny * 4
+        offset = SHM_HEADER_SIZE + t * self.nx * self.ny * 4
         return np.frombuffer(self, '<u4', self.nx * self.ny, offset) \
                  .reshape((self.ny, self.nx))
 
     def read_time_projection(self, n=None):
         n = self.nt if n is None else min(n, self.nt)
-        return np.frombuffer(self, '<u4', self.nx * self.ny * n, self.HEADER_SIZE) \
+        return np.frombuffer(self, '<u4', self.nx * self.ny * n, SHM_HEADER_SIZE) \
                  .reshape((n, self.ny, self.nx)) \
                  .sum(axis=(1, 2))

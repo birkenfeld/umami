@@ -35,11 +35,6 @@ from entangle.core.errors import ConfigurationError, InvalidOperation, \
 from entangle.lib import toml
 from entangle.lib.loggers import FdLogMixin
 
-# Shared memory header length in bytes, i.e. the offset of the histogram
-# array within the segment `umami_client.Shm` exports -- individual header
-# fields aren't read directly here, `Shm`'s own properties cover those.
-HEADER_SIZE = 224
-
 # Measure modes (numbers for compatibility with older devices)
 MODE_NAMES = {
     0: 'default',
@@ -128,7 +123,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         self._ny = self._shm.ny
         self._max_nt = self._shm.nt
         array_len = self._nx * self._ny * self._max_nt
-        self._data = np.frombuffer(self._shm, '<u4', array_len, HEADER_SIZE)
+        self._data = np.frombuffer(self._shm, '<u4', array_len, umami_client.SHM_HEADER_SIZE)
 
         # enable raw data dumping
         if self.rawdatadir:

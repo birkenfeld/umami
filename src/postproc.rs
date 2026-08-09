@@ -423,7 +423,7 @@ mod tests {
         input.send(PipeItem::Events(events)).unwrap();
         sync_barrier(&input);
 
-        let shm_read = crate::shm::ShmInterface::open(shm.name()).unwrap();
+        let shm_read = crate::shm::ShmReader::open(shm.name()).unwrap();
         let histo = shm_read.histo_data();
         assert_eq!(histo.iter().sum::<u32>(), 2);
         assert_eq!(histo[2 * 4 + 1], 2); // offset for (x=1, y=2, t=0)
@@ -432,26 +432,26 @@ mod tests {
         // only the two in-bounds neutrons, tzero/monitor per their own type.
         // lifetime is 0 here: this is the very first batch since start/Clear,
         // so first_event_time is seeded from this same batch's last event (600)
-        assert_eq!(shm_read.total_events, 6);
-        assert_eq!(shm_read.total_neutrons, 2);
-        assert_eq!(shm_read.tzero_count, 1);
-        assert_eq!(shm_read.monitor_counts, [0, 2, 0, 0, 0]);
-        assert_eq!(shm_read.lifetime_ns, 0);
+        assert_eq!(shm_read.total_events(), 6);
+        assert_eq!(shm_read.total_neutrons(), 2);
+        assert_eq!(shm_read.tzero_count(), 1);
+        assert_eq!(shm_read.monitor_counts(), [0, 2, 0, 0, 0]);
+        assert_eq!(shm_read.lifetime_ns(), 0);
 
         input.send(PipeItem::Clear).unwrap();
         sync_barrier(&input);
         assert!(shm_read.histo_data().iter().all(|&v| v == 0));
-        assert_eq!(shm_read.total_events, 0);
-        assert_eq!(shm_read.total_neutrons, 0);
-        assert_eq!(shm_read.tzero_count, 0);
-        assert_eq!(shm_read.monitor_counts, [0; 5]);
-        assert_eq!(shm_read.lifetime_ns, 0);
+        assert_eq!(shm_read.total_events(), 0);
+        assert_eq!(shm_read.total_neutrons(), 0);
+        assert_eq!(shm_read.tzero_count(), 0);
+        assert_eq!(shm_read.monitor_counts(), [0; 5]);
+        assert_eq!(shm_read.lifetime_ns(), 0);
 
         // lifetime tracking restarts from this next event, not from time 100 again
         input.send(PipeItem::Events(vec![test_utils::neutron_xy(100, 0, 0, 0)])).unwrap();
         sync_barrier(&input);
-        assert_eq!(shm_read.lifetime_ns, 0);
-        assert_eq!(shm_read.total_events, 1);
+        assert_eq!(shm_read.lifetime_ns(), 0);
+        assert_eq!(shm_read.total_events(), 1);
 
         let path = format!("/tmp/umami_postproc_test_histo_{}", std::process::id());
         let (send, recv) = channel::bounded(1);

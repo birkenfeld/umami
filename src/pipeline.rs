@@ -422,9 +422,9 @@ mod tests {
             .expect("Pipeline did not complete in time");
 
         let shm = crate::shm::ShmGuard::for_name(handle.shm_name());
-        let shm_read = ShmInterface::open(shm.name())
+        let shm_read = crate::shm::ShmReader::open(shm.name())
             .expect("Opening shared memory for verification");
-        shm_read.histo_data()
+        shm_read.histo_data().to_vec()
     }
 
     /// Runs the pipeline defined by `conf_name` and checks the resulting histogram

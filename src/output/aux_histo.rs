@@ -248,7 +248,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use crate::event::{test_utils, Amplitude};
     use crate::params::ParamMap;
-    use crate::shm::ShmGuard;
+    use crate::shm::{ShmGuard, ShmReader};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -287,7 +287,7 @@ mod tests {
         ev.raw = (2, 0); // adc0 = raw_0[0..12:signed] = 2 -> bin (2-(-8))*4/16 = 2
         output.handle_events(&[ev]).unwrap();
 
-        let shm = ShmInterface::open(&format!("{ipc}_aux_adc0hist")).unwrap();
+        let shm = ShmReader::open(&format!("{ipc}_aux_adc0hist")).unwrap();
         let data = shm.histo_data();
         assert_eq!(data[2], 1);
         assert_eq!(data.iter().sum::<u32>(), 1);
@@ -341,7 +341,7 @@ mod tests {
 
         output.handle_events(&[ev1, ev2, filtered_out]).unwrap();
 
-        let shm = ShmInterface::open(&format!("{ipc}_aux_amp")).unwrap();
+        let shm = ShmReader::open(&format!("{ipc}_aux_amp")).unwrap();
         let data = shm.histo_data();
         assert_eq!(data[0], 1);
         assert_eq!(data[2], 1);
@@ -365,7 +365,7 @@ mod tests {
         ev.raw = (2, 6); // x bin: (2-(-8))*4/16 = 2, y bin: (6-(-8))*4/16 = 3
         output.handle_events(&[ev]).unwrap();
 
-        let shm = ShmInterface::open(&format!("{ipc}_aux_xy")).unwrap();
+        let shm = ShmReader::open(&format!("{ipc}_aux_xy")).unwrap();
         let data = shm.histo_data();
         // layout is [t][y][x], nx=4 -> offset = y*4 + x
         assert_eq!(data[3 * 4 + 2], 1);
@@ -388,7 +388,7 @@ mod tests {
         ev.ampl = Amplitude(100); // way out of [0,7]
         output.handle_events(&[ev]).unwrap();
 
-        let shm = ShmInterface::open(&format!("{ipc}_aux_amp")).unwrap();
+        let shm = ShmReader::open(&format!("{ipc}_aux_amp")).unwrap();
         assert_eq!(shm.histo_data().iter().sum::<u32>(), 0);
     }
 
@@ -409,7 +409,7 @@ mod tests {
         disable.insert("enabled".into(), serde_json::json!(false));
         output.update_params(ModuleId::new("aux".into()), disable).unwrap();
         output.handle_events(&[ev]).unwrap();
-        let shm = ShmInterface::open(&format!("{ipc}_aux_amp")).unwrap();
+        let shm = ShmReader::open(&format!("{ipc}_aux_amp")).unwrap();
         assert_eq!(shm.histo_data().iter().sum::<u32>(), 0);
 
         // re-enabling doesn't require recreating the segment or histogram list
@@ -417,7 +417,7 @@ mod tests {
         enable.insert("enabled".into(), serde_json::json!(true));
         output.update_params(ModuleId::new("aux".into()), enable).unwrap();
         output.handle_events(&[ev]).unwrap();
-        let shm = ShmInterface::open(&format!("{ipc}_aux_amp")).unwrap();
+        let shm = ShmReader::open(&format!("{ipc}_aux_amp")).unwrap();
         assert_eq!(shm.histo_data().iter().sum::<u32>(), 1);
     }
 
@@ -464,7 +464,7 @@ mod tests {
         assert_eq!(output.histos.len(), 1);
         assert_eq!(output.histos[0].name, "chan");
         // the old segment is gone (unlinked)
-        assert!(ShmInterface::open(&format!("{ipc}_aux_amp")).is_err());
+        assert!(ShmReader::open(&format!("{ipc}_aux_amp")).is_err());
     }
 
     #[test]
@@ -483,7 +483,7 @@ mod tests {
         output.handle_events(&[ev]).unwrap();
         output.handle_clear().unwrap();
 
-        let shm = ShmInterface::open(&format!("{ipc}_aux_amp")).unwrap();
+        let shm = ShmReader::open(&format!("{ipc}_aux_amp")).unwrap();
         assert_eq!(shm.histo_data().iter().sum::<u32>(), 0);
     }
 
@@ -500,9 +500,8 @@ mod tests {
         let _guard = ShmGuard::for_name(format!("{ipc}_aux_amp"));
 
         output.handle_start_of_run("run_042").unwrap();
-        let shm = ShmInterface::open(&format!("{ipc}_aux_amp")).unwrap();
-        let run_id = std::str::from_utf8(&shm.run_id).unwrap();
-        assert!(run_id.starts_with("run_042"));
+        let shm = ShmReader::open(&format!("{ipc}_aux_amp")).unwrap();
+        assert!(shm.run_id().starts_with("run_042"));
     }
 
     #[test]
@@ -549,7 +548,7 @@ mod tests {
             output.handle_events(&[ev]).unwrap();
         }
 
-        let shm = ShmInterface::open(&format!("{ipc}_aux_chan")).unwrap();
+        let shm = ShmReader::open(&format!("{ipc}_aux_chan")).unwrap();
         let data = shm.histo_data();
         assert_eq!(data[0], 1, "channel 0 should land in bin 0");
         assert_eq!(data[55], 1, "channel 55 (== max) should land in bin 55, not be dropped");

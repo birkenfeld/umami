@@ -23,8 +23,7 @@ pub const MAX_HISTO_SIZE: usize = 1024 * 1024 * 1024;  // 4 GB shmem
 pub const SHM_MAGIC: [u8; 8] = *b"UMAMI01 ";
 
 /// Size of the `ShmInterface` header.  Changing this must change SHM_MAGIC.
-#[allow(unused)]
-const SHM_HEADER_SIZE: usize = 224;
+pub const SHM_HEADER_SIZE: usize = 224;
 
 /// Number of `Monitor {num}` counter slots reserved in the header (indices
 /// 0..MONITOR_COUNTERS); a `num` outside this range is silently ignored.
@@ -81,16 +80,6 @@ impl ShmBox {
             }
             self.total_neutrons += 1;
         }
-    }
-
-    #[cfg(test)]
-    pub fn histo_data(&self) -> Vec<u32> {
-        let size = self.histo_size(self.nt);
-        let histo = unsafe {
-            let ptr = self.ptr.as_ptr().add(1).cast::<u32>();
-            std::slice::from_raw_parts(ptr, size)
-        };
-        histo.to_vec()
     }
 
     pub fn save_to_file(&self, filename: &str, max_nt: usize) -> UResult<()> {
@@ -231,21 +220,6 @@ impl ShmInterface {
         Ok(shmbox)
     }
 
-    #[cfg(test)]
-    pub fn open(name: &str) -> UResult<ShmBox> {
-        let fd = shm_open(name, OFlag::O_RDONLY, Mode::empty())
-            .context("Opening shared memory block")?;
-        let total_size = nix::sys::stat::fstat(&fd).context("Stat shared memory block")?.st_size as usize;
-        if total_size < size_of::<ShmInterface>() {
-            Err(anyhow!("Shared memory block too small for header"))?;
-        }
-        let ptr = unsafe {
-            mmap(None, NonZeroUsize::new(total_size).expect("size"),
-                 ProtFlags::PROT_READ, MapFlags::MAP_SHARED, fd, 0)
-                .context("Mapping shared memory block for reading")?
-        };
-        Ok(ShmBox { ptr: ptr.cast() })
-    }
 }
 
 /// Read-only view onto a histogram segment, for a long-lived client that
