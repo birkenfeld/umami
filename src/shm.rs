@@ -34,14 +34,14 @@ const MONITOR_COUNTERS: usize = 5;
 /// display once a run ends, instead of counting up forever.
 pub const RUNNING_BIT: u32 = 1 << 1;
 
-pub struct ShmBox {
+pub struct ShmWriter {
     ptr: NonNull<ShmInterface>,
     len: usize,
 }
 
-unsafe impl Send for ShmBox {}
+unsafe impl Send for ShmWriter {}
 
-impl Deref for ShmBox {
+impl Deref for ShmWriter {
     type Target = ShmInterface;
 
     fn deref(&self) -> &Self::Target {
@@ -49,13 +49,13 @@ impl Deref for ShmBox {
     }
 }
 
-impl DerefMut for ShmBox {
+impl DerefMut for ShmWriter {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.ptr.as_mut() }
     }
 }
 
-impl Drop for ShmBox {
+impl Drop for ShmWriter {
     fn drop(&mut self) {
         unsafe {
             let _ = nix::sys::mman::munmap(self.ptr.cast(), self.len);
@@ -63,7 +63,44 @@ impl Drop for ShmBox {
     }
 }
 
-impl ShmBox {
+impl ShmWriter {
+    pub fn create(name: &str, config: &HistoConfig) -> UResult<ShmWriter> {
+        let max_size = config.nx * config.ny * config.max_nt;
+        if max_size == 0 {
+            Err(anyhow!("Requested histogram size is zero"))?;
+        }
+        if max_size > MAX_HISTO_SIZE {
+            Err(anyhow!("Requested histogram size {max_size} exceeds maximum of \
+                         {MAX_HISTO_SIZE} bins"))?;
+        }
+
+        let total_size = size_of::<ShmInterface>() + max_size * size_of::<u32>();
+        let fd = shm_open(name, OFlag::O_CREAT | OFlag::O_RDWR, Mode::S_IRUSR | Mode::S_IWUSR)
+            .context("Creating shared memory block")?;
+        ftruncate(&fd, total_size as i64)
+            .context("Setting size of shared memory block")?;
+        let ptr = unsafe {
+            mmap(None, NonZeroUsize::new(total_size).expect("size"),
+                 ProtFlags::PROT_WRITE, MapFlags::MAP_SHARED, fd, 0)
+                .context("Mapping shared memory block")?
+        };
+        let mut shmbox = ShmWriter { ptr: ptr.cast(), len: total_size };
+        shmbox.magic = SHM_MAGIC;
+        shmbox.run_id.fill(0);
+        shmbox.global_state = 0;
+        shmbox.nx = config.nx as u16;
+        shmbox.ny = config.ny as u16;
+        shmbox.nt = config.max_nt as u16;
+        shmbox.ni = config.max_ni as u16;
+        shmbox.run_start = 0;
+        shmbox.total_events = 0;
+        shmbox.total_neutrons = 0;
+        shmbox.lifetime_ns = 0;
+        shmbox.tzero_count = 0;
+        shmbox.monitor_counts = [0; MONITOR_COUNTERS];
+        Ok(shmbox)
+    }
+
     fn histo_size(&self, nt: u16) -> usize {
         self.nx as usize * self.ny as usize * nt as usize
     }
@@ -191,44 +228,6 @@ impl ShmInterface {
         self.tzero_count = 0;
         self.monitor_counts = [0; MONITOR_COUNTERS];
     }
-
-    pub fn create(name: &str, config: &HistoConfig) -> UResult<ShmBox> {
-        let max_size = config.nx * config.ny * config.max_nt;
-        if max_size == 0 {
-            Err(anyhow!("Requested histogram size is zero"))?;
-        }
-        if max_size > MAX_HISTO_SIZE {
-            Err(anyhow!("Requested histogram size {max_size} exceeds maximum of \
-                         {MAX_HISTO_SIZE} bins"))?;
-        }
-
-        let total_size = size_of::<ShmInterface>() + max_size * size_of::<u32>();
-        let fd = shm_open(name, OFlag::O_CREAT | OFlag::O_RDWR, Mode::S_IRUSR | Mode::S_IWUSR)
-            .context("Creating shared memory block")?;
-        ftruncate(&fd, total_size as i64)
-            .context("Setting size of shared memory block")?;
-        let ptr = unsafe {
-            mmap(None, NonZeroUsize::new(total_size).expect("size"),
-                 ProtFlags::PROT_WRITE, MapFlags::MAP_SHARED, fd, 0)
-                .context("Mapping shared memory block")?
-        };
-        let mut shmbox = ShmBox { ptr: ptr.cast(), len: total_size };
-        shmbox.magic = SHM_MAGIC;
-        shmbox.run_id.fill(0);
-        shmbox.global_state = 0;
-        shmbox.nx = config.nx as u16;
-        shmbox.ny = config.ny as u16;
-        shmbox.nt = config.max_nt as u16;
-        shmbox.ni = config.max_ni as u16;
-        shmbox.run_start = 0;
-        shmbox.total_events = 0;
-        shmbox.total_neutrons = 0;
-        shmbox.lifetime_ns = 0;
-        shmbox.tzero_count = 0;
-        shmbox.monitor_counts = [0; MONITOR_COUNTERS];
-        Ok(shmbox)
-    }
-
 }
 
 /// Read-only view onto a histogram segment, for a long-lived client that
@@ -374,7 +373,7 @@ mod tests {
     #[test]
     fn test_shm_create_and_basic_ops() {
         let shm_guard = ShmGuard::unique();
-        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
+        let mut shm = ShmWriter::create(shm_guard.name(), &test_config()).unwrap();
 
         // create() stamps the magic value
         assert_eq!(shm.magic, SHM_MAGIC);
@@ -408,7 +407,7 @@ mod tests {
     #[test]
     fn test_shm_counters() {
         let shm_guard = ShmGuard::unique();
-        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
+        let mut shm = ShmWriter::create(shm_guard.name(), &test_config()).unwrap();
 
         shm.add_events(3);
         shm.add_events(2);
@@ -442,7 +441,7 @@ mod tests {
     #[test]
     fn test_shm_add_out_of_bounds_ignored() {
         let shm_guard = ShmGuard::unique();
-        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
+        let mut shm = ShmWriter::create(shm_guard.name(), &test_config()).unwrap();
         shm.add_histo(EventHisto { x: 10, y: 10, t: 10, i: 0 }); // all out of bounds
         // should not panic
     }
@@ -450,7 +449,7 @@ mod tests {
     #[test]
     fn test_shm_clear_histo() {
         let shm_guard = ShmGuard::unique();
-        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
+        let mut shm = ShmWriter::create(shm_guard.name(), &test_config()).unwrap();
         shm.add_histo(EventHisto { x: 0, y: 0, t: 0, i: 0 });
         shm.add_histo(EventHisto { x: 1, y: 1, t: 1, i: 0 });
         shm.clear_histo();
@@ -464,7 +463,7 @@ mod tests {
     #[test]
     fn test_shm_save_to_file() {
         let shm_guard = ShmGuard::unique();
-        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
+        let mut shm = ShmWriter::create(shm_guard.name(), &test_config()).unwrap();
         shm.add_histo(EventHisto { x: 0, y: 0, t: 0, i: 0 });
         shm.add_histo(EventHisto { x: 0, y: 0, t: 0, i: 0 });
         let path = format!("/tmp/umami_test_histo_{}", std::process::id());
@@ -479,7 +478,7 @@ mod tests {
         let shm_guard = ShmGuard::unique();
         // nx*ny*nt exceeds u16::MAX, so offsets must be computed in usize
         let config = HistoConfig { nx: 56, ny: 1024, max_nt: 2, max_ni: 0 };
-        let mut shm = ShmInterface::create(shm_guard.name(), &config).unwrap();
+        let mut shm = ShmWriter::create(shm_guard.name(), &config).unwrap();
         shm.add_histo(EventHisto { x: 10, y: 1000, t: 1, i: 0 });
         let mut buf = Vec::new();
         shm.write_histo(&mut buf, 2).unwrap();
@@ -491,7 +490,7 @@ mod tests {
     fn test_shm_zero_size_fails() {
         let shm_guard = ShmGuard::unique();
         let config = HistoConfig { nx: 0, ny: 1, max_nt: 1, max_ni: 0 };
-        let result = ShmInterface::create(shm_guard.name(), &config);
+        let result = ShmWriter::create(shm_guard.name(), &config);
         assert!(result.is_err());
     }
 
@@ -500,14 +499,14 @@ mod tests {
         let shm_guard = ShmGuard::unique();
         // exceeds MAX_HISTO_SIZE without ever attempting to allocate it
         let config = HistoConfig { nx: 1_000_000, ny: 1_000_000, max_nt: 1_000, max_ni: 0 };
-        let result = ShmInterface::create(shm_guard.name(), &config);
+        let result = ShmWriter::create(shm_guard.name(), &config);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_shm_reader_reads_header_and_histo() {
         let shm_guard = ShmGuard::unique();
-        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
+        let mut shm = ShmWriter::create(shm_guard.name(), &test_config()).unwrap();
         shm.set_run_id("run_007");
         shm.set_initialized();
         shm.set_running(true);
@@ -527,7 +526,7 @@ mod tests {
     #[test]
     fn test_shm_reader_rejects_bad_magic() {
         let shm_guard = ShmGuard::unique();
-        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
+        let mut shm = ShmWriter::create(shm_guard.name(), &test_config()).unwrap();
         shm.magic = *b"BOGUS!! ";
         assert!(ShmReader::open(shm_guard.name()).is_err());
     }

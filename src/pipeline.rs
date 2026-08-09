@@ -16,7 +16,7 @@ use crate::event::Event;
 use crate::expr::{AliasTable, ExprAlias};
 use crate::input::{InputCommon, InputState};
 use crate::params::ParamMap;
-use crate::shm::ShmInterface;
+use crate::shm::ShmWriter;
 
 /// Inserts `alias` into `table`, rejecting a name that shadows an intrinsic
 /// `src/expr.rs` field or named constant. Two aliases of the same name from
@@ -200,7 +200,7 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
         Err(anyhow!("Some outputs failed to initialize"))?;
     }
 
-    let shm_area = ShmInterface::create(&config.ipc_name, &config.histogram)?;
+    let shm_area = ShmWriter::create(&config.ipc_name, &config.histogram)?;
     let postproc = postproc::PostProcessor::new(
         post_recipes,
         default_name,

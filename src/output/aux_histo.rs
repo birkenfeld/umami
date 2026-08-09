@@ -22,7 +22,7 @@ use crate::error::UResult;
 use crate::event::{Event, EventHisto};
 use crate::expr::{AliasTable, Expr};
 use crate::params::HasParams;
-use crate::shm::{ShmBox, ShmInterface};
+use crate::shm::ShmWriter;
 use super::{Output, OutputCommon};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,7 +86,7 @@ struct CompiledHisto {
     x: CompiledAxis,
     y: Option<CompiledAxis>,
     shm_name: String,
-    shm: ShmBox,
+    shm: ShmWriter,
 }
 
 /// Validated but not-yet-materialized histogram
@@ -172,7 +172,7 @@ impl AuxHistoOutput {
         }
         let mut new_compiled = Vec::with_capacity(prepared.len());
         for p in prepared {
-            let shm = ShmInterface::create(&p.shm_name, &p.histo_config)
+            let shm = ShmWriter::create(&p.shm_name, &p.histo_config)
                 .with_context(|| format!("Creating shm segment for histogram {:?}", p.name))?;
             new_compiled.push(CompiledHisto {
                 filter: p.filter, x: p.x, y: p.y, shm_name: p.shm_name, shm,

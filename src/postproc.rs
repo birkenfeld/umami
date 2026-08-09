@@ -13,7 +13,7 @@ use crate::event::{EventTime, EventType};
 use crate::input::InputState;
 use crate::pipeline::PipeItem;
 use crate::recipe::Recipe;
-use crate::shm::ShmBox;
+use crate::shm::ShmWriter;
 
 pub struct PostProcessor {
     recipe_names: BTreeMap<ModuleId, usize>,
@@ -22,7 +22,7 @@ pub struct PostProcessor {
     input: Receiver<PipeItem>,
     output: Sender<PipeItem>,
     input_state: BTreeMap<ModuleId, InputState>,
-    shm: ShmBox,
+    shm: ShmWriter,
     instance_name: Option<String>,
     first_ev_time: Option<EventTime>,
 }
@@ -33,7 +33,7 @@ impl PostProcessor {
         default_recipe: ModuleId,
         input: Receiver<PipeItem>,
         output: Sender<PipeItem>,
-        data: ShmBox,
+        data: ShmWriter,
         instance_name: Option<String>,
     ) -> Self {
         let mut recipe_names = BTreeMap::new();
@@ -231,7 +231,7 @@ mod tests {
     {
         let shm_guard = ShmGuard::unique();
         let histo_config = HistoConfig { nx: 4, ny: 4, max_nt: 1, max_ni: 0 };
-        let shm = crate::shm::ShmInterface::create(shm_guard.name(), &histo_config).unwrap();
+        let shm = crate::shm::ShmWriter::create(shm_guard.name(), &histo_config).unwrap();
         let (input_send, input_recv) = channel::bounded(16);
         let (output_send, output_recv) = channel::bounded(16);
         let postproc = PostProcessor::new(
@@ -304,7 +304,7 @@ mod tests {
     fn test_postproc_get_state_reports_instance_name() {
         let shm_guard = ShmGuard::unique();
         let histo_config = HistoConfig { nx: 4, ny: 4, max_nt: 1, max_ni: 0 };
-        let shm = crate::shm::ShmInterface::create(shm_guard.name(), &histo_config).unwrap();
+        let shm = crate::shm::ShmWriter::create(shm_guard.name(), &histo_config).unwrap();
         let (input_send, input_recv) = channel::bounded(16);
         let (output_send, _output_recv) = channel::bounded(16);
         let postproc = PostProcessor::new(
