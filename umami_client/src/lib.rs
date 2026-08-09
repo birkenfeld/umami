@@ -4,7 +4,7 @@
 //! Native Python bindings for UMAMI's command socket (`Client`) and
 //! shared-memory histogram (`Shm`).
 
-use std::ffi::{c_int, c_void, CString};
+use std::ffi::{c_int, c_void};
 use std::ptr;
 use std::time::Duration;
 
@@ -178,6 +178,9 @@ impl Client {
 #[pyclass(module = "umami_client", subclass)]
 struct Shm {
     reader: ShmReader,
+    // needed persistently for the buffer API
+    shape: [ffi::Py_ssize_t; 3],
+    strides: [ffi::Py_ssize_t; 3],
 }
 
 #[pymethods]
@@ -186,7 +189,15 @@ impl Shm {
     fn new(name: &str) -> PyResult<Self> {
         let reader = ShmReader::open(name)
             .map_err(|e| PyRuntimeError::new_err(format!("{e:#}")))?;
-        Ok(Self { reader })
+        let (nx, ny, nt) = (reader.nx() as isize, reader.ny() as isize, reader.nt() as isize);
+        let itemsize = size_of::<u32>() as isize;
+        // C-contiguous (nt, ny, nx), matching the bin index math in shm.rs's
+        // ShmBox::add_histo: off = t*nx*ny + y*nx + x.
+        Ok(Self {
+            reader,
+            shape: [nt, ny, nx],
+            strides: [ny * nx * itemsize, nx * itemsize, itemsize],
+        })
     }
 
     #[getter] fn nx(&self) -> u16 { self.reader.nx() }
@@ -206,9 +217,10 @@ impl Shm {
 
     /// # Safety
     ///
-    /// Standard PyO3 buffer-protocol slot; see `__releasebuffer__` and the
-    /// module doc above for the lifetime argument (view.obj keeps `slf`,
-    /// and therefore the mapping, alive for as long as the buffer exists).
+    /// Standard PyO3 buffer-protocol slot. `view.obj` keeps `slf` -- and
+    /// therefore the mapping and the `shape`/`strides` arrays pointed into
+    /// below -- alive for as long as the buffer exists; nothing else needs
+    /// releasing, so there is no `__releasebuffer__`.
     unsafe fn __getbuffer__(
         slf: Bound<'_, Self>,
         view: *mut ffi::Py_buffer,
@@ -221,33 +233,33 @@ impl Shm {
             return Err(PyBufferError::new_err("umami_client.Shm is read-only"));
         }
 
-        let (ptr, len) = {
+        let (ptr, len, shape, strides) = {
             let borrowed = slf.borrow();
             let data = borrowed.reader.histo_data();
-            (data.as_ptr().cast::<u8>(), std::mem::size_of_val(data))
+            (data.as_ptr().cast::<u8>(), std::mem::size_of_val(data),
+             borrowed.shape.as_ptr().cast_mut(), borrowed.strides.as_ptr().cast_mut())
         };
 
-        // TODO: change to match the actual array properties (u32 values, 3 dimensions etc)
         unsafe {
             (*view).obj = slf.into_any().into_ptr();
             (*view).buf = ptr as *mut c_void;
             (*view).len = len as isize;
             (*view).readonly = 1;
-            (*view).itemsize = 1;
+            (*view).itemsize = size_of::<u32>() as isize;
             (*view).format = if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
-                // TODO: this can just as well be a static constant, no?
-                CString::new("B").expect("no interior NUL").into_raw()
+                // little-endian unsigned int, standard (4-byte) size
+                c"<I".as_ptr().cast_mut()
             } else {
                 ptr::null_mut()
             };
-            (*view).ndim = 1;
+            (*view).ndim = 3;
             (*view).shape = if (flags & ffi::PyBUF_ND) == ffi::PyBUF_ND {
-                &mut (*view).len
+                shape
             } else {
                 ptr::null_mut()
             };
             (*view).strides = if (flags & ffi::PyBUF_STRIDES) == ffi::PyBUF_STRIDES {
-                &mut (*view).itemsize
+                strides
             } else {
                 ptr::null_mut()
             };
@@ -255,18 +267,6 @@ impl Shm {
             (*view).internal = ptr::null_mut();
         }
         Ok(())
-    }
-
-    /// # Safety
-    ///
-    /// Standard PyO3 buffer-protocol slot, only ever called by the Python
-    /// runtime with a view this class itself filled in.
-    unsafe fn __releasebuffer__(&self, view: *mut ffi::Py_buffer) {
-        unsafe {
-            if !(*view).format.is_null() {
-                drop(CString::from_raw((*view).format));
-            }
-        }
     }
 }
 

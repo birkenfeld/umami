@@ -117,14 +117,12 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
                 if self._proc.poll() is not None:
                     raise HardwareFailure('UMAMI exited during initialization')
 
-        # set up histo readout via shared memory; nx/ny/nt come from the
-        # segment's own header, not re-derived from the TOML config
+        # set up histo readout via shared memory, we index this as a flat buffer
+        # so it's reshaped to 1D
         self._shm = umami.Shm(self._ipc_name)
         self._nx = self._shm.nx
         self._ny = self._shm.ny
-        self._max_nt = self._shm.nt
-        array_len = self._nx * self._ny * self._max_nt
-        self._data = np.frombuffer(self._shm, '<u4', array_len)
+        self._data = np.asarray(self._shm).reshape(-1)
 
         # enable raw data dumping
         if self.rawdatadir:
