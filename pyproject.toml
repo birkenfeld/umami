@@ -8,10 +8,10 @@ dynamic = ["version"]
 description = "Live histogram viewer and debugging tool for UMAMI shared-memory output"
 requires-python = ">=3.9"
 dependencies = [
-    "cffi>=1.14",
     "numpy>=1.23",
     "pyqtgraph>=0.13",
     "pyqt6>=6.6",
+    "umami-client",
 ]
 
 [project.scripts]
@@ -22,6 +22,11 @@ dev = [
     "ruff>=0.6",
     "setuptools_scm>=8",
 ]
+
+[tool.uv.sources]
+# builds the extension in place via maturin; not a real distribution
+# constraint, so it doesn't land in umami-gui's own published metadata
+umami-client = { path = "umami_client", editable = true }
 
 [tool.setuptools]
 # explicit, not auto-discovered (Rust src/ is not a package)

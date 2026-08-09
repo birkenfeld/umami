@@ -21,13 +21,12 @@
 #
 # *****************************************************************************
 
-import itertools
-import json
 import os
-import socket
 import subprocess
 import time
 
+import numpy as np
+import umami_client
 from entangle import base
 from entangle.core import BUSY, FAULT, OFF, INIT, UNKNOWN, ON, Attr, Cmd, \
     Prop, nonemptystring, uint16, uint64
@@ -35,15 +34,11 @@ from entangle.core.errors import ConfigurationError, InvalidOperation, \
     CommunicationFailure, HardwareFailure
 from entangle.lib import toml
 from entangle.lib.loggers import FdLogMixin
-from entangle.lib.shm import SharedMemory
 
-# Define constants used to access the shared memory area.
-# Unit: 32-bit
-EL_SIZE = 4
-
-# Shared memory header length in bytes; this is only used to offset into the
-# histogram array, individual header fields aren't read here.
-SHM_HEAD_LEN = 224
+# Shared memory header length in bytes, i.e. the offset of the histogram
+# array within the segment `umami_client.Shm` exports -- individual header
+# fields aren't read directly here, `Shm`'s own properties cover those.
+HEADER_SIZE = 224
 
 # Measure modes (numbers for compatibility with older devices)
 MODE_NAMES = {
@@ -51,8 +46,6 @@ MODE_NAMES = {
     1: 'tof',
     2: 'ext_rt',
 }
-
-_bind_counter = itertools.count()
 
 
 class ImageChannel(FdLogMixin, base.ImageChannel):
@@ -106,9 +99,6 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
             content = f.read()
         config = toml.Parser(self.config, content).parse_doc()
         self._nmod = len(config['inputs'])
-        self._nx = config['histogram']['nx']
-        self._ny = config['histogram']['ny']
-        self._max_nt = config['histogram']['max_nt']
 
         # start the UMAMI subprocess
         self._ipc_name = 'umami-tango-' + self._worker_name.replace('/', '-')
@@ -120,25 +110,25 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
             stderr=self.get_log_fd(),
         )
 
-        # connect to UMAMI via a Unix socket and set up the initial state
-        self._new_socket()
-
-        # wait for UMAMI to initialize
+        # connect to UMAMI's command socket, waiting for it to come up
         while True:
             time.sleep(0.1)
             try:
-                self._cmd.connect('\0' + self._ipc_name)
-                self.hw_version = self._send_cmd('ping')
+                self._cmd = umami_client.Client(self._ipc_name)
+                self.hw_version = self._cmd.ping()
                 break
-            except (ConnectionRefusedError, CommunicationFailure):
+            except umami_client.UmamiClientError:
                 if self._proc.poll() is not None:
                     raise HardwareFailure('UMAMI exited during initialization')
 
-        # set up histo readout via shared memory
+        # set up histo readout via shared memory; nx/ny/nt come from the
+        # segment's own header, not re-derived from the TOML config
+        self._shm = umami_client.Shm(self._ipc_name)
+        self._nx = self._shm.nx
+        self._ny = self._shm.ny
+        self._max_nt = self._shm.nt
         array_len = self._nx * self._ny * self._max_nt
-        shm_size = SHM_HEAD_LEN + array_len * EL_SIZE
-        self._shm = SharedMemory(self._ipc_name, shm_size)
-        self._data = self._shm.get_array('u4', array_len, SHM_HEAD_LEN)
+        self._data = np.frombuffer(self._shm, '<u4', array_len, HEADER_SIZE)
 
         # enable raw data dumping
         if self.rawdatadir:
@@ -149,17 +139,12 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         self._all_params = self._send_cmd('get_params')
 
     def delete(self):
-        if self._cmd:
-            self._cmd.close()
         if self._proc and self._proc.poll() is None:
             self._proc.kill()
         self.delete_fd_log()
         self._data = None
-        if self._shm:
-            try:
-                self._shm.close()
-            except BufferError:
-                pass
+        self._shm = None
+        self._cmd = None
 
     def read_detectorSize(self):
         return [self._nx, self._ny, self._ntofbins]
@@ -263,57 +248,20 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
             return FAULT, '; '.join(errors)
         return ON, ''
 
-    def _new_socket(self):
-        # bind to a fresh local address every time, recovers from timeout
-        self._cmd = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        self._cmd.settimeout(2)
-        self._cmd.bind('\0req-' + self._ipc_name + '-' + str(next(_bind_counter)))
-
-    def _disconnect(self):
-        if self._cmd is not None:
-            try:
-                self._cmd.close()
-            except OSError:
-                pass
-            self._cmd = None
-
-    def _reconnect(self):
-        try:
-            self._new_socket()
-            self._cmd.connect('\0' + self._ipc_name)
-        except OSError:
-            self._disconnect()
-            raise
-
     def _send_cmd(self, cmd, **kwargs):
-        # send command to UMAMI via a Unix socket
-        cmd = {'command': cmd}
-        cmd.update(kwargs)
-        msg = json.dumps(cmd).encode()
         try:
-            if self._cmd is None:
-                self._reconnect()
-            self._cmd.sendall(msg)
-            ret = self._cmd.recv(2048)
-            reply = json.loads(ret.decode())
-        except Exception as e:
-            self._disconnect()
-            raise CommunicationFailure(f'Error communicating with UMAMI: {e}')
-        if reply['result'] == 'error':
+            return getattr(self._cmd, cmd)(**kwargs)
+        except umami_client.UmamiError as e:
+            module, message = e.args
             raise InvalidOperation(
-                f'UMAMI error: {reply.get("message", "unknown error")} from '
-                f'{reply.get("module") or "unknown module"}')
-        elif reply['result'] == 'data':
-            return reply['value']
+                f'UMAMI error: {message} from {module or "unknown module"}')
+        except Exception as e:
+            raise CommunicationFailure(f'Error communicating with UMAMI: {e}')
 
     def Command(self, cmd):
         try:
-            if self._cmd is None:
-                self._reconnect()
-            self._cmd.sendall(cmd.encode())
-            return self._cmd.recv(2048).decode()
+            return self._cmd.send_json(cmd)
         except Exception as e:
-            self._disconnect()
             raise CommunicationFailure(f'Error communicating with UMAMI: {e}')
 
     def Clear(self):

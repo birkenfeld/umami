@@ -248,6 +248,96 @@ impl ShmInterface {
     }
 }
 
+/// Read-only view onto a histogram segment, for a long-lived client that
+/// repeatedly opens and drops segments (e.g. the aux-histo GUI panel
+/// re-opening after a `histos` param change) rather than holding one for the
+/// life of the process -- unlike `ShmBox`, this actually unmaps on drop.
+pub struct ShmReader {
+    ptr: NonNull<u8>,
+    len: usize,
+}
+
+// Sound: the mapping is opened `PROT_READ`-only and never written to after
+// `open`, so shared references to it may cross threads freely.
+unsafe impl Send for ShmReader {}
+unsafe impl Sync for ShmReader {}
+
+impl ShmReader {
+    /// Opens `name` read-only and verifies the layout-version magic; the
+    /// segment stays mapped for the lifetime of the returned `ShmReader`,
+    /// unmapped again on drop.
+    pub fn open(name: &str) -> UResult<Self> {
+        let fd = shm_open(name, OFlag::O_RDONLY, Mode::empty())
+            .context("Opening shared memory block")?;
+        let total_size = nix::sys::stat::fstat(&fd)
+            .context("Stat shared memory block")?.st_size as usize;
+        if total_size < size_of::<ShmInterface>() {
+            Err(anyhow!("Shared memory block too small for header"))?;
+        }
+        let ptr = unsafe {
+            mmap(None, NonZeroUsize::new(total_size).expect("size"),
+                 ProtFlags::PROT_READ, MapFlags::MAP_SHARED, fd, 0)
+                .context("Mapping shared memory block for reading")?
+        };
+        let reader = Self { ptr: ptr.cast(), len: total_size };
+        if reader.header().magic != SHM_MAGIC {
+            Err(anyhow!("Shared memory {name:?} has an incompatible layout version"))?;
+        }
+        Ok(reader)
+    }
+
+    fn header(&self) -> &ShmInterface {
+        unsafe { self.ptr.cast::<ShmInterface>().as_ref() }
+    }
+
+    pub fn run_id(&self) -> String {
+        let raw = &self.header().run_id;
+        let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+        String::from_utf8_lossy(&raw[..end]).into_owned()
+    }
+
+    pub fn running(&self) -> bool {
+        self.header().global_state & RUNNING_BIT != 0
+    }
+
+    pub fn nx(&self) -> u16 { self.header().nx }
+    pub fn ny(&self) -> u16 { self.header().ny }
+    pub fn nt(&self) -> u16 { self.header().nt }
+    pub fn ni(&self) -> u16 { self.header().ni }
+    pub fn run_start(&self) -> u32 { self.header().run_start }
+    pub fn total_events(&self) -> u64 { self.header().total_events }
+    pub fn total_neutrons(&self) -> u64 { self.header().total_neutrons }
+    pub fn lifetime_ns(&self) -> i64 { self.header().lifetime_ns }
+    pub fn tzero_count(&self) -> u64 { self.header().tzero_count }
+    pub fn monitor_counts(&self) -> [u64; MONITOR_COUNTERS] { self.header().monitor_counts }
+
+    /// The whole mapped segment (header followed by histogram bins), for a
+    /// caller that wants to index into it directly by the documented byte
+    /// offsets (e.g. exporting it as a zero-copy buffer to Python).
+    pub fn as_bytes(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+
+    /// Histogram bins only, as a flat `nx * ny * nt` array.
+    pub fn histo_data(&self) -> &[u32] {
+        let size = self.nx() as usize * self.ny() as usize * self.nt() as usize;
+        unsafe {
+            std::slice::from_raw_parts(self.ptr.as_ptr().add(SHM_HEADER_SIZE).cast(), size)
+        }
+    }
+}
+
+impl Drop for ShmReader {
+    fn drop(&mut self) {
+        // Safe: `ptr`/`len` describe exactly the mapping created in `open`,
+        // and nothing else can still be pointing into it since `ShmReader`
+        // has no way to hand out a longer-lived view than `&self`.
+        unsafe {
+            let _ = nix::sys::mman::munmap(self.ptr.cast(), self.len);
+        }
+    }
+}
+
 /// Owns a unique test shm segment name and unlinks it on drop, so a panicking
 /// test still cleans up instead of leaking the segment.
 #[cfg(test)]
@@ -425,5 +515,38 @@ mod tests {
         let config = HistoConfig { nx: 1_000_000, ny: 1_000_000, max_nt: 1_000, max_ni: 0 };
         let result = ShmInterface::create(shm_guard.name(), &config);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_shm_reader_reads_header_and_histo() {
+        let shm_guard = ShmGuard::unique();
+        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
+        shm.set_run_id("run_007");
+        shm.set_initialized();
+        shm.set_running(true);
+        shm.add_events(5);
+        shm.add_histo(EventHisto { x: 1, y: 2, t: 3, i: 0 });
+
+        let reader = ShmReader::open(shm_guard.name()).unwrap();
+        assert_eq!(reader.run_id(), "run_007");
+        assert!(reader.running());
+        assert_eq!((reader.nx(), reader.ny(), reader.nt()), (4, 4, 4));
+        assert_eq!(reader.total_events(), 5);
+        // bin (1,2,3) -> offset 3*16 + 2*4 + 1 = 57, see test_shm_create_and_basic_ops
+        assert_eq!(reader.histo_data()[57], 1);
+        assert_eq!(reader.as_bytes().len(), SHM_HEADER_SIZE + 4 * 4 * 4 * size_of::<u32>());
+    }
+
+    #[test]
+    fn test_shm_reader_rejects_bad_magic() {
+        let shm_guard = ShmGuard::unique();
+        let mut shm = ShmInterface::create(shm_guard.name(), &test_config()).unwrap();
+        shm.magic = *b"BOGUS!! ";
+        assert!(ShmReader::open(shm_guard.name()).is_err());
+    }
+
+    #[test]
+    fn test_shm_reader_missing_segment_fails() {
+        assert!(ShmReader::open("umami_test_does_not_exist").is_err());
     }
 }

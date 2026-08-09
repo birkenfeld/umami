@@ -21,27 +21,18 @@ Shared-memory segment layout:
      176       8  tzero_count (u64, Tzero events since the last Clear)
      184      40  monitor_counts (5 x u64, indexed by Monitor{num}, since last Clear)
      224    nx*ny*nt x 4  histogram bins (u32, LE)
+
+`umami_client.Shm` does the actual `shm_open`/mmap/magic-check and exports
+the segment via the buffer protocol; this module only adds the
+numpy/pyqtgraph-facing readers on top.
 """
 
-import mmap
-import os
-
-import cffi
 import numpy as np
 
-ffi = cffi.FFI()
-ffi.cdef('''
-int shm_open(const char *name, int flags, unsigned int mode);
-int shm_unlink(const char *name);
-''')
-
-MAGIC = b'UMAMI01 '
-HEADER_SIZE = 224
-
-RUNNING_BIT = 1 << 1
+from umami_client import Shm
 
 
-class ShmHistogram:
+class ShmHistogram(Shm):
     """Read-only view onto a UMAMI shared-memory histogram segment.
 
     Note: the `ni` header field is not implemented on the UMAMI/Rust side --
@@ -50,51 +41,23 @@ class ShmHistogram:
     ignored; do not use it to size buffers or offsets.
     """
 
-    def __init__(self, shm_name):
-        lib = ffi.dlopen('rt')
-        fd = lib.shm_open(shm_name.encode(), os.O_RDONLY, 0o666)
-        if fd < 0:
-            msg = f'Could not open shared memory {shm_name!r}: {os.strerror(-fd)}'
-            raise RuntimeError(msg)
-        self.fd = fd
-        header_map = mmap.mmap(fd, HEADER_SIZE, prot=mmap.PROT_READ)
-        magic = np.frombuffer(header_map, 'S8', count=1, offset=0)[0]
-        if magic != MAGIC:
-            header_map.close()
-            os.close(fd)
-            msg = (f'Shared memory {shm_name!r} has magic {magic!r}, '
-                   f'expected {MAGIC!r} -- incompatible umami version?')
-            raise RuntimeError(msg)
-        header = np.frombuffer(header_map, '<u2', count=4, offset=140)
-        self.nx = int(header[0])
-        self.ny = int(header[1])
-        self.nt = int(header[2])
-        del header  # release the buffer export so header_map can be closed
-        header_map.close()
-
-        self.mapp = mmap.mmap(fd, HEADER_SIZE + self.nx * self.ny * self.nt * 4,
-                               prot=mmap.PROT_READ)
-
-    def close(self):
-        self.mapp.close()
-        os.close(self.fd)
+    HEADER_SIZE = 224
 
     def read_run_id(self):
-        return np.frombuffer(self.mapp, 'S128', 1, 8)[0].decode('ascii').rstrip('\x00')
+        return self.run_id
 
     def read_run_start(self):
         """Unix timestamp of the last StartOfRun, or 0 if none yet.
 
         Re-read on every call, like read_run_id() -- both change whenever a
-        new run starts, unlike nx/ny/nt which are cached once at construction
-        since they're fixed for the lifetime of this shm segment.
+        new run starts, unlike nx/ny/nt which are fixed for the lifetime of
+        this shm segment.
         """
-        return int(np.frombuffer(self.mapp, '<u4', 1, 148)[0])
+        return self.run_start
 
     def read_running(self):
         """Whether a run is currently active (between StartOfRun and EndOfRun)."""
-        global_state = int(np.frombuffer(self.mapp, '<u4', 1, 136)[0])
-        return bool(global_state & RUNNING_BIT)
+        return self.running
 
     def read_counters(self):
         """Read the events/neutrons/lifetime/tzero/monitors counters.
@@ -102,16 +65,16 @@ class ShmHistogram:
         Returns `(total_events, total_neutrons, lifetime_ns, tzero_count,
         monitor_counts)`, all accumulated since the last Clear.
         """
-        v = np.frombuffer(self.mapp, '<u8', 9, 152)
-        return int(v[0]), int(v[1]), int(v[2]), int(v[3]), v[4:9].tolist()
+        return (self.total_events, self.total_neutrons, self.lifetime_ns,
+                self.tzero_count, self.monitor_counts)
 
     def read_plane(self, t=0):
-        offset = HEADER_SIZE + t * self.nx * self.ny * 4
-        return np.frombuffer(self.mapp, '<u4', self.nx * self.ny, offset) \
+        offset = self.HEADER_SIZE + t * self.nx * self.ny * 4
+        return np.frombuffer(self, '<u4', self.nx * self.ny, offset) \
                  .reshape((self.ny, self.nx))
 
     def read_time_projection(self, n=None):
         n = self.nt if n is None else min(n, self.nt)
-        return np.frombuffer(self.mapp, '<u4', self.nx * self.ny * n, HEADER_SIZE) \
+        return np.frombuffer(self, '<u4', self.nx * self.ny * n, self.HEADER_SIZE) \
                  .reshape((n, self.ny, self.nx)) \
                  .sum(axis=(1, 2))

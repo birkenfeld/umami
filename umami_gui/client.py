@@ -3,84 +3,57 @@
 
 """Command-socket client for talking to a running UMAMI pipeline."""
 
-import itertools
-import json
-import os
-import socket
+import umami_client
 
 SOCKET_TIMEOUT = 0.5
-# Matches the server's receive buffer (see `command.rs`) -- large enough for
-# a full-params reply embedding a `time_bins` array up to the GUI's
-# 4096-channel cap.
-RECV_BUFFER = 131_072
-
-_bind_counter = itertools.count()
 
 
-class UmamiClient:
+class UmamiClient(umami_client.Client):
     """Talks to the UMAMI command socket.
 
     Never raises to callers; every failure is logged and the call returns
-    None instead.
+    None instead. The native base class does the actual socket I/O,
+    reconnect-on-failure, and JSON (de)serialization; `connected` is one of
+    its inherited properties. This class only adds that never-raise contract
+    plus the GUI's logging conventions.
     """
+
+    def __new__(cls, ipc_name, log):  # noqa: ARG004
+        # The native base class's constructor doubles as `__new__` (PyO3
+        # `#[new]`), which Python calls with this class's own call args
+        # before `__init__` ever runs -- so its differing signature (an
+        # extra `timeout`, no `log`) has to be adapted here rather than in
+        # `__init__` below.
+        return super().__new__(cls, ipc_name, timeout=SOCKET_TIMEOUT)
 
     def __init__(self, ipc_name, log):
         self.ipc_name = ipc_name
         self.log = log
-        self.connected = False
         self._busy = False
-        self.sock = None
-        self._new_socket()
 
-    def _new_socket(self):
-        # Bind to a fresh local address every time, recovers from a timeout.
-        if self.sock is not None:
-            self.sock.close()
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        self.sock.settimeout(SOCKET_TIMEOUT)
-        self.sock.bind('\0plot-' + self.ipc_name + '-' + str(os.getpid()) +
-                        '-' + str(next(_bind_counter)))
-
-    def _ensure_connected(self):
-        if self.connected:
-            return True
-        self._new_socket()
-        try:
-            self.sock.connect('\0' + self.ipc_name)
-        except OSError as e:
-            self.log.warning(f'Cannot reach {self.ipc_name!r}: {e}')
-            return False
-        self.connected = True
-        return True
-
-    def _call(self, cmd, quiet=False, **kwargs):
+    def _call(self, name, quiet=False, **kwargs):
         if self._busy:
             return None  # a previous call is still (conceptually) in flight
         self._busy = True
         try:
-            if not self._ensure_connected():
-                return None
-            msg = json.dumps({'command': cmd, **kwargs})
+            msg = {'command': name, **kwargs}
             if not quiet:
                 self.log.info(f'-> {msg}')
             try:
-                self.sock.sendall(msg.encode())
-                raw = self.sock.recv(RECV_BUFFER)
-            except OSError as e:
-                self.connected = False
-                self.log.warning(f'Lost connection to {self.ipc_name!r}: {e}')
-                return None
-            reply = json.loads(raw.decode())
-            if reply['result'] == 'error':
+                result = getattr(super(), name)(**kwargs)
+            except umami_client.UmamiError as e:
+                module, message = e.args
                 if quiet:
                     self.log.warning(f'-> {msg}')
-                module = reply.get('module')
                 prefix = f'[{module}] ' if module else ''
-                self.log.error(f'{prefix}{reply["message"]}')
+                self.log.error(f'{prefix}{message}')
+                return None
+            except umami_client.UmamiClientError as e:
+                self.log.warning(f'Lost connection to {self.ipc_name!r}: {e}')
                 return None
             if not quiet:
-                self.log.info(f'<- {reply}')
-            return reply.get('value')
+                self.log.info(f'<- {result}')
+            return result
         finally:
             self._busy = False
 

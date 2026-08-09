@@ -1,15 +1,23 @@
 [workspace]
+members = ["umami_client"]
 
-[package]
-name = "umami"
+[workspace.package]
 version = "0.8.0"
 edition = "2024"
 authors = ["Georg Brandl <g.brandl@fz-juelich.de>",
            "Alexander Zaft <a.zaft@fz-juelich.de>",
            "Enrico Faulhaber <enrico.faulhaber@frm2.tum.de>"]
 license = "GPL-3.0-or-later"
-description = "Unified Mechanism for Acquisition of Measured Intensity"
 rust-version = "1.88"
+
+[package]
+name = "umami"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Unified Mechanism for Acquisition of Measured Intensity"
 
 [dependencies]
 anyhow = "1.0.102"

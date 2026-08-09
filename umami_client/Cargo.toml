@@ -1,0 +1,34 @@
+[package]
+name = "umami-client"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Native Python bindings for UMAMI's command socket and shared-memory histogram"
+
+[lib]
+# cdylib for the Python extension module; rlib so `cargo test`/`clippy` can
+# still build and check this crate like any other workspace member.
+name = "umami_client"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# No default features: this is a client, it never needs the hdf5 output or
+# any of the acquisition-side pipeline machinery to link.
+umami = { path = "..", default-features = false }
+pyo3 = { version = "0.29.2" }
+pythonize = "0.29.0"
+serde_json = "1.0.149"
+
+[features]
+# pyo3's "extension-module" assumes libpython is provided by the interpreter
+# that loads the .so, and can't be combined with a standalone test binary
+# that embeds its own interpreter -- so it's opt-out for `cargo test`
+# (`cargo test --no-default-features`), not a hardcoded dependency feature.
+# maturin enables it for real wheel builds via `pyproject.toml`.
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]
+
+[dev-dependencies]
+pyo3 = { version = "0.29.2", features = ["auto-initialize"] }

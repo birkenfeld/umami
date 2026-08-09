@@ -41,9 +41,11 @@ This produces two executables:
 
 Several features are defined for optional components.
 
-`umami-gui`, a PyQtGraph-based live viewer and control panel, does not need to
-be built; install it as a Python package with `uv` or run it in-place with
-`python -m umami_gui [ipc_name]`.
+`umami-gui`, a PyQtGraph-based live viewer and control panel, is a Python
+package built with `uv` (`uv sync`), which also compiles `umami-client` --
+the native extension module wrapping this crate's command-socket and
+shared-memory client code for Python. Run it in-place with
+`uv run umami-gui [ipc_name]`.
 
 ## Quickstart
 
@@ -52,7 +54,7 @@ cargo build --release
 ./target/release/umami test/mesy.conf &
 ./target/release/umami-ctl state
 ./target/release/umami-ctl start run_0001
-python -m umami_gui
+uv run umami-gui
 ```
 
 ## Further documentation

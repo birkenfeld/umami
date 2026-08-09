@@ -3,6 +3,3 @@ General:
 - More custom aliases (raw -> y pre calib etc)
 - Test input errors with real hw
 - Save config: only if val changed in session
-
-Later:
-- Python client module reusing Rust client via PyO3?

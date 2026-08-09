@@ -23,12 +23,13 @@ use anyhow::anyhow;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 // Public API
-pub use self::client::Client;
-pub use self::command::{Command, CommandReply};
+pub use self::client::{Client, ClientError};
+pub use self::command::{Command, CommandReply, RECV_BUFFER_SIZE};
 pub use self::config::load_config;
 pub use self::error::UResult;
 pub use self::params::ParamMap;
 pub use self::pipeline::{start_pipeline, PipelineHandle};
+pub use self::shm::{ShmReader, RUNNING_BIT, SHM_MAGIC};
 pub use self::util::wait_for_signal;
 
 static DEBUG: AtomicBool = AtomicBool::new(false);

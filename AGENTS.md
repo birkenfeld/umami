@@ -6,12 +6,18 @@ UMAMI — Rust data acquisition backend for neutron detectors.
 Modular pipeline: detector-specific inputs → recipes → sorter →
 postprocessing → histogramming → outputs.
 
-Produces two binaries (`umami`, `umami-ctl`), plus a standalone Python
-debugging GUI (`umami-gui`, see "Python GUI" below).
+Produces two binaries (`umami`, `umami-ctl`), a native Python extension
+module (`umami-client`, see "Native Python client" below) wrapping this
+crate's command-socket and shared-memory client code, and a standalone
+Python debugging GUI (`umami-gui`, see "Python GUI" below) built on top of it.
 
 ## Build & Verify
 
-Pure Cargo workspace:
+A Cargo workspace with two members: the `umami` package (root) and
+`umami_client/` (the PyO3 extension, depending on `umami` with
+`default-features = false`). Plain `cargo build`/`test`/`clippy` from the
+root only cover the `umami` package itself, matching before; add
+`--workspace` to include `umami_client` too.
 
 ```sh
 cargo build                         # debug build
@@ -19,6 +25,8 @@ cargo build --release               # optimized
 cargo test                          # unit + integration suite (74+ tests)
 cargo clippy --all-targets          # lint
 cargo check                         # type-check only
+cargo test --workspace              # + umami_client's own tests
+cargo clippy --workspace --all-targets  # + lint umami_client
 ```
 
 The `trace` feature gates per-event logging (`ltrace!` compiles to nothing without it):
@@ -56,7 +64,11 @@ Key files:
 - `src/command.rs` — IPC protocol (JSON over Unix datagram sockets, abstract namespace)
 - `src/config.rs` — TOML config deserialization
 - `src/event.rs` — `Event` struct: **`#[repr(C)]`, exactly 48 bytes** (enforced by unit test)
+- `src/client.rs` — `Client`, the command-socket client (reconnect-on-failure,
+  fresh local address per reconnect); wrapped for Python by `umami_client/`
 - `src/derive/` — proc-macro sub-crate (`#[derive(HasParams)]`)
+- `umami_client/` — PyO3 extension crate wrapping `Client` and a read-only
+  `ShmReader`; see "Native Python client" below
 
 ## Conventions
 
@@ -126,24 +138,36 @@ are resolved relative to the config file's directory.
 
 Runtime config is TOML. Example configs in `test/*.conf`.
 
+## Native Python client
+
+`umami_client/` is a PyO3 extension crate (pure Rust, no Python source)
+wrapping `src/client.rs`'s `Client` and a read-only shm reader for Python,
+so the wire protocol and shm layout exist in one place. No libhdf5 needed
+(`default-features = false`). `Client`/`Shm` are `#[pyclass(subclass)]`;
+`umami_gui` and `umami_det.py` subclass them instead of reimplementing
+socket/mmap handling. `cargo test`/`clippy` need `--workspace` to reach it
+(see "Build & Verify").
+
 ## Python GUI
 
 `umami-gui` is a PyQtGraph-based package (`umami_gui/`) that talks to the
-same command socket and shared-memory histogram as `umami-ctl`, for
-interactive debugging: live histogram + projection plot, per-input state,
-mode switching, live param view/edit, raw-dump/save-histo controls, and a
-log of every command sent and reply received.
+same command socket and shared-memory histogram as `umami-ctl` (via
+`umami_client`, see above), for interactive debugging: live histogram +
+projection plot, per-input state, mode switching, live param view/edit,
+raw-dump/save-histo controls, and a log of every command sent and reply
+received.
 
-Dependencies (`cffi`, `numpy`, `pyqtgraph`, `pyqt6`) are managed via
+Dependencies (`numpy`, `pyqtgraph`, `pyqt6`, `umami-client`) are managed via
 `pyproject.toml` + `uv`:
 ```sh
-uv sync                             # create/update .venv with pinned deps
+uv sync                             # create/update .venv, builds umami-client too
 uv run umami-gui [ipc_name]         # run it
 uv run ruff check umami_gui         # lint (dev dependency group)
 uv build                            # build an installable wheel
 ```
 Prefer `uv run ruff` over an ambient system `ruff` — versions/default rule
-sets can differ and surface different findings.
+sets can differ and surface different findings. `uv sync` needs a Rust
+toolchain on `PATH` to build `umami-client` from source.
 
 `uv build` produces a wheel that installs `umami-gui` straight into the
 target environment's `bin/` directory (a standard PEP 621 `[project.scripts]`
@@ -154,7 +178,8 @@ no separate packaging step. The package version is derived from the git tag
 `pyproject.toml` and the fallback logic in `umami_gui/__init__.py`).
 
 - `umami_det.py` is a second, Tango/Entangle-based client against the same
-  wire protocol — useful as a reference for command usage patterns.
+  wire protocol, also built on `umami_client` — useful as a reference for
+  command usage patterns.
 - To exercise the GUI live (e.g. after a change), use `test/harness.sh` (see
   "Manual Testing Harness" above): `start` an instance, then `gui`/
   `screenshot`/`click`/`key` to drive and inspect it under a dedicated Xvfb

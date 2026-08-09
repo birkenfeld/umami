@@ -412,7 +412,7 @@ mod tests {
         let handle = start_pipeline(config, false)
             .expect("Starting test pipeline");
 
-        let client = Client::new(handle.ipc_name())
+        let mut client = Client::new(handle.ipc_name())
             .expect("Creating test client");
         let reply = client.send(&Command::Start { run_id })
             .expect("Sending start command");

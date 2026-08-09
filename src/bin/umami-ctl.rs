@@ -55,7 +55,7 @@ enum Cmd {
 }
 
 fn inner_main(args: Options) -> anyhow::Result<()> {
-    let client = Client::new(&args.ipc_name)?;
+    let mut client = Client::new(&args.ipc_name)?;
 
     let cmd = match args.cmd {
         Cmd::Start { run_id } => Command::Start { run_id },

@@ -402,7 +402,7 @@ class AuxHistoWindow(QWidget):
         self.settings.setValue(AUX_DISPLAY_KEY, json.dumps(state))
 
     def _forget(self, name):
-        self._shms.pop(name).close()
+        del self._shms[name]
         plot = self._plots.pop(name)
         # per-plot display settings must outlive the widget -- _rebuild()
         # destroys and recreates every plot whenever the histos list changes
@@ -438,8 +438,6 @@ class AuxHistoWindow(QWidget):
                 shms[name] = ShmHistogram(shm_name)
             except RuntimeError as e:
                 self.log.warning(f'Could not open {shm_name!r}: {e}')
-                for shm in shms.values():
-                    shm.close()
                 return False
         if len(tile) == 1:
             spec = tile[0]

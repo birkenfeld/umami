@@ -317,7 +317,6 @@ class MainWindow(QWidget):
         except RuntimeError as e:
             self.log_panel.error(f'Could not reopen shared memory: {e}')
             return
-        self.histo.close()
         self.histo = new_histo
         self.rate_samples.clear()
         self.counter_samples.clear()
