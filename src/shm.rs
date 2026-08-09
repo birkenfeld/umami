@@ -36,6 +36,7 @@ pub const RUNNING_BIT: u32 = 1 << 1;
 
 pub struct ShmBox {
     ptr: NonNull<ShmInterface>,
+    len: usize,
 }
 
 unsafe impl Send for ShmBox {}
@@ -51,6 +52,14 @@ impl Deref for ShmBox {
 impl DerefMut for ShmBox {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.ptr.as_mut() }
+    }
+}
+
+impl Drop for ShmBox {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = nix::sys::mman::munmap(self.ptr.cast(), self.len);
+        }
     }
 }
 
@@ -203,7 +212,7 @@ impl ShmInterface {
                  ProtFlags::PROT_WRITE, MapFlags::MAP_SHARED, fd, 0)
                 .context("Mapping shared memory block")?
         };
-        let mut shmbox = ShmBox { ptr: ptr.cast() };
+        let mut shmbox = ShmBox { ptr: ptr.cast(), len: total_size };
         shmbox.magic = SHM_MAGIC;
         shmbox.run_id.fill(0);
         shmbox.global_state = 0;
