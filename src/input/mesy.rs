@@ -179,6 +179,7 @@ where
     dump: DumpHandler,
     // configuration
     name: ModuleId,
+    mcpd_id: u8,
     #[param(help = "Don't raw-dump data buffers that contain no events")]
     skip_empty_dump: bool,
     #[param(readonly = true, datatype = "MCPD firmware version: {cpu: (major, minor), fpga: (major, minor)}",
@@ -246,6 +247,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> MesyInput<S, C> {
             command_handler: commands,
             dump: Default::default(),
             name: common.name,
+            mcpd_id: config.mcpd_id,
             skip_empty_dump: config.skip_empty_dump,
             mcpd_version,
             found,
@@ -340,7 +342,7 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
 
     fn read_events(&mut self) -> UResult<Vec<Event>> {
         let mut buffer = [0_u8; MAX_PACKET_SIZE];
-        let n = match self.source.get_packet(&mut buffer) {
+        let n = match self.source.get_packet(&mut buffer, self.mcpd_id) {
             Ok(0) => return Ok(vec![]),
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(vec![]),
@@ -451,13 +453,13 @@ fn read_48bit(buf: &[u8]) -> u64 {
 /// little-endian order.
 pub trait MesySource: Source {
     /// Read one packet into the provided buffer, returning the number of bytes
-    /// read.
-    fn get_packet(&mut self, buffer: &mut [u8]) -> io::Result<usize>;
+    /// read. `mcpd_id` is the configured MCPD ID for this input.
+    fn get_packet(&mut self, buffer: &mut [u8], mcpd_id: u8) -> io::Result<usize>;
 }
 
 impl MesySource for UdpReader {
     /// On the wire, every packet just comes in as a datagram.
-    fn get_packet(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+    fn get_packet(&mut self, buffer: &mut [u8], _mcpd_id: u8) -> io::Result<usize> {
         let n = self.0.recv(buffer)?;
         // Consistency check the packet header.
         let packet_n = 2 * LE::read_u16(&buffer[..2]) as usize;
@@ -485,8 +487,9 @@ impl MesySource for ReplayFile {
     /// - Packets, every one followed by 8-byte "packet end marker"
     /// - 8-byte "end marker"
     ///
-    /// Here, we read every packet including the following end marker.
-    fn get_packet(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+    /// Here, we read every packet including the following end marker. Any
+    /// packet not from `mcpd_id` is reported as empty rather than returned.
+    fn get_packet(&mut self, buffer: &mut [u8], mcpd_id: u8) -> io::Result<usize> {
         let head = &mut buffer[..8];
         self.read_exact(head)?;
         if head == FILE_START {
@@ -548,7 +551,11 @@ impl MesySource for ReplayFile {
             if swapped {
                 swap_words(&mut buffer[..n]);
             }
-            Ok(n)
+            if (LE::read_u16(&buffer[10..12]) >> 8) as u8 != mcpd_id {
+                Ok(0)
+            } else {
+                Ok(n)
+            }
         }
     }
 }
@@ -607,10 +614,55 @@ mod tests {
 
         let mut source = ReplayFile::from_config(&name, &dir).unwrap();
         let mut buffer = [0u8; MAX_PACKET_SIZE];
-        let n = source.get_packet(&mut buffer).unwrap();
+        let n = source.get_packet(&mut buffer, 6).unwrap();
 
         assert_eq!(n, HEADER_LEN);
         assert_eq!(&buffer[..HEADER_LEN], &packet[..]);
+
+        std::fs::remove_file(dir.join(&name)).ok();
+    }
+
+    #[test]
+    fn test_read_events_ignores_packets_from_other_mcpd() {
+        fn write_packet_file(name: &str, dir: &Path, mcpd_id: u8) {
+            let n_bytes = HEADER_LEN + EVENT_SIZE;
+            let mut packet = vec![0u8; n_bytes];
+            LE::write_u16(&mut packet[0..2], (n_bytes / 2) as u16); // buf_len, in words
+            LE::write_u16(&mut packet[4..6], (HEADER_LEN / 2) as u16); // header length, in words
+            LE::write_u16(&mut packet[6..8], 1); // buf_serial
+            LE::write_u16(&mut packet[10..12], (u16::from(mcpd_id) << 8) | 1); // id_status: daq running
+            let mut file_bytes = packet;
+            file_bytes.extend_from_slice(PKT_MARKER);
+            std::fs::write(dir.join(name), &file_bytes).unwrap();
+        }
+
+        let dir = std::env::temp_dir();
+        let name = format!("umami_test_mesy_mcpd_filter_{}.mdat", std::process::id());
+        write_packet_file(&name, &dir, 1);
+
+        let mut input = MesyInput {
+            source: ReplayFile::from_config(&name, &dir).unwrap(),
+            command_handler: (),
+            dump: Default::default(),
+            name: ModuleId::new("mesy".into()),
+            mcpd_id: 0,
+            skip_empty_dump: false,
+            mcpd_version: cmd::McpdVersion::default(),
+            found: [cmd::FoundModule { mod_type: cmd::ModType::Mpsd8, fw_version: (0, 0) }; 8],
+            cells: BTreeMap::new(),
+            modules: BTreeMap::new(),
+            pulser: BTreeMap::new(),
+            aux_timers: [0; 4],
+            replay_file: name.clone(),
+            buf_serial: None,
+            no_event_buffers: 0,
+        };
+        // configured mcpd_id (0) doesn't match the packet's (1) -- ignored
+        assert_eq!(input.read_events().unwrap().len(), 0);
+
+        input.mcpd_id = 1;
+        input.source = ReplayFile::from_config(&name, &dir).unwrap();
+        assert_eq!(input.read_events().unwrap().len(), 1);
 
         std::fs::remove_file(dir.join(&name)).ok();
     }
@@ -626,7 +678,7 @@ mod tests {
     }
 
     impl MesySource for NoSource {
-        fn get_packet(&mut self, _buffer: &mut [u8]) -> io::Result<usize> { unreachable!() }
+        fn get_packet(&mut self, _buffer: &mut [u8], _mcpd_id: u8) -> io::Result<usize> { unreachable!() }
     }
 
     fn make_input() -> MesyInput<NoSource, ()> {
@@ -635,6 +687,7 @@ mod tests {
             command_handler: (),
             dump: Default::default(),
             name: ModuleId::new("mesy".into()),
+            mcpd_id: 0,
             skip_empty_dump: false,
             mcpd_version: cmd::McpdVersion::default(),
             found: [cmd::FoundModule { mod_type: cmd::ModType::Mpsd8, fw_version: (0, 0) }; 8],
@@ -669,6 +722,7 @@ mod tests {
             command_handler: (),
             dump: Default::default(),
             name: ModuleId::new("mesy".into()),
+            mcpd_id: 0,
             skip_empty_dump: false,
             mcpd_version: cmd::McpdVersion::default(),
             found: [cmd::FoundModule { mod_type: cmd::ModType::Mpsd8, fw_version: (0, 0) }; 8],
