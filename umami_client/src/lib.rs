@@ -172,11 +172,9 @@ impl Client {
 
 /// Read-only view of a UMAMI shared-memory histogram segment.
 ///
-/// Exports the entire mapped segment (header followed by histogram bins) via
-/// the buffer protocol, so `np.frombuffer(shm, dtype, count, offset)` works
-/// with the byte offsets documented in `shm.rs`'s `ShmInterface`. The mapping
-/// unmaps once the last reference -- including any numpy view still holding
-/// a buffer export -- goes away; there is no explicit `close()`.
+/// Exports the histogram bins only via the buffer protocol (header fields
+/// all have their own typed property above). The mapping unmaps once the
+/// last reference -- including any numpy view -- goes away; no `close()`.
 #[pyclass(module = "umami_client", subclass)]
 struct Shm {
     reader: ShmReader,
@@ -225,8 +223,8 @@ impl Shm {
 
         let (ptr, len) = {
             let borrowed = slf.borrow();
-            let bytes = borrowed.reader.as_bytes();
-            (bytes.as_ptr(), bytes.len())
+            let data = borrowed.reader.histo_data();
+            (data.as_ptr().cast::<u8>(), std::mem::size_of_val(data))
         };
 
         // TODO: change to match the actual array properties (u32 values, 3 dimensions etc)
@@ -280,6 +278,5 @@ fn umami_client(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("UmamiError", m.py().get_type::<UmamiError>())?;
     m.add("UmamiTimeout", m.py().get_type::<UmamiTimeout>())?;
     m.add("UmamiConnectionError", m.py().get_type::<UmamiConnectionError>())?;
-    m.add("SHM_HEADER_SIZE", umami::SHM_HEADER_SIZE)?;
     Ok(())
 }

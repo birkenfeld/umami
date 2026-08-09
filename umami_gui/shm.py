@@ -8,7 +8,7 @@ For the shared-memory segment layout, see Rust's `src/shm.rs`.
 
 import numpy as np
 
-from umami_client import SHM_HEADER_SIZE, Shm
+from umami_client import Shm
 
 
 class ShmHistogram(Shm):
@@ -29,12 +29,12 @@ class ShmHistogram(Shm):
                 self.tzero_count, self.monitor_counts)
 
     def read_plane(self, t=0):
-        offset = SHM_HEADER_SIZE + t * self.nx * self.ny * 4
+        offset = t * self.nx * self.ny * 4
         return np.frombuffer(self, '<u4', self.nx * self.ny, offset) \
                  .reshape((self.ny, self.nx))
 
     def read_time_projection(self, n=None):
         n = self.nt if n is None else min(n, self.nt)
-        return np.frombuffer(self, '<u4', self.nx * self.ny * n, SHM_HEADER_SIZE) \
+        return np.frombuffer(self, '<u4', self.nx * self.ny * n) \
                  .reshape((n, self.ny, self.nx)) \
                  .sum(axis=(1, 2))

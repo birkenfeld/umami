@@ -297,13 +297,6 @@ impl ShmReader {
         self.header().monitor_counts
     }
 
-    /// The whole mapped segment (header followed by histogram bins), for a
-    /// caller that wants to index into it directly by the documented byte
-    /// offsets (e.g. exporting it as a zero-copy buffer to Python).
-    pub fn as_bytes(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
-    }
-
     /// Histogram bins only, as a flat `nx * ny * nt` array.
     pub fn histo_data(&self) -> &[u32] {
         let size = self.nx() as usize * self.ny() as usize * self.nt() as usize;
@@ -520,7 +513,7 @@ mod tests {
         assert_eq!(reader.total_events(), 5);
         // bin (1,2,3) -> offset 3*16 + 2*4 + 1 = 57, see test_shm_create_and_basic_ops
         assert_eq!(reader.histo_data()[57], 1);
-        assert_eq!(reader.as_bytes().len(), SHM_HEADER_SIZE + 4 * 4 * 4 * size_of::<u32>());
+        assert_eq!(reader.len, SHM_HEADER_SIZE + 4 * 4 * 4 * size_of::<u32>());
     }
 
     #[test]

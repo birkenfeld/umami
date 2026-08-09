@@ -124,7 +124,7 @@ class ImageChannel(FdLogMixin, base.ImageChannel):
         self._ny = self._shm.ny
         self._max_nt = self._shm.nt
         array_len = self._nx * self._ny * self._max_nt
-        self._data = np.frombuffer(self._shm, '<u4', array_len, umami.SHM_HEADER_SIZE)
+        self._data = np.frombuffer(self._shm, '<u4', array_len)
 
         # enable raw data dumping
         if self.rawdatadir:
