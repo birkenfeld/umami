@@ -11,7 +11,7 @@ dependencies = [
     "numpy>=1.23",
     "pyqtgraph>=0.13",
     "pyqt6>=6.6",
-    "umami-client>=0.8",
+    "umami-client>=0.9.0",
 ]
 
 [project.scripts]
