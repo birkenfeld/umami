@@ -5,7 +5,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::Deserialize;
-use serde::de::IntoDeserializer;
 use crate::error::UResult;
 use crate::input::canon::CanonConfig;
 use crate::input::ge::GEConfig;
@@ -184,8 +183,7 @@ pub fn patch_config_file(
 /// Sets `<module>.<param> = value` in `doc`, searching every top-level
 /// section a module name can live in. No-ops (silently) if `module` isn't
 /// found anywhere -- e.g. the auto-created "null" output that has no entry
-/// in the original file. Leaves an existing entry untouched (no rewrite,
-/// no reformatting) if its value already matches.
+/// in the original file.
 fn patch_param(doc: &mut toml_edit::DocumentMut, module: &str, param: &str, value: &serde_json::Value) {
     for section in ["inputs", "input_recipes", "process_modes", "outputs"] {
         if let Some(table) = doc.get_mut(section)
@@ -193,18 +191,7 @@ fn patch_param(doc: &mut toml_edit::DocumentMut, module: &str, param: &str, valu
             .and_then(|t| t.get_mut(module))
             .and_then(|m| m.as_table_like_mut())
         {
-            // toml_edit::Value has no PartialEq; convert both sides via serde
-            // into toml::Value (which has one) to compare.
-            let unchanged = table.get(param)
-                .and_then(|existing| existing.as_value())
-                .and_then(|existing| {
-                    toml::Value::deserialize(existing.clone().into_deserializer()).ok()
-                })
-                .zip(toml::Value::try_from(value).ok())
-                .is_some_and(|(existing, new)| existing == new);
-            if !unchanged {
-                table.insert(param, toml_edit::Item::Value(json_to_toml(value)));
-            }
+            table.insert(param, toml_edit::Item::Value(json_to_toml(value)));
             return;
         }
     }
@@ -243,11 +230,12 @@ fn json_to_toml(value: &serde_json::Value) -> toml_edit::Value {
 mod tests {
     use super::*;
 
-    /// An unchanged value is left byte-for-byte untouched (no reformatting),
-    /// a changed one is patched, and unrelated content (comments, other
-    /// sections) survives -- both for a scalar and a compound value.
+    /// A param passed in `updates` is patched in; one that isn't (the
+    /// caller's job to decide, e.g. because it's unchanged this session)
+    /// keeps its original formatting untouched, as does unrelated content
+    /// (comments, other sections).
     #[test]
-    fn test_patch_config_file_leaves_unchanged_values_untouched() {
+    fn test_patch_config_file_writes_given_params_and_leaves_rest_alone() {
         let dir = std::env::temp_dir();
         let source = dir.join(format!("umami_patch_test_source_{}.conf", std::process::id()));
         let target = dir.join(format!("umami_patch_test_target_{}.conf", std::process::id()));
@@ -259,10 +247,8 @@ cells    =    { 1 = { source = "aux2", compare = 5 } }
 modules = {}
 "#).unwrap();
 
-        let unchanged_cells = serde_json::json!({"1": {"source": "aux2", "compare": 5}});
         let changed_modules = serde_json::json!({"0": {"type": "mpsd", "threshold": 7, "gain": 3}});
         let updates = HashMap::from([
-            (("mcpd0", "cells"), &unchanged_cells),
             (("mcpd0", "modules"), &changed_modules),
         ]);
         patch_config_file(&source, &target, &updates).unwrap();

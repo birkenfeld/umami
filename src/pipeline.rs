@@ -142,7 +142,7 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
     sorter::build_sorter_tree(pipe_recvs, postproc_send.clone())?;
 
     // create command handler
-    let handler = command::CommandHandler::new(
+    let mut handler = command::CommandHandler::new(
         &config.ipc_name,
         command_sends,
         postproc_send,
@@ -210,6 +210,11 @@ pub fn start_pipeline(config: Config, immediate_start: bool) -> UResult<Pipeline
         config.name.clone(),
     );
     postproc.start()?;
+
+    // record baseline for `save_config`, now that inputs and the postprocessor
+    // are both up and can answer GetParams, but before handler.start() opens
+    // the socket to external commands
+    handler.capture_initial_params();
 
     if let Some(path) = config.raw_dir {
         lprintln!(INFO, "Raw dump enabled, dumping to {:?}", path.display());

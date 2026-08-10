@@ -73,10 +73,21 @@ impl CommandReply {
 
 
 pub struct CommandHandler {
+    /// Socket over which commands and replies are exchanged.
     sock: net::UnixDatagram,
+    /// Channels to send commands to input modules.  Replies are received
+    /// using an ad-hoc channel created for each command.
     input_send: BTreeMap<ModuleId, Sender<(Command, Sender<CommandReply>)>>,
+    /// Channel to send commands to the postprocessor.  Replies are received
+    /// using an ad-hoc channel created for each command, part of each
+    /// `PipeItem` variant it applies to.
     post_send: Sender<PipeItem>,
+    /// Path of the config file originally loaded, so `SaveConfig` can write to
+    /// that location.
     config_path: std::path::PathBuf,
+    /// Every settable param's intial value, keyed by `<module>.<param>`, for
+    /// `SaveConfig` to know which values have changed since startup.
+    initial_params: HashMap<String, Value>,
 }
 
 impl CommandHandler {
@@ -90,7 +101,19 @@ impl CommandHandler {
             .context("Creating abstract socket address")?;
         let sock = net::UnixDatagram::bind_unix_addr(&addr)
             .with_context(|| format!("Binding command listener to {addr}"))?;
-        Ok(Self { sock, input_send, post_send, config_path })
+        Ok(Self { sock, input_send, post_send, config_path, initial_params: HashMap::new() })
+    }
+
+    /// Snapshot every currently settable param's value as the session's baseline for
+    /// `save_config`. Called from outside once the whole pipeline is up and responsive.
+    pub fn capture_initial_params(&mut self) {
+        if let CommandReply::Data { value: Value::Object(map) } =
+            self.handle(Command::GetParams { full: false })
+        {
+            self.initial_params = map.into_iter()
+                .filter_map(|(key, mut info)| Some((key, info.as_object_mut()?.remove("value")?)))
+                .collect();
+        }
     }
 
     pub fn start(mut self) -> anyhow::Result<()> {
@@ -303,10 +326,10 @@ impl CommandHandler {
         }
     }
 
-    /// Gathers every settable, non-runtime-only param's current value and
-    /// patches it into the original config file (`self.config_path`),
-    /// writing the result to `path`, or back to `self.config_path` if
-    /// `path` is `None`.
+    /// Gathers every settable, non-runtime-only param whose value has changed
+    /// w.r.t. `initial_params` and patches it into the config file, writing the
+    /// result back to `self.config_path` or a given alternate.  A param still
+    /// sitting at its startup value is left alone.
     fn save_config(&self, path: Option<String>) -> CommandReply {
         let params = match self.handle(Command::GetParams { full: true }) {
             CommandReply::Data { value: Value::Object(map) } => map,
@@ -328,6 +351,9 @@ impl CommandHandler {
             }
             let Some(value) = info.get("value") else { continue };
             if value.is_null() {
+                continue;
+            }
+            if self.initial_params.get(key) == Some(value) {
                 continue;
             }
             updates.insert((module, param), value);
@@ -624,6 +650,77 @@ std = { type = "histo_std", bin_x = 1 }
         // readonly/runtime_only fields must not have been written
         assert!(doc["inputs"]["ge01"].get("mod_types").is_none());
         assert!(doc["process_modes"]["std"].get("pulser").is_none());
+    }
+
+    /// SaveConfig skips a settable param whose value hasn't changed since
+    /// `capture_initial_params`, even though it's absent from the file (i.e.
+    /// still sitting at its Rust default) -- only `bin_x`, actually touched
+    /// via SetParams this session, gets materialized into the file.
+    #[test]
+    fn test_save_config_skips_params_unchanged_since_startup() {
+        let path = std::env::temp_dir().join(format!(
+            "umami_saveconfig_test_{}_{}.conf", std::process::id(),
+            COUNTER.fetch_add(1, Ordering::SeqCst)));
+        std::fs::write(&path, r#"
+[inputs.ge01]
+type = "ge"
+source = "localhost:50000"
+channel_offset = 0
+
+[process_modes]
+default = "std"
+std = { type = "histo_std" }
+"#).unwrap();
+
+        let (mut handler, inputs, post_recv) = make_handler_at(&["ge01"], path.clone());
+        let recv0 = inputs.into_values().next().unwrap();
+        std::thread::spawn(move || {
+            let (cmd, rep) = recv0.recv().unwrap();
+            assert!(matches!(cmd, Command::GetParams { full: false }));
+            rep.send(CommandReply::Data { value: serde_json::Map::new().into() }).unwrap();
+            let (cmd, rep) = recv0.recv().unwrap();
+            assert!(matches!(cmd, Command::GetParams { full: true }));
+            rep.send(CommandReply::Data { value: serde_json::Map::new().into() }).unwrap();
+        });
+        std::thread::spawn(move || {
+            // round 1: capture_initial_params (non-full), both params at their default
+            match post_recv.recv().unwrap() {
+                PipeItem::GetParams(full, send) => {
+                    assert!(!full);
+                    let mut p = ParamMap::new();
+                    p.insert("bin_x".into(), serde_json::json!({"value": 1}));
+                    p.insert("use_gate".into(), serde_json::json!({"value": false}));
+                    send.send((ModuleId::new("std".into()), p)).unwrap();
+                }
+                other => panic!("unexpected item: {other:?}"),
+            }
+            // round 2: save_config's own GetParams -- bin_x was changed via
+            // SetParams, use_gate is still at the same default value
+            match post_recv.recv().unwrap() {
+                PipeItem::GetParams(full, send) => {
+                    assert!(full);
+                    let mut p = ParamMap::new();
+                    p.insert("bin_x".into(), serde_json::json!({
+                        "value": 4, "datatype": "u16", "help": "", "readonly": false, "runtime_only": false,
+                    }));
+                    p.insert("use_gate".into(), serde_json::json!({
+                        "value": false, "datatype": "bool", "help": "", "readonly": false, "runtime_only": false,
+                    }));
+                    send.send((ModuleId::new("std".into()), p)).unwrap();
+                }
+                other => panic!("unexpected item: {other:?}"),
+            }
+        });
+
+        handler.capture_initial_params();
+        assert!(matches!(
+            handler.handle(Command::SaveConfig { path: None }), CommandReply::Ok));
+
+        let saved = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        let doc: toml_edit::DocumentMut = saved.parse().unwrap();
+        assert_eq!(doc["process_modes"]["std"]["bin_x"].as_integer(), Some(4));
+        assert!(doc["process_modes"]["std"].get("use_gate").is_none(), "saved:\n{saved}");
     }
 
     #[test]
