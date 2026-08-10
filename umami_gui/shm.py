@@ -24,7 +24,6 @@ class ShmHistogram(Shm):
         Returns `(total_events, total_neutrons, lifetime_ns, tzero_count,
         monitor_counts)`, all accumulated since the last Clear.
         """
-        # TODO: make this a dataclass or namedtuple for clarity
         return (self.total_events, self.total_neutrons, self.lifetime_ns,
                 self.tzero_count, self.monitor_counts)
 

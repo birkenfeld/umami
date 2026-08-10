@@ -369,7 +369,7 @@ class MesyAuxTimersWidget(QWidget):
             self._spins.append(spin)
 
     def set_aux_timers(self, values):
-        for spin, value in zip(self._spins, values, strict=True):
+        for spin, value in zip(self._spins, values):
             spin.setValue(value)
 
     def current(self):
