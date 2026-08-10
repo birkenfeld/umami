@@ -8,6 +8,7 @@ A form-based add/edit dialog and the window that discovers a running
 """
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -69,6 +70,21 @@ that range are silently dropped, not clamped.'''
 # whatever the user already typed as an extra ANDed clause.
 NEUTRON_ONLY = 'evtype == neutron'
 NEUTRON_FILTER_CLAUSE = f'{NEUTRON_ONLY} && ('
+
+
+def unique_copy_name(name, existing_names):
+    """Derive a name for a copy of `name` that isn't in `existing_names`.
+
+    A trailing `_<number>` is bumped; otherwise one is appended, starting at
+    `_2` and incrementing until free.
+    """
+    match = re.match(r'^(.*)_(\d+)$', name)
+    base, n = (match.group(1), int(match.group(2)) + 1) if match else (name, 2)
+    candidate = f'{base}_{n}'
+    while candidate in existing_names:
+        n += 1
+        candidate = f'{base}_{n}'
+    return candidate
 
 
 def discover_aux_histo_output(params):
@@ -518,10 +534,14 @@ class AuxHistoWindow(QWidget):
             edit_btn = icon_button('edit')
             edit_btn.setToolTip('Edit')
             edit_btn.clicked.connect(lambda _, s=spec: self._edit_histogram(s))
+            copy_btn = icon_button('copy')
+            copy_btn.setToolTip('Copy')
+            copy_btn.clicked.connect(lambda _, s=spec: self._copy_histogram(s))
             del_btn = icon_button('delete')
             del_btn.setToolTip('Delete')
             del_btn.clicked.connect(lambda _, n=spec['name']: self._delete_histogram(n))
             btn_layout.addWidget(edit_btn)
+            btn_layout.addWidget(copy_btn)
             btn_layout.addWidget(del_btn)
             self.table.setCellWidget(row, 5, btn_widget)
         # the icon on the Delete button widens it beyond the buttons
@@ -668,6 +688,17 @@ class AuxHistoWindow(QWidget):
             return
         new_specs = [dialog.spec() if h['name'] == spec['name'] else h
                      for h in self._histos]
+        self.client.set_params({f'{self._module}.histos': new_specs})
+        self.applied.emit()
+        self.refresh()
+
+    def _copy_histogram(self, spec):
+        existing_names = {h['name'] for h in self._histos}
+        spec = {**spec, 'name': unique_copy_name(spec['name'], existing_names)}
+        dialog = HistoDefDialog(self, spec, aliases=self._aliases)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        new_specs = [*self._histos, dialog.spec()]
         self.client.set_params({f'{self._module}.histos': new_specs})
         self.applied.emit()
         self.refresh()
