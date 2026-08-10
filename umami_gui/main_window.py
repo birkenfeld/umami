@@ -39,7 +39,7 @@ from pyqtgraph.Qt.QtWidgets import (
 
 from . import __version__
 from .aux_histo import AuxHistoWindow, discover_aux_histo_output
-from .axis_items import ZoomViewBox
+from .axis_items import StripedRectROI, ZoomViewBox
 from .client import UmamiClient
 from .events_panel import EventsPanel
 from .icons import icon_button, load_icon
@@ -167,9 +167,7 @@ class MainWindow(QWidget):
         self.plot.enableAutoRange('xy', True)
         self.plot.scene().sigMouseMoved.connect(self.on_mouse_moved)
 
-        pen = pg.mkPen('#80ffffff', width=1)
-        pen.setCosmetic(True)
-        self.roi_item = pg.RectROI((0, 0), (0, 0), pen=pen, movable=False)
+        self.roi_item = StripedRectROI((0, 0), (0, 0), movable=False)
         self.roi_item.addScaleHandle([0, 0], [1, 1])
         self.roi_item.addScaleHandle([0, 1], [1, 0])
         self.roi_item.addScaleHandle([1, 0], [0, 1])

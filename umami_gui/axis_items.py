@@ -5,6 +5,7 @@
 
 import pyqtgraph as pg
 from pyqtgraph.Qt.QtCore import QPointF, QRectF, Qt
+from pyqtgraph.Qt.QtGui import QColor, QPen
 
 
 class RotatedAxisItem(pg.AxisItem):
@@ -80,3 +81,31 @@ class ZoomViewBox(pg.ViewBox):
             return
         ev.accept()
         self.autoRange()
+
+
+class StripedRectROI(pg.RectROI):
+    """A RectROI outlined with alternating black/white dashes.
+
+    A single-color pen (in particular the previous plain white one) can
+    become invisible against high-intensity (bright) areas of the
+    histogram's colormap; alternating dashes keep the outline visible
+    against any background.
+    """
+
+    def __init__(self, *args, **kwargs):
+        kwargs.pop('pen', None)
+        super().__init__(*args, **kwargs)
+        self._stripe_pens = []
+        for color, offset in (('#80ffffff', 0), ('#80000000', 4)):
+            pen = QPen(QColor(color), 1)
+            pen.setCosmetic(True)
+            pen.setDashPattern([4, 4])
+            pen.setDashOffset(offset)
+            self._stripe_pens.append(pen)
+
+    def paint(self, p, opt, widget):  # noqa: ARG002
+        r = QRectF(0, 0, *self.state['size']).normalized()
+        p.setRenderHint(p.RenderHint.Antialiasing, self._antialias)
+        for pen in self._stripe_pens:
+            p.setPen(pen)
+            p.drawRect(r)
