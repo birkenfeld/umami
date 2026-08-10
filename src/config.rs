@@ -132,6 +132,8 @@ impl<'de> Deserialize<'de> for ExprAliasConfig {
     }
 }
 
+/// For the "string to IP/File variant", anything that contains exactly one
+/// colon but no slashes is a valid IP/port combination.
 fn deserialize_ip<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
