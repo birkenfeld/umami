@@ -3,8 +3,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::os::unix::net;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use uds::UnixDatagramExt;
@@ -84,10 +85,12 @@ pub struct CommandHandler {
     post_send: Sender<PipeItem>,
     /// Path of the config file originally loaded, so `SaveConfig` can write to
     /// that location.
-    config_path: std::path::PathBuf,
+    config_path: PathBuf,
     /// Every settable param's intial value, keyed by `<module>.<param>`, for
     /// `SaveConfig` to know which values have changed since startup.
     initial_params: HashMap<String, Value>,
+    /// Raw-dump directory, if currently enabled.
+    raw_dump_path: Option<PathBuf>,
 }
 
 impl CommandHandler {
@@ -95,13 +98,16 @@ impl CommandHandler {
         socket_name: &str,
         input_send: BTreeMap<ModuleId, Sender<(Command, Sender<CommandReply>)>>,
         post_send: Sender<PipeItem>,
-        config_path: std::path::PathBuf,
+        config_path: PathBuf,
     ) -> UResult<Self> {
         let addr = uds::UnixSocketAddr::from_abstract(socket_name.as_bytes())
             .context("Creating abstract socket address")?;
         let sock = net::UnixDatagram::bind_unix_addr(&addr)
             .with_context(|| format!("Binding command listener to {addr}"))?;
-        Ok(Self { sock, input_send, post_send, config_path, initial_params: HashMap::new() })
+        Ok(Self {
+            sock, input_send, post_send, config_path,
+            initial_params: HashMap::new(), raw_dump_path: None,
+        })
     }
 
     /// Snapshot every currently settable param's value as the session's baseline for
@@ -174,7 +180,7 @@ impl CommandHandler {
         rep_recv.recv_deadline(deadline).unwrap_or_else(|_| unresponsive("Postprocessor"))
     }
 
-    pub fn handle(&self, cmd: Command) -> CommandReply {
+    pub fn handle(&mut self, cmd: Command) -> CommandReply {
         let (rep_send, rep_recv) = crate::channel::bounded(self.input_send.len());
         let deadline = Instant::now() + REPLY_TIMEOUT;
         match cmd {
@@ -196,11 +202,15 @@ impl CommandHandler {
                 PipeItem::SaveHisto(path, max_nt, rep_send), &rep_recv, deadline),
             Command::Start { .. } | Command::Stop | Command::SetRawDump { .. } |
             Command::Reset => {
-                if let Command::Start { run_id } = &cmd
-                    && self.post_send.send_deadline(PipeItem::StartOfRun(run_id.into()), deadline).is_err()
-                {
-                    return unresponsive("Postprocessor");
+                // notify postproc about new run starting
+                if let Command::Start { run_id } = &cmd {
+                    let result = self.post_send.send_deadline(
+                        PipeItem::StartOfRun(run_id.into()), deadline);
+                    if result.is_err() { return unresponsive("Postprocessor"); }
                 }
+
+                // forward command to the inputs and wait for all replies,
+                // returning the first error if any
                 let cmd_and_send = (cmd, rep_send);
                 for (name, sender) in &self.input_send {
                     if sender.send_deadline(cmd_and_send.clone(), deadline).is_err() {
@@ -214,7 +224,27 @@ impl CommandHandler {
                         Err(_) => return unresponsive("An input"),
                     }
                 }
-                replies.into_iter().find(|r| r.is_error()).unwrap_or(CommandReply::Ok)
+                let result = replies.into_iter().find(|r| r.is_error()).unwrap_or(CommandReply::Ok);
+                if result.is_error() {
+                    return result;
+                }
+
+                // local handling for SetRawDump (record path) and Start (dump metadata)
+                match cmd_and_send.0 {
+                    Command::SetRawDump { enable, path } => {
+                        self.raw_dump_path = if enable { Some(path.into()) } else { None };
+                    }
+                    Command::Start { run_id } => if let Some(raw_dir) = &self.raw_dump_path {
+                        let result = self.write_dump_metadata(raw_dir, &run_id);
+                        if let Err(e) = result {
+                            return CommandReply::new_error(
+                                format!("Failed to write raw-dump metadata: {e:#}"));
+                        }
+                    }
+                    _ => ()
+                }
+
+                result
             }
             Command::GetParams { full } => self.get_params(full),
             Command::SetParams { params } => self.set_params(params),
@@ -222,31 +252,42 @@ impl CommandHandler {
         }
     }
 
-    /// Aggregates every input's own params, every input's recipe's params,
-    /// and the postprocessor's recipes'/outputs' params into one flat
-    /// `<module>.<param>` map.
-    fn get_params(&self, full: bool) -> CommandReply {
+    /// Gathers each input's own params and its recipe's params into one flat
+    /// `<module>.<param>` map. Shared by `get_params` (which additionally
+    /// merges in the postprocessor's own modules) and `write_dump_metadata`
+    /// (which only wants the input side, since that's what a raw dump
+    /// actually reflects).
+    fn gather_input_params(&self, full: bool, deadline: Instant) -> Result<ParamMap, CommandReply> {
         let (rep_send, rep_recv) = crate::channel::bounded(self.input_send.len());
-        let deadline = Instant::now() + REPLY_TIMEOUT;
         let mut map = ParamMap::new();
-
-        // gather from each input's recipe first, using a fixed-count channel
-        // (same pattern as the Start/Stop/Reset fan-out in `handle`)
+        // (same fan-out pattern as the Start/Stop/Reset branch in `handle`)
         for (name, sender) in &self.input_send {
             if sender.send_deadline(
                 (Command::GetParams { full }, rep_send.clone()), deadline,
             ).is_err() {
-                return unresponsive(&format!("Input {name}"));
+                return Err(unresponsive(&format!("Input {name}")));
             }
         }
         for _ in 0..self.input_send.len() {
             match rep_recv.recv_deadline(deadline) {
                 Ok(CommandReply::Data { value: Value::Object(obj) }) => map.extend(obj),
-                Ok(reply) if reply.is_error() => return reply,
+                Ok(reply) if reply.is_error() => return Err(reply),
                 Ok(_) => {} // shouldn't happen
-                Err(_) => return unresponsive("An input"),
+                Err(_) => return Err(unresponsive("An input")),
             }
         }
+        Ok(map)
+    }
+
+    /// Aggregates every input's own params, every input's recipe's params,
+    /// and the postprocessor's recipes'/outputs' params into one flat
+    /// `<module>.<param>` map.
+    fn get_params(&self, full: bool) -> CommandReply {
+        let deadline = Instant::now() + REPLY_TIMEOUT;
+        let mut map = match self.gather_input_params(full, deadline) {
+            Ok(map) => map,
+            Err(reply) => return reply,
+        };
 
         // this command needs a differently typed channel
         let (rep_send, rep_recv) = crate::channel::unbounded();
@@ -264,6 +305,32 @@ impl CommandHandler {
             }
         }
         CommandReply::Data { value: map.into() }
+    }
+
+    /// Gathers the input side's current settable param values and writes
+    /// them, wrapped with a bit of run context, to
+    /// `<raw_dir>/<run_id>/_metadata.json` -- so a raw dump can always be
+    /// traced back to the input-side configuration that produced it.
+    /// `<raw_dir>/<run_id>` is expected to already exist: each input's own
+    /// `DumpHandler::start` creates it before this runs. Scoped to inputs
+    /// only, not the postprocessor/outputs, since raw data is captured
+    /// before postprocessing.
+    fn write_dump_metadata(&self, raw_dir: &Path, run_id: &str) -> UResult<()> {
+        let deadline = Instant::now() + REPLY_TIMEOUT;
+        let params = self.gather_input_params(false, deadline)
+            .map_err(|reply| anyhow!("Failed to gather input params: {reply:?}"))?;
+        let metadata = serde_json::json!({
+            "umami_version": env!("CARGO_PKG_VERSION"),
+            "run_id": run_id,
+            "timestamp": jiff::Zoned::now().to_string(),
+            "params": params,
+        });
+        let path = raw_dir.join(run_id).join("_metadata.json");
+        let file = std::fs::File::create(&path)
+            .with_context(|| format!("Creating raw-dump metadata file {path:?}"))?;
+        serde_json::to_writer_pretty(file, &metadata)
+            .with_context(|| format!("Writing raw-dump metadata file {path:?}"))?;
+        Ok(())
     }
 
     /// Broadcasts a flat `<module>.<param>` map to every input (each applies
@@ -330,7 +397,7 @@ impl CommandHandler {
     /// w.r.t. `initial_params` and patches it into the config file, writing the
     /// result back to `self.config_path` or a given alternate.  A param still
     /// sitting at its startup value is left alone.
-    fn save_config(&self, path: Option<String>) -> CommandReply {
+    fn save_config(&mut self, path: Option<String>) -> CommandReply {
         let params = match self.handle(Command::GetParams { full: true }) {
             CommandReply::Data { value: Value::Object(map) } => map,
             reply if reply.is_error() => return reply,
@@ -431,7 +498,7 @@ mod tests {
 
     #[test]
     fn test_ping_and_clear() {
-        let (handler, _inputs, post_recv) = make_handler(&[]);
+        let (mut handler, _inputs, post_recv) = make_handler(&[]);
 
         match handler.handle(Command::Ping) {
             CommandReply::Data { value } =>
@@ -446,7 +513,7 @@ mod tests {
 
     #[test]
     fn test_get_modes_passes_through_postprocessor_reply() {
-        let (handler, _inputs, post_recv) = make_handler(&[]);
+        let (mut handler, _inputs, post_recv) = make_handler(&[]);
         respond_to_post_meta(post_recv, CommandReply::Data { value: vec!["std", "tof"].into() });
         match handler.handle(Command::GetModes) {
             CommandReply::Data { value } => {
@@ -467,7 +534,7 @@ mod tests {
             Command::GetState,
             Command::SaveHisto { path: "/tmp/x".into(), max_nt: 1 },
         ] {
-            let (handler, _inputs, post_recv) = make_handler(&[]);
+            let (mut handler, _inputs, post_recv) = make_handler(&[]);
             respond_to_post_meta(post_recv, CommandReply::new_error("boom".into()));
             assert!(handler.handle(cmd).is_error());
         }
@@ -475,7 +542,7 @@ mod tests {
 
     #[test]
     fn test_start_sends_start_of_run_and_fans_out_to_inputs() {
-        let (handler, inputs, post_recv) = make_handler(&["mod0"]);
+        let (mut handler, inputs, post_recv) = make_handler(&["mod0"]);
         for recv in inputs.into_values() {
             respond_to_input(recv, CommandReply::Ok);
         }
@@ -487,9 +554,59 @@ mod tests {
         }
     }
 
+    /// Enabling raw dump and starting a run writes a `_metadata.json`
+    /// snapshot of the input-side params into the run's raw-dump directory
+    /// (which a real input's own `DumpHandler::start` would already have
+    /// created -- simulated here by creating it up front).
+    #[test]
+    fn test_start_writes_raw_dump_metadata_when_enabled() {
+        let dir = std::env::temp_dir().join(format!(
+            "umami_dumpmeta_test_{}_{}", std::process::id(),
+            COUNTER.fetch_add(1, Ordering::SeqCst)));
+        let (mut handler, inputs, post_recv) = make_handler(&["mod0"]);
+        let recv0 = inputs.into_values().next().unwrap();
+        std::thread::spawn(move || {
+            let (cmd, rep) = recv0.recv().unwrap();
+            assert!(matches!(cmd, Command::SetRawDump { enable: true, .. }));
+            rep.send(CommandReply::Ok).unwrap();
+
+            let (cmd, rep) = recv0.recv().unwrap();
+            assert!(matches!(cmd, Command::Start { .. }));
+            rep.send(CommandReply::Ok).unwrap();
+
+            let (cmd, rep) = recv0.recv().unwrap();
+            assert!(matches!(cmd, Command::GetParams { full: false }), "got {cmd:?}");
+            let mut value = serde_json::Map::new();
+            value.insert("mod0.some_param".into(), serde_json::json!({"value": 42}));
+            rep.send(CommandReply::Data { value: value.into() }).unwrap();
+        });
+        std::thread::spawn(move || {
+            assert!(matches!(
+                post_recv.recv_timeout(Duration::from_secs(5)).unwrap(),
+                PipeItem::StartOfRun(run_id) if run_id == "run1"));
+        });
+
+        assert!(matches!(handler.handle(Command::SetRawDump {
+            enable: true, path: dir.to_str().unwrap().into(),
+        }), CommandReply::Ok));
+        // a real input's own DumpHandler::start would have created this
+        std::fs::create_dir_all(dir.join("run1")).unwrap();
+
+        let reply = handler.handle(Command::Start { run_id: "run1".into() });
+        assert!(matches!(reply, CommandReply::Ok), "reply: {reply:?}");
+
+        let content = std::fs::read_to_string(dir.join("run1").join("_metadata.json")).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(json["run_id"], "run1");
+        assert!(json["umami_version"].is_string());
+        assert!(json["timestamp"].is_string());
+        assert_eq!(json["params"]["mod0.some_param"]["value"], 42);
+    }
+
     #[test]
     fn test_fanout_returns_first_input_error() {
-        let (handler, inputs, _post_recv) = make_handler(&["mod0", "mod1"]);
+        let (mut handler, inputs, _post_recv) = make_handler(&["mod0", "mod1"]);
         let mut inputs = inputs.into_iter();
         let (_, recv0) = inputs.next().unwrap();
         let (_, recv1) = inputs.next().unwrap();
@@ -501,7 +618,7 @@ mod tests {
 
     #[test]
     fn test_set_params_rejects_key_without_dot() {
-        let (handler, _inputs, _post_recv) = make_handler(&[]);
+        let (mut handler, _inputs, _post_recv) = make_handler(&[]);
         let mut params = ParamMap::new();
         params.insert("no_dot_here".into(), serde_json::json!(1));
         // never touches any channel: validated up front
@@ -510,7 +627,7 @@ mod tests {
 
     #[test]
     fn test_set_params_forwards_split_module_and_param() {
-        let (handler, _inputs, post_recv) = make_handler(&[]);
+        let (mut handler, _inputs, post_recv) = make_handler(&[]);
         std::thread::spawn(move || {
             match post_recv.recv().unwrap() {
                 PipeItem::SetParams(map, send) => {
@@ -530,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_get_params_aggregates_into_dotted_keys() {
-        let (handler, _inputs, post_recv) = make_handler(&[]);
+        let (mut handler, _inputs, post_recv) = make_handler(&[]);
         std::thread::spawn(move || {
             match post_recv.recv().unwrap() {
                 PipeItem::GetParams(_full, send) => {
@@ -556,7 +673,7 @@ mod tests {
 
     #[test]
     fn test_get_params_merges_inputs_and_postprocessor() {
-        let (handler, inputs, post_recv) = make_handler(&["ge01"]);
+        let (mut handler, inputs, post_recv) = make_handler(&["ge01"]);
         let recv0 = inputs.into_values().next().unwrap();
         std::thread::spawn(move || {
             let (cmd, rep) = recv0.recv().unwrap();
@@ -605,7 +722,7 @@ default = "std"
 std = { type = "histo_std", bin_x = 1 }
 "#).unwrap();
 
-        let (handler, inputs, post_recv) = make_handler_at(&["ge01"], path.clone());
+        let (mut handler, inputs, post_recv) = make_handler_at(&["ge01"], path.clone());
         let recv0 = inputs.into_values().next().unwrap();
         std::thread::spawn(move || {
             let (cmd, rep) = recv0.recv().unwrap();
@@ -725,7 +842,7 @@ std = { type = "histo_std" }
 
     #[test]
     fn test_get_params_propagates_input_error() {
-        let (handler, inputs, _post_recv) = make_handler(&["ge01"]);
+        let (mut handler, inputs, _post_recv) = make_handler(&["ge01"]);
         let recv0 = inputs.into_values().next().unwrap();
         respond_to_input(recv0, CommandReply::new_error("recipe get_params failed".into()));
         assert!(handler.handle(Command::GetParams { full: false }).is_error());
@@ -736,7 +853,7 @@ std = { type = "histo_std" }
     /// the split-by-module map is only computed for the postprocessor/outputs.
     #[test]
     fn test_set_params_broadcasts_full_map_to_inputs() {
-        let (handler, inputs, post_recv) = make_handler(&["ge01"]);
+        let (mut handler, inputs, post_recv) = make_handler(&["ge01"]);
         let recv0 = inputs.into_values().next().unwrap();
         std::thread::spawn(move || {
             let (cmd, rep) = recv0.recv().unwrap();
@@ -767,7 +884,7 @@ std = { type = "histo_std" }
 
     #[test]
     fn test_set_params_propagates_input_error_before_reaching_postprocessor() {
-        let (handler, inputs, _post_recv) = make_handler(&["ge01"]);
+        let (mut handler, inputs, _post_recv) = make_handler(&["ge01"]);
         let recv0 = inputs.into_values().next().unwrap();
         respond_to_input(recv0, CommandReply::new_error("bad value".into()));
         let mut params = ParamMap::new();
@@ -780,14 +897,14 @@ std = { type = "histo_std" }
     #[test]
     fn test_unresponsive_component_times_out_instead_of_hanging() {
         // nothing ever reads `post_recv`, simulating a wedged postprocessor
-        let (handler, _inputs, _post_recv) = make_handler(&[]);
+        let (mut handler, _inputs, _post_recv) = make_handler(&[]);
         let started = Instant::now();
         assert!(handler.handle(Command::GetState).is_error());
         assert!(started.elapsed() >= REPLY_TIMEOUT, "returned before the deadline");
         assert!(started.elapsed() < REPLY_TIMEOUT * 2, "took far longer than the deadline");
 
         // same for a wedged input during the Start/Stop/Reset/SetRawDump fan-out
-        let (handler, _inputs, _post_recv) = make_handler(&["mod0"]);
+        let (mut handler, _inputs, _post_recv) = make_handler(&["mod0"]);
         let started = Instant::now();
         assert!(handler.handle(Command::Stop).is_error());
         assert!(started.elapsed() >= REPLY_TIMEOUT, "returned before the deadline");
