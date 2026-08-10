@@ -1,18 +1,15 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
-//! User-defined auxiliary/diagnostic histograms: each configured histogram
-//! gets its own POSIX shm segment, filled by evaluating a filter + one or
-//! two axis expressions against every event. The whole histogram list is
-//! runtime-replaceable via `SetParams`: setting unlinks all current shm
-//! segments and recreates fresh ones. Segments are not unlinked on drop,
-//! matching the main histogram's own lifecycle (they persist in /dev/shm
-//! across a brief restart).
+//! User-defined auxiliary/diagnostic histograms: each configured histogram gets
+//! its own POSIX shm segment, filled by evaluating a filter + one or two axis
+//! expressions against every event.  The histogram list is runtime-settable via
+//! `SetParams`.
 //!
-//! A separate `enabled` param (default true) is a global on/off switch:
-//! when off, `handle_events` skips all filter/axis evaluation entirely.
+//! A separate `enabled` param (default true) is a global on/off switch: when
+//! off, `handle_events` skips all filter/axis evaluation entirely.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
@@ -25,7 +22,7 @@ use crate::params::HasParams;
 use crate::shm::ShmWriter;
 use super::{Output, OutputCommon};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AxisSpec {
     pub expr: String,
@@ -37,7 +34,7 @@ pub struct AxisSpec {
     pub max: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HistoSpec {
     pub name: String,
@@ -162,22 +159,40 @@ impl AuxHistoOutput {
         Ok(result)
     }
 
-    /// Custom `#[param(has_setter = true)]` setter for `histos`: validates
-    /// everything first (old state is untouched on error), then unlinks all
-    /// current shm segments and creates fresh ones for the new list.
+    /// When setting a new histogram list, validate everything first, then
+    /// rebuild the list.  An entry whose spec is byte-for-byte identical to the
+    /// one it had before keeps its existing data.
     fn set_histos(&mut self, value: Vec<HistoSpec>) -> UResult<()> {
         let prepared = self.prepare(&value)?;
-        for h in &self.compiled {
-            let _ = nix::sys::mman::shm_unlink(h.shm_name.as_bytes());
-        }
+
+        let mut old: HashMap<String, (HistoSpec, CompiledHisto)> =
+            std::mem::take(&mut self.histos).into_iter()
+                .zip(std::mem::take(&mut self.compiled))
+                .map(|(spec, compiled)| (spec.name.clone(), (spec, compiled)))
+                .collect();
+
         let mut new_compiled = Vec::with_capacity(prepared.len());
-        for p in prepared {
+        for (spec, p) in value.iter().zip(prepared) {
+            if let Some((old_spec, old_compiled)) = old.remove(&spec.name) {
+                if old_spec == *spec {
+                    // same histogram definition => keep
+                    new_compiled.push(old_compiled);
+                    continue;
+                }
+                // otherwise, drop the old segment and recreate
+                let _ = nix::sys::mman::shm_unlink(old_compiled.shm_name.as_bytes());
+            }
             let shm = ShmWriter::create(&p.shm_name, &p.histo_config)
                 .with_context(|| format!("Creating shm segment for histogram {:?}", p.name))?;
             new_compiled.push(CompiledHisto {
                 filter: p.filter, x: p.x, y: p.y, shm_name: p.shm_name, shm,
             });
         }
+        // whatever's left in `old` was dropped from the new list entirely
+        for (_, old_compiled) in old.into_values() {
+            let _ = nix::sys::mman::shm_unlink(old_compiled.shm_name.as_bytes());
+        }
+
         self.compiled = new_compiled;
         self.histos = value;
         Ok(())
@@ -465,6 +480,43 @@ mod tests {
         assert_eq!(output.histos[0].name, "chan");
         // the old segment is gone (unlinked)
         assert!(ShmReader::open(&format!("{ipc}_aux_amp")).is_err());
+    }
+
+    #[test]
+    fn test_set_params_reuses_unchanged_histogram_segment() {
+        let ipc = unique_ipc();
+        let common = test_common(&ipc, "aux");
+        let cfg: toml::Table = toml::from_str(r#"
+            [[histos]]
+            name = "amp"
+            x = { expr = "ampl", bins = 4, min = 0, max = 7 }
+
+            [[histos]]
+            name = "chan"
+            x = { expr = "channel", bins = 2, min = 0, max = 1 }
+        "#).unwrap();
+        let mut output = AuxHistoOutput::from_config(&common, cfg).unwrap();
+        let _guard1 = ShmGuard::for_name(format!("{ipc}_aux_amp"));
+        let _guard2 = ShmGuard::for_name(format!("{ipc}_aux_chan"));
+
+        let mut ev = test_utils::neutron(0, 0);
+        ev.ampl = Amplitude(1);
+        output.handle_events(&[ev]).unwrap();
+
+        // "amp" is byte-for-byte unchanged; "chan" gets a wider axis range
+        let mut update = ParamMap::new();
+        update.insert("histos".into(), serde_json::json!([
+            { "name": "amp", "x": { "expr": "ampl", "bins": 4, "min": 0, "max": 7 } },
+            { "name": "chan", "x": { "expr": "channel", "bins": 4, "min": 0, "max": 3 } },
+        ]));
+        output.update_params(ModuleId::new("aux".into()), update).unwrap();
+
+        // "amp"'s counts survive -- its segment was never unlinked/recreated
+        let shm = ShmReader::open(&format!("{ipc}_aux_amp")).unwrap();
+        assert_eq!(shm.histo_data().iter().sum::<u32>(), 1);
+        // "chan" was rebuilt against the new (wider) axis
+        let shm2 = ShmReader::open(&format!("{ipc}_aux_chan")).unwrap();
+        assert_eq!(shm2.histo_data().len(), 4);
     }
 
     #[test]

@@ -510,13 +510,22 @@ class AuxHistoWindow(QWidget):
         return tiles
 
     def _rebuild(self):
-        # the server recreates every histogram's shm segment whenever the
-        # histos list is replaced, even for an untouched entry -- so forget
-        # everything whenever the list as a whole differs from last time
-        if self._histos != self._last_seen_histos:
-            for name in list(self._shms):
-                self._forget(name)
-            self._last_seen_histos = list(self._histos)
+        # the server recreates a histogram's shm segment if its spec changed
+        # (or it's new/removed) -- forget the affected ones
+        old_by_name = {h['name']: h for h in self._last_seen_histos or []}
+        new_by_name = {h['name']: h for h in self._histos}
+        stale_names = {name for name, spec in old_by_name.items()
+                       if new_by_name.get(name) != spec}
+        # a stale member of a shared (grouped) overlay tile takes the whole
+        # tile with it
+        to_forget = set()
+        for name in stale_names:
+            plot = self._plots.get(name)
+            if plot is not None:
+                to_forget.update(n for n, p in self._plots.items() if p is plot)
+        for name in to_forget:
+            self._forget(name)
+        self._last_seen_histos = list(self._histos)
 
         self.table.setRowCount(len(self._histos))
         for row, spec in enumerate(self._histos):
