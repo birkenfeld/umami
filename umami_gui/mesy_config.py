@@ -249,11 +249,12 @@ class MesyModulesTable(QTableWidget):
         result = {}
         for row in range(N_SLOTS):
             if self._checks[row].isChecked():
-                gains = self._gains[row][:self._channels(row)]
+                spins = self._gains[row][:self._channels(row)]
+                gains = [spin.value() for spin in spins]
                 result[str(row)] = {
                     'type': self._types[row].currentText(),
                     'threshold': self._thresholds[row].value(),
-                    'gain': [spin.value() for spin in gains],
+                    'gain': gains[0] if len(set(gains)) == 1 else gains,
                 }
         return result
 
