@@ -489,17 +489,16 @@ class AuxHistoWindow(QWidget):
             self._plots[spec['name']] = plot
         return True
 
-    def _tiles(self):
-        """Bucket `self._histos` into plot tiles.
+    def _tiles(self, histos=None):
+        """Bucket `histos` (default `self._histos`) into plot tiles.
 
-        1-D histograms sharing a non-empty `group` land in the same tile
-        (rendered as one overlaid plot); everything else -- 2-D histograms,
-        or an ungrouped 1-D one -- is its own tile of one. A tile's
-        position follows its first member's position in `self._histos`.
+        1-D histograms sharing a non-empty `group` land in the same tile/plot;
+        everything else is its own tile of one.  A tile's position follows its
+        first member's position in the list.
         """
         tiles = []
         group_index = {}
-        for spec in self._histos:
+        for spec in self._histos if histos is None else histos:
             group = spec.get('group') if spec.get('y') is None else None
             if group:
                 if group in group_index:
@@ -509,13 +508,27 @@ class AuxHistoWindow(QWidget):
             tiles.append([spec])
         return tiles
 
-    def _rebuild(self):
-        # the server recreates a histogram's shm segment if its spec changed
-        # (or it's new/removed) -- forget the affected ones
-        old_by_name = {h['name']: h for h in self._last_seen_histos or []}
+    def _tile_membership(self, histos):
+        """Name -> frozenset of every name sharing its tile in `histos`."""
+        membership = {}
+        for tile in self._tiles(histos):
+            names = frozenset(s['name'] for s in tile)
+            membership.update(dict.fromkeys(names, names))
+        return membership
+
+    def _rebuild(self):  # noqa: PLR0915
+        # the server recreates a histogram's shm segment if its spec changed;
+        # a histo whose own spec is unchanged but whose *tile* gained/lost a
+        # groupmate also needs forgetting
+        old_histos = self._last_seen_histos or []
+        old_by_name = {h['name']: h for h in old_histos}
         new_by_name = {h['name']: h for h in self._histos}
-        stale_names = {name for name, spec in old_by_name.items()
-                       if new_by_name.get(name) != spec}
+        old_membership = self._tile_membership(old_histos)
+        new_membership = self._tile_membership(self._histos)
+        stale_names = {
+            name for name, spec in old_by_name.items()
+            if new_by_name.get(name) != spec
+            or old_membership.get(name) != new_membership.get(name)}
         # a stale member of a shared (grouped) overlay tile takes the whole
         # tile with it
         to_forget = set()
