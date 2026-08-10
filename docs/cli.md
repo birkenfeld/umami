@@ -35,7 +35,7 @@ umami-ctl [--ipc umami] <command>
 | `clear` | | Clear the histogram. Can be called while running. |
 | `reset` | | Reset input modules (e.g. out of an error state). Does not clear the histogram. |
 | `save-histo` | `PATH MAX_NT` | Save the current histogram (with desired number of time slices) to `PATH`, can be called while running. |
-| `raw` | `PATH` | Enable raw dumping below `PATH` (one file per input, named after the input). |
+| `raw` | `PATH` | Enable raw dumping below `PATH` (one file per input, named after the input; each run also gets a `_metadata.json` with the input config in effect). |
 | `no-raw` | | Disable raw dumping. |
 | `get-modes` | | List available postprocessing mode names as JSON. |
 | `set-mode` | `NAME` | Switch the active postprocessing mode. |
