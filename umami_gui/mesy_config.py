@@ -9,6 +9,8 @@ from pyqtgraph.Qt.QtCore import Qt, pyqtSignal
 from pyqtgraph.Qt.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -255,6 +257,17 @@ class MesyModulesTable(QTableWidget):
                 }
         return result
 
+    def set_all_thresholds_gains(self, threshold, gain):
+        """Bulk-set every row's threshold and all gain channels.
+
+        Applies to all 8 rows regardless of "Configure" state -- harmless for
+        an unconfigured row, since `current()` only reports checked ones.
+        """
+        for row in range(N_SLOTS):
+            self._thresholds[row].setValue(threshold)
+            for spin in self._gains[row]:
+                spin.setValue(gain)
+
 
 class MesyPulserTable(QTableWidget):
     """8 fixed rows (module index 0-7): Configure / On / Channel / Position / Amplitude.
@@ -376,6 +389,46 @@ class MesyAuxTimersWidget(QWidget):
         return [spin.value() for spin in self._spins]
 
 
+class BulkThresholdGainDialog(QDialog):
+    """Small dialog querying a scope plus a threshold/gain pair to apply.
+
+    Used by `McpdConfigWindow` to bulk-set every module row's threshold and
+    gain in one go, rather than clicking through each row's spinboxes.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Set Thresholds/Gains')
+
+        form = QFormLayout()
+        self.scope_combo = QComboBox()
+        self.scope_combo.addItems(['Current MCPD', 'All MCPDs'])
+        form.addRow('Apply to:', self.scope_combo)
+
+        self.threshold_spin = QSpinBox()
+        self.threshold_spin.setRange(0, 0xFFFF)
+        form.addRow('Threshold:', self.threshold_spin)
+
+        self.gain_spin = QSpinBox()
+        self.gain_spin.setRange(0, 0xFFFF)
+        form.addRow('Gain:', self.gain_spin)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
+                                   QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def all_tabs(self):
+        return self.scope_combo.currentText() == 'All MCPDs'
+
+    def values(self):
+        return self.threshold_spin.value(), self.gain_spin.value()
+
+
 class McpdConfigWindow(QWidget):
     """Separate window with one tab per detected Mesytec MCPD input.
 
@@ -395,6 +448,9 @@ class McpdConfigWindow(QWidget):
         self._tables = {}
 
         self.tabs = QTabWidget()
+        bulk_btn = QPushButton('Set Thresholds/Gains…')
+        bulk_btn.clicked.connect(self._bulk_set_thresholds_gains)
+        self.tabs.setCornerWidget(bulk_btn, Qt.Corner.TopRightCorner)
 
         close_btn = QPushButton('Close')
         close_btn.clicked.connect(self.close)
@@ -449,6 +505,26 @@ class McpdConfigWindow(QWidget):
         page_layout.addLayout(bottom_row)
         self.tabs.addTab(page, name)
         return cells_table, modules_table, pulser_table, aux_widget, version_label
+
+    def _bulk_set_thresholds_gains(self):
+        """Query a threshold/gain pair and apply it to every module row.
+
+        Local-only, like every other edit here -- still needs Apply to take
+        effect.
+        """
+        if not self._tables:
+            return
+        dialog = BulkThresholdGainDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        threshold, gain = dialog.values()
+        if dialog.all_tabs():
+            names = self._names
+        else:
+            names = [self._names[self.tabs.currentIndex()]]
+        for name in names:
+            modules_table = self._tables[name][1]
+            modules_table.set_all_thresholds_gains(threshold, gain)
 
     def _apply_all(self):
         """Push every tab's edits live, in one set_params call."""
