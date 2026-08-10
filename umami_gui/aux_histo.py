@@ -65,6 +65,11 @@ A filter's result is treated as a boolean (0 = drop, nonzero = keep); \
 an axis expression's result is binned into [min, max] -- values outside \
 that range are silently dropped, not clamped.'''
 
+# Inserted/removed by HistoDefDialog's "Only neutrons" checkbox, wrapping
+# whatever the user already typed as an extra ANDed clause.
+NEUTRON_ONLY = 'evtype == neutron'
+NEUTRON_FILTER_CLAUSE = f'{NEUTRON_ONLY} && ('
+
 
 def discover_aux_histo_output(params):
     """Get the name of the aux_histo output in a `full` get-params map."""
@@ -149,9 +154,10 @@ class HistoDefDialog(QDialog):
 
         return row, bins, custom_check, min_box, max_box
 
-    def __init__(self, parent=None, spec=None, aliases=None):
+    def __init__(self, parent=None, spec=None, aliases=None):  # noqa: PLR0915
         super().__init__(parent)
         self.setWindowTitle('Histogram Definition')
+        is_new = spec is None
         spec = spec or {}
         x = spec.get('x') or {}
         y = spec.get('y')
@@ -159,13 +165,26 @@ class HistoDefDialog(QDialog):
         form = QFormLayout()
         self.name_edit = QLineEdit(spec.get('name', ''))
         form.addRow('Name:', self.name_edit)
-        self.filter_edit = QLineEdit(spec.get('filter') or '')
-        self.filter_edit.setPlaceholderText(
-            'e.g. evtype == neutron  (empty = always true)')
+
+        filter_text = spec.get('filter') or ''
+        neutron_checked = is_new
+        if filter_text == NEUTRON_ONLY:
+            neutron_checked, filter_text = True, ''
+        elif filter_text.startswith(NEUTRON_FILTER_CLAUSE) and \
+             filter_text.endswith(')'):
+            neutron_checked = True
+            filter_text = filter_text[len(NEUTRON_FILTER_CLAUSE):-1]
+
+        self.neutron_check = QCheckBox('Only neutrons')
+        self.neutron_check.setChecked(neutron_checked)
+        form.addRow(self.neutron_check)
+        self.filter_edit = QLineEdit(filter_text)
+        self.filter_edit.setPlaceholderText('filter expression (empty = no filter)')
         form.addRow('Filter:', self.filter_edit)
+
         self.group_edit = QLineEdit(spec.get('group') or '')
         self.group_edit.setPlaceholderText(
-            'optional -- histograms sharing a group go in one plot')
+            'optional: histograms with the same group go in one plot')
         form.addRow('Group:', self.group_edit)
 
         form.addRow(QLabel('<b>X axis</b>'))
@@ -249,6 +268,8 @@ class HistoDefDialog(QDialog):
                   'max': self.x_max.value()},
         }
         filt = self.filter_edit.text().strip()
+        if self.neutron_check.isChecked():
+            filt = f'{NEUTRON_FILTER_CLAUSE}{filt})' if filt else NEUTRON_ONLY
         if filt:
             result['filter'] = filt
         group = self.group_edit.text().strip()
