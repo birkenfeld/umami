@@ -6,9 +6,22 @@
 For the shared-memory segment layout, see Rust's `src/shm.rs`.
 """
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from umami_client import Shm
+
+
+@dataclass
+class Counters:
+    """Events/neutrons/lifetime/tzero/monitors counters, since the last Clear."""
+
+    total_events: int
+    total_neutrons: int
+    lifetime_ns: int
+    tzero_count: int
+    monitor_counts: list
 
 
 class ShmHistogram(Shm):
@@ -19,13 +32,9 @@ class ShmHistogram(Shm):
     """
 
     def read_counters(self):
-        """Read the events/neutrons/lifetime/tzero/monitors counters.
-
-        Returns `(total_events, total_neutrons, lifetime_ns, tzero_count,
-        monitor_counts)`, all accumulated since the last Clear.
-        """
-        return (self.total_events, self.total_neutrons, self.lifetime_ns,
-                self.tzero_count, self.monitor_counts)
+        """Read the events/neutrons/lifetime/tzero/monitors counters."""
+        return Counters(self.total_events, self.total_neutrons, self.lifetime_ns,
+                         self.tzero_count, self.monitor_counts)
 
     def read_plane(self, t=0):
         return np.asarray(self)[t]

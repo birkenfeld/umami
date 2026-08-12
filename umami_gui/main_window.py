@@ -49,6 +49,7 @@ from .mesy_config import McpdConfigWindow, discover_mesy_inputs
 from .params_tree import ParamsTree
 from .plot_utils import COLORMAPS, set_image_data
 from .projection_windows import DiffractogramWindow, TofSpectrumWindow
+from .rate_tracker import RateTracker
 from .replay_window import ReplayWindow
 from .shm import ShmHistogram
 from .status_panel import StatusPanel
@@ -104,9 +105,9 @@ class MainWindow(QWidget):
 
         self.current_mode = None
         self.instance_name = None
-        self.rate_samples = []  # trailing (time, total) samples, up to RATE_SAMPLES
-        self.counter_samples = []  # trailing (time, (events, neutrons, tzero, *mon))
-        self.roi_rate_samples = []  # trailing (time, roi_total) samples
+        self.rate_tracker = RateTracker(RATE_SAMPLES)
+        self.roi_rate_tracker = RateTracker(RATE_SAMPLES)
+        self.counter_rate_tracker = RateTracker(RATE_SAMPLES)
         self.last_t = None
         self.last_buf = None
         self.was_connected = False
@@ -211,13 +212,13 @@ class MainWindow(QWidget):
         if self.tof_config_window is not None and self.tof_config_window.isVisible():
             self.tof_config_window.refresh()
 
-    def update_buffer(self):  # noqa: C901, PLR0912, PLR0915
+    def update_buffer(self):
         t = self.t_spin.value()
         if t != self.last_t:
             # switching slices jumps the total to an unrelated bin's count;
             # drop the old baseline so the rate isn't computed across that jump
-            self.rate_samples.clear()
-            self.roi_rate_samples.clear()
+            self.rate_tracker.clear()
+            self.roi_rate_tracker.clear()
             self.last_t = t
         run_id = self.histo.run_id
         buf = self.histo.read_plane(t)
@@ -243,14 +244,7 @@ class MainWindow(QWidget):
 
         total = int(buf.sum())
         now = time.monotonic()
-        self.rate_samples.append((now, total))
-        if len(self.rate_samples) > RATE_SAMPLES:
-            self.rate_samples.pop(0)
-        rate = None
-        if len(self.rate_samples) > 1:
-            old_time, old_total = self.rate_samples[0]
-            if total >= old_total:
-                rate = (total - old_total) / (now - old_time)
+        rate = self.rate_tracker.update_one(now, total)
         elapsed_s = self._compute_elapsed_s()
         self.status_panel.update_run_info(run_id, elapsed_s=elapsed_s, total=total,
                                           rate=rate)
@@ -261,30 +255,18 @@ class MainWindow(QWidget):
             roi_total = int(buf[y0:y1, x0:x1].sum())
         else:
             roi_total = 0
-        self.roi_rate_samples.append((now, roi_total))
-        if len(self.roi_rate_samples) > RATE_SAMPLES:
-            self.roi_rate_samples.pop(0)
-        roi_rate = None
-        if roi is not None and len(self.roi_rate_samples) > 1:
-            old_time, old_total = self.roi_rate_samples[0]
-            if roi_total >= old_total:
-                roi_rate = (roi_total - old_total) / (now - old_time)
+        roi_rate = self.roi_rate_tracker.update_one(now, roi_total)
+        if roi is None:
+            roi_rate = None
 
-        total_events, total_neutrons, lifetime_ns, tzero_count, monitor_counts = \
-            self.histo.read_counters()
-        counters = (total_neutrons, total_events, tzero_count, *monitor_counts)
-        self.counter_samples.append((now, counters))
-        if len(self.counter_samples) > RATE_SAMPLES:
-            self.counter_samples.pop(0)
-        counter_rates = [None] * len(counters)
-        if len(self.counter_samples) > 1:
-            old_time, old_counters = self.counter_samples[0]
-            for i, (cur, old) in enumerate(zip(counters, old_counters)):
-                if cur >= old:
-                    counter_rates[i] = (cur - old) / (now - old_time)
+        counters = self.histo.read_counters()
+        counter_values = (counters.total_neutrons, counters.total_events,
+                          counters.tzero_count, *counters.monitor_counts)
+        counter_rates = self.counter_rate_tracker.update(now, counter_values)
         self.events_panel.update_counts(
-            total, roi_total, total_neutrons, total_events, tzero_count,
-            monitor_counts, lifetime_ns, (rate, roi_rate, *counter_rates))
+            total, roi_total, counters.total_neutrons, counters.total_events,
+            counters.tzero_count, counters.monitor_counts, counters.lifetime_ns,
+            (rate, roi_rate, *counter_rates))
 
     def _compute_elapsed_s(self):
         """Seconds since the last StartOfRun, frozen once the run has ended.
@@ -316,9 +298,9 @@ class MainWindow(QWidget):
             self.log_panel.error(f'Could not reopen shared memory: {e}')
             return
         self.histo = new_histo
-        self.rate_samples.clear()
-        self.counter_samples.clear()
-        self.roi_rate_samples.clear()
+        self.rate_tracker.clear()
+        self.counter_rate_tracker.clear()
+        self.roi_rate_tracker.clear()
         self.plot.enableAutoRange('xy', True)
         self.t_spin.setRange(0, max(self.histo.nt - 1, 0))
 
@@ -722,8 +704,7 @@ class MainWindow(QWidget):
     def _histo_export_header(self, t, buf):
         roi = self._roi_bounds()
         roi_total = int(buf[roi[1]:roi[3], roi[0]:roi[2]].sum()) if roi else 0
-        total_events, total_neutrons, lifetime_ns, tzero_count, monitor_counts = \
-            self.histo.read_counters()
+        counters = self.histo.read_counters()
         lines = [
             'UMAMI histogram export',
             f'run: {self.histo.run_id}',
@@ -731,11 +712,11 @@ class MainWindow(QWidget):
             f't-slice: {t}',
             f'counts in slice: {int(buf.sum())}',
             f'counts in ROI: {roi_total}',
-            f'total counts: {total_neutrons}',
-            f'life time: {lifetime_ns / 1_000_000_000:.1f} s',
-            f'total events: {total_events}',
-            f'tzero: {tzero_count}',
-            *(f'monitor {i}: {c}' for i, c in enumerate(monitor_counts)),
+            f'total counts: {counters.total_neutrons}',
+            f'life time: {counters.lifetime_ns / 1_000_000_000:.1f} s',
+            f'total events: {counters.total_events}',
+            f'tzero: {counters.tzero_count}',
+            *(f'monitor {i}: {c}' for i, c in enumerate(counters.monitor_counts)),
         ]
         return '\n'.join(lines)
 
@@ -822,7 +803,7 @@ class MainWindow(QWidget):
     def _on_roi_region_changed(self):
         if self._roi_snap_guard:
             return
-        self.roi_rate_samples.clear()
+        self.roi_rate_tracker.clear()
         # snap both edges to the nearest bin boundary (same convention as
         # _roi_bounds()/on_mouse_moved()) so the drawn box always lines up
         # with whole bins instead of an arbitrary sub-pixel rectangle

@@ -2,6 +2,3 @@ General:
 - Output fanout instead of queue?
 - More custom aliases (raw -> y pre calib etc)
 - Test input errors with real hw
-
-Refactor:
-- dataclass in GUI for counter values (and more?)
