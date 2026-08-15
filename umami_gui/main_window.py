@@ -42,6 +42,7 @@ from .aux_histo import AuxHistoWindow, discover_aux_histo_output
 from .axis_items import StripedRectROI, ZoomViewBox
 from .client import UmamiClient
 from .events_panel import EventsPanel
+from .ext_histo import ExtHistoWindow, discover_ext_histos
 from .icons import icon_button, load_icon
 from .log_panel import LogPanel
 from .logo_widget import LogoBuildupWidget
@@ -100,6 +101,7 @@ class MainWindow(QWidget):
         # `_quick_setup_window()` -- since there's an ever-growing set of
         # them and most instances only ever need a few.
         self.aux_histo_window = self.mcpd_config_window = self.tof_config_window = None
+        self.ext_histo_window = None
         self.replay_window = None
         self.proj_window = self.t_proj_window = None
 
@@ -205,8 +207,11 @@ class MainWindow(QWidget):
         self.mcpd_config_btn.setVisible(bool(discover_mesy_inputs(params)))
         self.tof_config_btn.setVisible(bool(discover_tof_recipes(params)))
         self.aux_histo_btn.setVisible(discover_aux_histo_output(params) is not None)
+        self.ext_histo_btn.setVisible(bool(discover_ext_histos(params)))
         if self.aux_histo_window is not None and self.aux_histo_window.isVisible():
             self.aux_histo_window.refresh()
+        if self.ext_histo_window is not None and self.ext_histo_window.isVisible():
+            self.ext_histo_window.refresh()
         if self.mcpd_config_window is not None and self.mcpd_config_window.isVisible():
             self.mcpd_config_window.refresh()
         if self.tof_config_window is not None and self.tof_config_window.isVisible():
@@ -332,6 +337,8 @@ class MainWindow(QWidget):
         self.reopen_histogram()
         if self.aux_histo_window is not None:
             self.aux_histo_window.invalidate_all()
+        if self.ext_histo_window is not None:
+            self.ext_histo_window.invalidate_all()
         self.status_panel.reset_inputs()
         modes = self.client.get_modes()
         if modes is not None:
@@ -491,6 +498,13 @@ class MainWindow(QWidget):
         window.show()
         window.raise_()
 
+    def show_ext_histo_window(self):
+        window = self._quick_setup_window(
+            'ext_histo_window',
+            lambda: ExtHistoWindow(self.client, self.shm_name, self.log_panel))
+        window.show()
+        window.raise_()
+
     def show_mcpd_config_window(self):
         window = self._quick_setup_window(
             'mcpd_config_window', lambda: McpdConfigWindow(self.client),
@@ -640,6 +654,11 @@ class MainWindow(QWidget):
         self.aux_histo_btn.clicked.connect(self.show_aux_histo_window)
         self.aux_histo_btn.setVisible(False)
         frame.layout().addWidget(self.aux_histo_btn)
+
+        self.ext_histo_btn = icon_button('live', 'Other Histograms')
+        self.ext_histo_btn.clicked.connect(self.show_ext_histo_window)
+        self.ext_histo_btn.setVisible(False)
+        frame.layout().addWidget(self.ext_histo_btn)
 
         frame.layout().addSpacing(20)
 

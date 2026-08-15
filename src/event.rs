@@ -41,6 +41,11 @@ impl EventTime {
     pub fn from_clock<T>(freq: i64, ticks: T) -> Self where i64: From<T> {
         Self(i64::from(ticks) * 1_000_000_000 / freq)
     }
+
+    /// Raw nanosecond value.
+    pub const fn as_nanos(&self) -> i64 {
+        self.0
+    }
 }
 
 impl From<EventTime> for f64 {

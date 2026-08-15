@@ -41,6 +41,11 @@ pub struct ShmWriter {
 
 unsafe impl Send for ShmWriter {}
 
+// Sound: every method that can mutate the mapping takes `&mut self`, so
+// Rust's own exclusive-borrow rules already prevent concurrent mutation
+// across threads; a shared `&ShmWriter` only allows read-only access.
+unsafe impl Sync for ShmWriter {}
+
 impl Deref for ShmWriter {
     type Target = ShmInterface;
 
@@ -103,6 +108,15 @@ impl ShmWriter {
 
     fn histo_size(&self, nt: u16) -> usize {
         self.nx as usize * self.ny as usize * nt as usize
+    }
+
+    /// Histogram bins only, as a flat, mutable `nx * ny * nt` array.
+    pub fn histo_data_mut(&mut self) -> &mut [u32] {
+        let size = self.histo_size(self.nt);
+        unsafe {
+            let histo_ptr = self.ptr.as_ptr().add(1).cast::<u32>();
+            std::slice::from_raw_parts_mut(histo_ptr, size)
+        }
     }
 
     pub fn clear_histo(&mut self) {

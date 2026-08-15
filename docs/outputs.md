@@ -131,3 +131,40 @@ config file:
 adc0 = "raw_0[0..12:signed]"
 adc1 = { expr = "raw_0[16..28:signed]", help = "Second ADC channel" }
 ```
+
+## `type = "ext_process"`
+
+Forwards the full sorted event stream to a single external consumer, over an
+abstract-namespace Unix stream socket named `<ipc_name>_<output_name>`, for
+processing outside UMAMI.
+
+* The `histos` parameter declares the external consumer's shm histogram(s)
+  for GUI discovery -- `name`, `x` (required), `y`/`t` (optional, so a
+  histogram can be 1-D/2-D/3-D). Each axis has `name`, `bins`, and `min`/`max`
+  (the value of the first/last bin). The consumer needs to publish each
+  histogram at `<ipc_name>_<output_name>_<histo_name>`.
+
+```toml
+[[outputs.live.histos]]
+name = "qx_qy"
+x = { name = "qx", bins = 200, min = -2.0, max = 2.0 }
+y = { name = "qy", bins = 100, min = -1.0, max = 1.0 }
+```
+
+Only one connection is accepted at a time; a second connection replaces the
+first.
+
+One frame is sent per event batch and per run-boundary event:
+
+| Bytes | Meaning |
+|---|---|
+| 1 | tag: `0` = events, `1` = start of run, `2` = end of run, `3` = clear |
+| 4 | payload length, u32 little-endian |
+| N | payload |
+
+Payload by tag:
+
+* Events (`0`): one [`rkyv`](https://github.com/rkyv/rkyv) archive of the
+  batch, serialized as `Vec<Event>`.
+* Start of run (`1`): UTF-8 run ID bytes.
+* End of run (`2`) / clear (`3`): empty (length `0`).

@@ -15,6 +15,7 @@ use crate::pipeline::PipeItem;
 
 mod aux_histo;
 mod diag;
+mod ext_process;
 mod file;
 #[cfg(feature = "hdf5")]
 mod hdf5;
@@ -168,6 +169,8 @@ pub fn start(config: OutputConfig, common: OutputCommon) -> UResult<()> {
             Ok(file::FileOutput::from_config(&common, config.config)?.start(common)?),
         aux_histo::AuxHistoOutput::TYPE_NAME =>
             Ok(aux_histo::AuxHistoOutput::from_config(&common, config.config)?.start(common)?),
+        ext_process::ExtProcessOutput::TYPE_NAME =>
+            Ok(ext_process::ExtProcessOutput::from_config(&common, config.config)?.start(common)?),
         #[cfg(test)]
         test::TestOutput::TYPE_NAME => Ok(test::TestOutput::new().start(common)?),
         _ => Err(anyhow!("Unknown output type: {}", config.r#type).into()),

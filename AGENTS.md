@@ -17,13 +17,14 @@ build`/`test`/`clippy` from the root only cover the `umami` package
 itself; add `--workspace` to include `umami_client` too.
 
 ```sh
-cargo build                             # debug build
-cargo build --release                   # optimized
-cargo test                              # unit + integration suite (74+ tests)
-cargo clippy --all-targets              # lint
-cargo check                             # type-check only
-cargo test --workspace                  # + umami_client's own tests
-cargo clippy --workspace --all-targets  # + lint umami_client
+cargo build                                       # debug build
+cargo build --release                             # optimized
+cargo test                                        # unit + integration suite
+cargo clippy --all-targets                        # lint
+cargo check                                       # type-check only
+cargo check --workspace                           # + type-check umami_client
+cargo clippy --workspace --all-targets            # + lint umami_client
+cargo test -p umami-client --no-default-features  # umami_client's own tests
 ```
 
 ## System Dependencies
