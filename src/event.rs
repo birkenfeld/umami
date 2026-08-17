@@ -7,6 +7,7 @@ use rkyv::{Archive, Serialize, Deserialize};
 /// Timestamp of the event in nanoseconds.
 ///
 /// Should be absolute (relative to UNIX epoch) if possible.
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[derive(Archive, Serialize, Deserialize)]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -66,16 +67,18 @@ impl std::ops::Sub for EventTime {
 
 /// Input channel of the event - a tube or pixel ID for neutrons, or a signal
 /// for edges or other kinds of events.
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
 pub struct ChannelId(pub u32);
 
 /// Amplitude of the event, e.g. pulse height or time-over-threshold.
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
 pub struct Amplitude(pub u32);
 
-#[repr(u8)]
+#[repr(C, u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[derive(Archive, Serialize, Deserialize)]
 // Note: if you change this, update the src/expr.rs language accordingly.
@@ -101,6 +104,7 @@ pub enum EventType {
 impl Eq for EventType {}
 
 #[bitflag_attr::bitflag(u16)]
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(Archive, Serialize, Deserialize)]
 pub enum EventFlags {
