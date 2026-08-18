@@ -11,8 +11,10 @@ use num_enum::{FromPrimitive, IntoPrimitive};
 use serde::{Deserialize, Serialize};
 use uds::{UnixListenerExt, UnixSocketAddr};
 use zerocopy::IntoBytes;
+use crate::lprintln;
+use crate::command::ModuleId;
 use crate::error::UResult;
-use crate::event::Event;
+use crate::event::{Event, EventType};
 use crate::params::HasParams;
 use super::{Output, OutputCommon};
 
@@ -68,9 +70,11 @@ struct ExtProcessConfig {
 #[derive(HasParams)]
 #[params(kind = "output", type = "ext_process")]
 pub struct ExtProcessOutput {
+    name: ModuleId,
     #[param(help = "Histogram(s) the external consumer publishes, for client discovery",
             readonly = true, datatype = "array of histogram specs")]
     histos: Vec<ExtHistoSpec>,
+    buffer: Vec<Event>,
     conn: Arc<Mutex<Option<UnixStream>>>,
 }
 
@@ -92,29 +96,43 @@ impl Output for ExtProcessOutput {
             .name(format!("O: {name} accept"))
             .spawn(move || {
                 for stream in listener.incoming().flatten() {
-                    let _ = stream.set_write_timeout(Some(Duration::from_millis(100)));
+                    stream.set_write_timeout(Some(Duration::from_millis(100)))
+                          .expect("set_write_timeout on unix stream failed");
                     *conn2.lock().expect("conn mutex poisoned") = Some(stream);
+                    lprintln!(INFO, [name] "ext_process output accepted connection from consumer");
                 }
             })
             .context("Spawning ext_process accept thread")?;
 
         let histos = validate_histos(config.histos)?;
-        Ok(Self { histos, conn })
+        Ok(Self { name, histos, conn, buffer: Vec::with_capacity(16384) })
     }
 
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
-        self.send_frame(FrameTag::Events, events.as_bytes())
+        self.buffer.extend(
+            events.iter().filter(|e| e.evtype == EventType::Neutron).cloned());
+        if self.buffer.len() > 8192 {
+            self.send_frame(FrameTag::Events, self.buffer.as_bytes())?;
+            self.buffer.clear();
+        }
+        Ok(())
     }
 
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
+        self.buffer.clear();
         self.send_frame(FrameTag::StartOfRun, run.as_bytes())
     }
 
     fn handle_end_of_run(&mut self) -> UResult<()> {
+        if !self.buffer.is_empty() {
+            self.send_frame(FrameTag::Events, self.buffer.as_bytes())?;
+            self.buffer.clear();
+        }
         self.send_frame(FrameTag::EndOfRun, &[])
     }
 
     fn handle_clear(&mut self) -> UResult<()> {
+        self.buffer.clear();
         self.send_frame(FrameTag::Clear, &[])
     }
 }
@@ -138,7 +156,7 @@ fn validate_histos(value: Vec<ExtHistoSpec>) -> UResult<Vec<ExtHistoSpec>> {
 impl ExtProcessOutput {
     /// Never fails the pipeline: a missing or dead consumer just means
     /// frames are silently dropped until the next (re)connection.
-    fn send_frame(&mut self, tag: FrameTag, payload: &[u8]) -> UResult<()> {
+    fn send_frame(&self, tag: FrameTag, payload: &[u8]) -> UResult<()> {
         let mut guard = self.conn.lock().expect("conn mutex poisoned");
         if let Some(stream) = guard.as_mut() {
             let len = (payload.len() as u32).to_le_bytes();
@@ -146,6 +164,7 @@ impl ExtProcessOutput {
                 .and_then(|()| stream.write_all(&len))
                 .and_then(|()| stream.write_all(payload));
             if ok.is_err() {
+                lprintln!(WARN, [self.name] "ext_process output lost connection to consumer");
                 *guard = None; // dead connection; next accept() replaces it
             }
         }

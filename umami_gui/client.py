@@ -25,16 +25,16 @@ class UmamiClient(umami_client.Client):
         self.log = log
         self._busy = False
 
-    def _call(self, name, quiet=False, **kwargs):
+    def _call(self, cmd_name, quiet=False, **kwargs):
         if self._busy:
             return None  # a previous call is still (conceptually) in flight
         self._busy = True
         try:
-            msg = {'command': name, **kwargs}
+            msg = {'command': cmd_name, **kwargs}
             if not quiet:
                 self.log.info(f'-> {msg}')
             try:
-                result = getattr(super(), name)(**kwargs)
+                result = getattr(super(), cmd_name)(**kwargs)
             except umami_client.UmamiError as e:
                 module, message = e.args
                 if quiet:

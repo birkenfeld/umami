@@ -4,6 +4,7 @@
 //! Native Python bindings for UMAMI's command socket (`Client`) and
 //! shared-memory histogram (`Shm`).
 
+use std::borrow::Cow;
 use std::ffi::{c_int, c_void};
 use std::io::{self, Read};
 use std::os::unix::net::UnixStream;
@@ -377,16 +378,16 @@ unsafe impl Element for EventXY {
 /// numpy structured array with every field: `time_ns`, `rel_time_ns`,
 /// `channel`, `ampl`, `x`, `y`, `t`, `i`, `flags`, `evtype`, `evtype_arg`.
 #[pyfunction]
-fn decode_events<'py>(py: Python<'py>, buf: &[u8]) -> PyResult<Bound<'py, PyArray1<EventRecord>>> {
-    let events = decode_batch(buf)?;
+fn decode_events<'py>(py: Python<'py>, buf: Cow<[u8]>) -> PyResult<Bound<'py, PyArray1<EventRecord>>> {
+    let events = decode_batch(&buf)?;
     Ok(PyArray1::from_iter(py, events.iter().copied().map(EventRecord::from)))
 }
 
 /// Decodes one raw event batch into a numpy structured array with just
 /// `rel_time_ns`, `x`, `y`.
 #[pyfunction]
-fn decode_events_xy<'py>(py: Python<'py>, buf: &[u8]) -> PyResult<Bound<'py, PyArray1<EventXY>>> {
-    let events = decode_batch(buf)?;
+fn decode_events_xy<'py>(py: Python<'py>, buf: Cow<[u8]>) -> PyResult<Bound<'py, PyArray1<EventXY>>> {
+    let events = decode_batch(&buf)?;
     Ok(PyArray1::from_iter(py, events.iter().copied().map(EventXY::from)))
 }
 
@@ -480,8 +481,7 @@ impl ShmWriter {
     }
 }
 
-const RECONNECT_DELAY: Duration = Duration::from_millis(1000);
-const READ_TIMEOUT: Duration = Duration::from_millis(200);
+const RECONNECT_DELAY: Duration = Duration::from_millis(100);
 
 /// Reads exactly `buf.len()` bytes, retrying on the stream's read timeout so
 /// `stop` gets checked periodically without corrupting a partial read (a
@@ -558,7 +558,6 @@ fn run_event_receiver(sock_name: String, callback: Py<PyAny>, stop: &AtomicBool,
         match UnixStream::connect_to_unix_addr(&addr) {
             Ok(mut stream) => {
                 connected.store(true, Ordering::Relaxed);
-                let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
                 if let Err(e) = read_frames(&mut stream, &callback, stop) {
                     *last_error.lock().unwrap() = Some(e.to_string());
                 }
