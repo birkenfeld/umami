@@ -5,7 +5,12 @@
 //! shared-memory histogram (`Shm`).
 
 use std::ffi::{c_int, c_void};
+use std::io::{self, Read};
+use std::os::unix::net::UnixStream;
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use numpy::{Element, PyArray1, PyArrayDescr};
@@ -13,10 +18,13 @@ use pyo3::create_exception;
 use pyo3::exceptions::{PyBufferError, PyRuntimeError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use pythonize::{depythonize, pythonize};
+use uds::{UnixSocketAddr, UnixStreamExt};
 
 use umami::{
-    ClientError, Command, CommandReply, Event, EventType, HistoConfig, ParamMap, ShmReader,
+    ClientError, Command, CommandReply, Event, EventType, FrameTag, HistoConfig, ParamMap,
+    ShmReader,
 };
 
 create_exception!(umami_client, UmamiClientError, pyo3::exceptions::PyException,
@@ -491,11 +499,165 @@ impl ShmWriter {
     }
 }
 
+const RECONNECT_DELAY: Duration = Duration::from_millis(1000);
+const READ_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// Reads exactly `buf.len()` bytes, retrying on the stream's read timeout so
+/// `stop` gets checked periodically without corrupting a partial read (a
+/// timeout can land mid-buffer; simply erroring out, as `Read::read_exact`
+/// does, would lose whatever was already read).  Returns `Ok(false)` if
+/// `stop` was set before the buffer filled.
+fn recv_exact_or_stop(stream: &mut UnixStream, buf: &mut [u8], stop: &AtomicBool)
+                      -> io::Result<bool> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        if stop.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
+        match stream.read(&mut buf[filled..]) {
+            Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "socket closed")),
+            Ok(n) => filled += n,
+            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(true)
+}
+
+/// Calls the matching callback method for one decoded frame.
+fn dispatch_frame(callback: &Py<PyAny>, tag: FrameTag, payload: &[u8]) {
+    Python::attach(|py| {
+        let cb = callback.bind(py);
+        let result = match tag {
+            FrameTag::Events => cb.call_method1("on_events", (PyBytes::new(py, payload),)),
+            FrameTag::StartOfRun => {
+                let run_id = String::from_utf8_lossy(payload).into_owned();
+                cb.call_method1("on_start_of_run", (run_id,))
+            }
+            FrameTag::EndOfRun => cb.call_method0("on_end_of_run"),
+            FrameTag::Clear => cb.call_method0("on_clear"),
+            FrameTag::Unknown => return,
+        };
+        if let Err(e) = result {
+            e.print(py);
+        }
+    });
+}
+
+/// One connection's worth of frames; returns once the peer closes, a read
+/// error occurs, or `stop` is set.
+fn read_frames(stream: &mut UnixStream, callback: &Py<PyAny>, stop: &AtomicBool)
+              -> io::Result<()> {
+    let mut header = [0u8; 5];
+    loop {
+        if !recv_exact_or_stop(stream, &mut header, stop)? {
+            return Ok(());
+        }
+        let tag = FrameTag::from(header[0]);
+        let len = u32::from_le_bytes(header[1..5].try_into().unwrap()) as usize;
+        let mut payload = vec![0u8; len];
+        if len > 0 && !recv_exact_or_stop(stream, &mut payload, stop)? {
+            return Ok(());
+        }
+        dispatch_frame(callback, tag, &payload);
+    }
+}
+
+/// Connect-with-retry loop, run on `EventReceiver`'s background thread.
+fn run_event_receiver(sock_name: String, callback: Py<PyAny>, stop: &AtomicBool,
+                      connected: &AtomicBool, last_error: &Mutex<Option<String>>) {
+    let addr = match UnixSocketAddr::from_abstract(sock_name.as_bytes()) {
+        Ok(addr) => addr,
+        Err(e) => {
+            *last_error.lock().unwrap() = Some(format!("Invalid socket name {sock_name:?}: {e}"));
+            return;
+        }
+    };
+    while !stop.load(Ordering::Relaxed) {
+        match UnixStream::connect_to_unix_addr(&addr) {
+            Ok(mut stream) => {
+                connected.store(true, Ordering::Relaxed);
+                let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
+                if let Err(e) = read_frames(&mut stream, &callback, stop) {
+                    *last_error.lock().unwrap() = Some(e.to_string());
+                }
+                connected.store(false, Ordering::Relaxed);
+            }
+            Err(e) => {
+                *last_error.lock().unwrap() = Some(e.to_string());
+                std::thread::sleep(RECONNECT_DELAY);
+            }
+        }
+    }
+}
+
+/// Runs the `ext_process` client side (connect-with-retry, frame parsing) on
+/// a background thread, calling back for read frames.
+#[pyclass(module = "umami_client", subclass)]
+struct EventReceiver {
+    stop: Arc<AtomicBool>,
+    connected: Arc<AtomicBool>,
+    last_error: Arc<Mutex<Option<String>>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+#[pymethods]
+impl EventReceiver {
+    /// `callback` needs `on_events(bytes)`, `on_start_of_run(str)`,
+    /// `on_end_of_run()`, and `on_clear()` methods. Starts connecting
+    /// immediately; `connected` stays `False` (and the socket keeps being
+    /// retried) until the target output comes up.
+    #[new]
+    fn new(ipc_name: &str, output_name: &str, callback: Py<PyAny>) -> PyResult<Self> {
+        let sock_name = format!("{ipc_name}_{output_name}");
+        let stop = Arc::new(AtomicBool::new(false));
+        let connected = Arc::new(AtomicBool::new(false));
+        let last_error = Arc::new(Mutex::new(None));
+        let (stop2, connected2, last_error2) =
+            (Arc::clone(&stop), Arc::clone(&connected), Arc::clone(&last_error));
+        let handle = std::thread::Builder::new()
+            .name("event-receiver".into())
+            .spawn(move || run_event_receiver(sock_name, callback, &stop2, &connected2, &last_error2))
+            .map_err(|e| PyRuntimeError::new_err(format!("Spawning event receiver thread: {e}")))?;
+        Ok(Self { stop, connected, last_error, handle: Some(handle) })
+    }
+
+    #[getter]
+    fn connected(&self) -> bool {
+        self.connected.load(Ordering::Relaxed)
+    }
+
+    /// The last connection error seen, or `None` if there hasn't been one
+    /// (including if a connection is currently up).
+    #[getter]
+    fn last_error(&self) -> Option<String> {
+        self.last_error.lock().unwrap().clone()
+    }
+
+    /// Stops the background thread and waits for it to exit.
+    fn stop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for EventReceiver {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 #[pymodule]
 fn umami_client(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Client>()?;
     m.add_class::<Shm>()?;
     m.add_class::<ShmWriter>()?;
+    m.add_class::<EventReceiver>()?;
     m.add_function(wrap_pyfunction!(decode_events, m)?)?;
     m.add_function(wrap_pyfunction!(decode_events_xy, m)?)?;
     m.add("UmamiClientError", m.py().get_type::<UmamiClientError>())?;
@@ -507,6 +669,9 @@ fn umami_client(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+    use std::os::unix::net::UnixListener;
+    use uds::UnixListenerExt;
     use numpy::PyArrayMethods;
     use umami::{EventTime, ShmReader};
     use super::*;
@@ -603,5 +768,104 @@ mod tests {
         // own #[cfg(test)] ShmGuard, which isn't visible across the crate
         // boundary), so clean up the segment by hand.
         nix::sys::mman::shm_unlink(name.as_bytes()).ok();
+    }
+
+    /// Records every callback invocation for `test_event_receiver_...` below,
+    /// so the test can assert against plain Rust state instead of needing to
+    /// re-enter Python to inspect it.
+    #[pyclass]
+    #[derive(Default)]
+    struct TestCallback {
+        events: Arc<Mutex<Vec<Vec<u8>>>>,
+        starts: Arc<Mutex<Vec<String>>>,
+        ends: Arc<Mutex<usize>>,
+        clears: Arc<Mutex<usize>>,
+    }
+
+    #[pymethods]
+    impl TestCallback {
+        fn on_events(&self, payload: Vec<u8>) {
+            self.events.lock().unwrap().push(payload);
+        }
+        fn on_start_of_run(&self, run_id: String) {
+            self.starts.lock().unwrap().push(run_id);
+        }
+        fn on_end_of_run(&self) {
+            *self.ends.lock().unwrap() += 1;
+        }
+        fn on_clear(&self) {
+            *self.clears.lock().unwrap() += 1;
+        }
+    }
+
+    fn send_test_frame(stream: &mut UnixStream, tag: FrameTag, payload: &[u8]) {
+        stream.write_all(&[tag.into()]).unwrap();
+        stream.write_all(&(payload.len() as u32).to_le_bytes()).unwrap();
+        stream.write_all(payload).unwrap();
+    }
+
+    #[test]
+    fn test_event_receiver_dispatches_frames_to_callback() {
+        let ipc_name = format!("umami_client_test_receiver_{}", std::process::id());
+        let output_name = "live";
+        let sock_name = format!("{ipc_name}_{output_name}");
+        let addr = UnixSocketAddr::from_abstract(sock_name.as_bytes()).unwrap();
+        let listener = UnixListener::bind_unix_addr(&addr).unwrap();
+
+        let (events, starts, ends, clears, _receiver) = Python::attach(|py| {
+            let cb = Py::new(py, TestCallback::default()).unwrap();
+            let (events, starts, ends, clears) = {
+                let b = cb.borrow(py);
+                (b.events.clone(), b.starts.clone(), b.ends.clone(), b.clears.clone())
+            };
+            let callback: Py<PyAny> = cb.bind(py).clone().into_any().unbind();
+            let receiver = EventReceiver::new(&ipc_name, output_name, callback).unwrap();
+            (events, starts, ends, clears, receiver)
+        });
+
+        let (mut stream, _) = listener.accept_unix_addr().unwrap();
+        send_test_frame(&mut stream, FrameTag::StartOfRun, b"run1");
+        send_test_frame(&mut stream, FrameTag::Events, b"fake-archived-bytes");
+        send_test_frame(&mut stream, FrameTag::Clear, &[]);
+        send_test_frame(&mut stream, FrameTag::EndOfRun, &[]);
+
+        for _ in 0..200 {
+            if *ends.lock().unwrap() == 1 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(*starts.lock().unwrap(), vec!["run1".to_string()]);
+        assert_eq!(*events.lock().unwrap(), vec![b"fake-archived-bytes".to_vec()]);
+        assert_eq!(*clears.lock().unwrap(), 1);
+        assert_eq!(*ends.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_event_receiver_reconnects_and_reports_state() {
+        let ipc_name = format!("umami_client_test_receiver_reconnect_{}", std::process::id());
+        let output_name = "live";
+        let sock_name = format!("{ipc_name}_{output_name}");
+
+        let (connected_before, receiver) = Python::attach(|py| {
+            let cb = Py::new(py, TestCallback::default()).unwrap();
+            let callback: Py<PyAny> = cb.bind(py).clone().into_any().unbind();
+            let receiver = EventReceiver::new(&ipc_name, output_name, callback).unwrap();
+            (receiver.connected(), receiver)
+        });
+        assert!(!connected_before, "nothing is listening yet");
+
+        let addr = UnixSocketAddr::from_abstract(sock_name.as_bytes()).unwrap();
+        let listener = UnixListener::bind_unix_addr(&addr).unwrap();
+        let (_stream, _) = listener.accept_unix_addr().unwrap();
+
+        for _ in 0..200 {
+            if receiver.connected() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(receiver.connected(), "should connect once the listener comes up");
     }
 }

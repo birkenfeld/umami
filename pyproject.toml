@@ -38,7 +38,7 @@ umami_gui = ["icons/*.svg"]
 [tool.setuptools_scm]
 
 [tool.ruff]
-exclude = ["umami_det.py"]
+exclude = ["umami_det.py", "umami_live.py"]
 
 [tool.ruff.lint]
 select = ["ALL"]

@@ -15,7 +15,7 @@ use crate::pipeline::PipeItem;
 
 mod aux_histo;
 mod diag;
-mod ext_process;
+pub(crate) mod ext_process;
 mod file;
 #[cfg(feature = "hdf5")]
 mod hdf5;

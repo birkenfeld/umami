@@ -168,3 +168,10 @@ Payload by tag:
   batch, serialized as `Vec<Event>`.
 * Start of run (`1`): UTF-8 run ID bytes.
 * End of run (`2`) / clear (`3`): empty (length `0`).
+
+A Python consumer doesn't need to implement this framing itself:
+`umami_client.EventReceiver(ipc_name, output_name, callback)` runs the
+connect-with-retry and frame-parsing loop on a background thread, calling
+`callback.on_events(bytes)` (undecoded -- pick `decode_events` or
+`decode_events_xy` yourself), `on_start_of_run(run_id)`, `on_end_of_run()`,
+and `on_clear()`.

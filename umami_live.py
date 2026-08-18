@@ -23,11 +23,6 @@
 
 """Physics-based live view of a running UMAMI instance's event stream."""
 
-import socket
-import struct
-import threading
-import time
-
 import numpy as np
 import umami_client as umami
 
@@ -36,17 +31,17 @@ from entangle.core import FAULT, ON, Prop, nonemptystring, uint16
 from entangle.core.errors import ConfigurationError
 from entangle.lib.loggers import FdLogMixin
 
-# frame header: 1-byte tag, 4-byte little-endian payload length, see
-# docs/outputs.md for the full wire format
-FRAME_HEADER = struct.Struct('<BI')
-TAG_EVENTS, TAG_START_OF_RUN, TAG_END_OF_RUN, TAG_CLEAR = range(4)
-
-RECONNECT_DELAY_S = 1.0
-
 
 class LiveViewChannel(FdLogMixin, base.ImageChannel):
     """Converts UMAMI's rel_time/x/y event stream into a physical-coordinate
-    live view, published as its own shared-memory histogram."""
+    live view, published as its own shared-memory histogram.
+
+    `umami_client.EventReceiver` owns the connect-with-retry and frame-parsing
+    loop (on its own background thread) and calls back into this class's
+    `on_events`/`on_start_of_run`/`on_end_of_run`/`on_clear` methods as frames
+    arrive -- undecoded, so this class decides `decode_events` vs
+    `decode_events_xy`.
+    """
 
     attributes = {
         # TODO: whatever calibration/config parameters the conversion needs
@@ -64,17 +59,12 @@ class LiveViewChannel(FdLogMixin, base.ImageChannel):
     }
 
     _writer = None
-    _sock = None
-    _thread = None
+    _receiver = None
 
     def init(self):
         if not self.ipc_name:
             raise ConfigurationError('ipc_name must be set')
         self.init_fd_log('umami_live')
-
-        self._stop = threading.Event()
-        self._connected = False
-        self._last_error = None
 
         # matches aux_histo's shm-naming convention, so umami-gui's "Other
         # Histograms" window (which discovers this output's declared
@@ -83,90 +73,44 @@ class LiveViewChannel(FdLogMixin, base.ImageChannel):
         self._writer = umami.ShmWriter(shm_name, self.nx, self.ny, self.nt)
         self._data = np.asarray(self._writer)
 
-        self._sock_name = f'{self.ipc_name}_{self.output_name}'
-        self._thread = threading.Thread(
-            target=self._run, name='event-consumer', daemon=True)
-        self._thread.start()
+        self._receiver = umami.EventReceiver(self.ipc_name, self.output_name, self)
 
     def delete(self):
-        self._stop.set()
-        if self._sock is not None:
-            self._sock.close()
-        if self._thread is not None:
-            self._thread.join(timeout=2.0)
+        if self._receiver is not None:
+            self._receiver.stop()
         self.delete_fd_log()
         self._writer = None
         self._data = None
 
-    # ---- background event-consumer thread ----
+    # ---- EventReceiver callbacks (called from its background thread) ----
 
-    def _run(self):
-        while not self._stop.is_set():
-            try:
-                self._connect()
-                self._connected = True
-                self._read_loop()
-            except (OSError, ConnectionError) as e:
-                self._last_error = str(e)
-            self._connected = False
-            if self._sock is not None:
-                self._sock.close()
-                self._sock = None
-            if not self._stop.is_set():
-                time.sleep(RECONNECT_DELAY_S)
+    def on_events(self, payload):
+        """`payload` is the raw, undecoded frame bytes.
 
-    def _connect(self):
-        # abstract namespace: leading NUL byte, same convention UMAMI's own
-        # Rust side uses via the `uds` crate
-        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._sock.connect('\0' + self._sock_name)
-
-    def _recv_exact(self, n):
-        buf = bytearray()
-        while len(buf) < n:
-            chunk = self._sock.recv(n - len(buf))
-            if not chunk:
-                raise ConnectionError('ext_process socket closed')
-            buf += chunk
-        return bytes(buf)
-
-    def _read_loop(self):
-        while not self._stop.is_set():
-            header = self._recv_exact(FRAME_HEADER.size)
-            tag, length = FRAME_HEADER.unpack(header)
-            payload = self._recv_exact(length) if length else b''
-            if tag == TAG_EVENTS:
-                events = umami.decode_events_xy(payload)
-                self._process_events(events)
-            elif tag == TAG_START_OF_RUN:
-                run_id = payload.decode()
-                self._writer.set_run_id(run_id)
-                self._writer.set_running(True)
-                self._writer.clear_histo()  # TODO: confirm this is wanted
-                # TODO: reset any of your own per-run accumulator state here
-            elif tag == TAG_END_OF_RUN:
-                self._writer.set_running(False)
-            elif tag == TAG_CLEAR:
-                self._writer.clear_histo()
-                # TODO: reset any of your own per-run accumulator state here
-
-    def _process_events(self, events):
-        """`events` is a numpy structured array with fields `rel_time_ns`,
-        `x`, `y` -- the common case for a live view. If you need to filter
-        by event type (e.g. neutrons only) or need other fields (channel,
-        ampl, flags, ...), switch to `umami.decode_events` instead, which
-        exposes the full record.
-
-        Convert x/y (and rel_time_ns, if the physical transform is
-        time-dependent) into physical coordinates, then accumulate into
-        self._data.
+        `decode_events_xy` gives a numpy structured array with just
+        `rel_time_ns`/`x`/`y` -- the common case for a live view. Switch to
+        `umami.decode_events` instead if you need to filter by event type
+        (e.g. neutrons only) or need other fields (channel, ampl, flags, ...).
         """
+        events = umami.decode_events_xy(payload)
         # TODO: real physics-informed conversion goes here. Sketch:
         #
         #   phys_x, phys_y = your_conversion_library.convert(
         #       events['x'], events['y'])
         #   np.add.at(self._data, (phys_y, phys_x), 1)
-        raise NotImplementedError
+
+    def on_start_of_run(self, run_id):
+        self._writer.set_run_id(run_id)
+        self._writer.set_running(True)
+        self._writer.clear_histo()  # TODO: confirm this is wanted
+        # TODO: reset any of your own per-run accumulator state here
+
+    def on_end_of_run(self):
+        self._writer.set_running(False)
+
+    def on_clear(self):
+        self._writer.clear_histo()
+        # TODO: reset any of your own per-run accumulator state here
 
     # ---- Tango-facing attributes ----
 
@@ -192,6 +136,7 @@ class LiveViewChannel(FdLogMixin, base.ImageChannel):
         return self._data.reshape(-1)[:self.nt * self.ny * self.nx]
 
     def state(self):
-        if not self._connected:
-            return FAULT, self._last_error or 'Not connected to UMAMI event socket'
+        if not self._receiver.connected:
+            return FAULT, (self._receiver.last_error
+                           or 'Not connected to UMAMI event socket')
         return ON, ''

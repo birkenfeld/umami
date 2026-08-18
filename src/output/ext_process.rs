@@ -7,6 +7,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use anyhow::{anyhow, Context};
+use num_enum::{FromPrimitive, IntoPrimitive};
 use serde::{Deserialize, Serialize};
 use uds::{UnixListenerExt, UnixSocketAddr};
 use crate::error::UResult;
@@ -14,15 +15,20 @@ use crate::event::Event;
 use crate::params::HasParams;
 use super::{Output, OutputCommon};
 
-const TAG_EVENTS: u8 = 0;
-const TAG_START_OF_RUN: u8 = 1;
-const TAG_END_OF_RUN: u8 = 2;
-const TAG_CLEAR: u8 = 3;
+/// Wire-format frame tag, see `docs/outputs.md`'s `ext_process` section.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive, IntoPrimitive)]
+pub enum FrameTag {
+    Events = 0,
+    StartOfRun = 1,
+    EndOfRun = 2,
+    Clear = 3,
+    #[num_enum(default)]
+    Unknown = 0xff,
+}
 
 /// One axis of a declared histogram. `min`/`max` are the values represented
-/// by the first and last bin (not an inclusive range like `aux_histo`'s own
-/// `AxisSpec` -- there's no expression here to bin against, just calibration
-/// for display).
+/// by the first and last bin.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExtAxisSpec {
@@ -33,10 +39,9 @@ pub struct ExtAxisSpec {
 }
 
 /// Declares one histogram an external consumer publishes over its own shm
-/// segment, named `<ipc_name>_<output_name>_<histo_name>` (matching
-/// `aux_histo`'s convention) -- purely metadata for client discovery.
-/// UMAMI itself never creates, writes, or otherwise manages this segment;
-/// the consumer does, e.g. via `umami_client.ShmWriter`. `y`/`t` are
+/// segment, named `<ipc_name>_<output_name>_<histo_name>` as metadata for
+/// client discovery.  UMAMI itself does not touch this segment; the consumer
+/// needs to do it, e.g. using the ShmWriter exported to Python. `y`/`t` are
 /// optional, so a histogram can be 1-D, 2-D, or 3-D.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -62,7 +67,7 @@ struct ExtProcessConfig {
 #[derive(HasParams)]
 #[params(kind = "output", type = "ext_process")]
 pub struct ExtProcessOutput {
-    #[param(help = "Histogram(s) the external consumer publishes, for client discovery only",
+    #[param(help = "Histogram(s) the external consumer publishes, for client discovery",
             readonly = true, datatype = "array of histogram specs")]
     histos: Vec<ExtHistoSpec>,
     conn: Arc<Mutex<Option<UnixStream>>>,
@@ -100,19 +105,19 @@ impl Output for ExtProcessOutput {
         let batch: Vec<Event> = events.to_vec();
         let bytes = rkyv::to_bytes::<rkyv::rancor::Failure>(&batch)
             .context("Serializing event batch")?;
-        self.send_frame(TAG_EVENTS, &bytes)
+        self.send_frame(FrameTag::Events, &bytes)
     }
 
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
-        self.send_frame(TAG_START_OF_RUN, run.as_bytes())
+        self.send_frame(FrameTag::StartOfRun, run.as_bytes())
     }
 
     fn handle_end_of_run(&mut self) -> UResult<()> {
-        self.send_frame(TAG_END_OF_RUN, &[])
+        self.send_frame(FrameTag::EndOfRun, &[])
     }
 
     fn handle_clear(&mut self) -> UResult<()> {
-        self.send_frame(TAG_CLEAR, &[])
+        self.send_frame(FrameTag::Clear, &[])
     }
 }
 
@@ -135,11 +140,11 @@ fn validate_histos(value: Vec<ExtHistoSpec>) -> UResult<Vec<ExtHistoSpec>> {
 impl ExtProcessOutput {
     /// Never fails the pipeline: a missing or dead consumer just means
     /// frames are silently dropped until the next (re)connection.
-    fn send_frame(&mut self, tag: u8, payload: &[u8]) -> UResult<()> {
+    fn send_frame(&mut self, tag: FrameTag, payload: &[u8]) -> UResult<()> {
         let mut guard = self.conn.lock().expect("conn mutex poisoned");
         if let Some(stream) = guard.as_mut() {
             let len = (payload.len() as u32).to_le_bytes();
-            let ok = stream.write_all(&[tag])
+            let ok = stream.write_all(&[tag.into()])
                 .and_then(|()| stream.write_all(&len))
                 .and_then(|()| stream.write_all(payload));
             if ok.is_err() {
@@ -190,11 +195,11 @@ mod tests {
         panic!("output never registered the connection");
     }
 
-    fn recv_frame(stream: &mut UnixStream) -> (u8, Vec<u8>) {
+    fn recv_frame(stream: &mut UnixStream) -> (FrameTag, Vec<u8>) {
         stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         let mut header = [0u8; 5];
         stream.read_exact(&mut header).unwrap();
-        let tag = header[0];
+        let tag = FrameTag::from(header[0]);
         let len = u32::from_le_bytes(header[1..5].try_into().unwrap()) as usize;
         let mut payload = vec![0u8; len];
         stream.read_exact(&mut payload).unwrap();
@@ -221,23 +226,23 @@ mod tests {
         let event = test_utils::neutron(100, 5);
         output.handle_events(&[event]).unwrap();
         let (tag, payload) = recv_frame(&mut stream);
-        assert_eq!(tag, TAG_EVENTS);
+        assert_eq!(tag, FrameTag::Events);
         let batch: Vec<Event> = rkyv::from_bytes::<Vec<Event>, rkyv::rancor::Error>(&payload).unwrap();
         assert_eq!(batch, vec![event]);
 
         output.handle_start_of_run("run1").unwrap();
         let (tag, payload) = recv_frame(&mut stream);
-        assert_eq!(tag, TAG_START_OF_RUN);
+        assert_eq!(tag, FrameTag::StartOfRun);
         assert_eq!(payload, b"run1");
 
         output.handle_end_of_run().unwrap();
         let (tag, payload) = recv_frame(&mut stream);
-        assert_eq!(tag, TAG_END_OF_RUN);
+        assert_eq!(tag, FrameTag::EndOfRun);
         assert!(payload.is_empty());
 
         output.handle_clear().unwrap();
         let (tag, payload) = recv_frame(&mut stream);
-        assert_eq!(tag, TAG_CLEAR);
+        assert_eq!(tag, FrameTag::Clear);
         assert!(payload.is_empty());
     }
 
@@ -255,7 +260,7 @@ mod tests {
 
         output.handle_start_of_run("run1").unwrap();
         let (tag, payload) = recv_frame(&mut second);
-        assert_eq!(tag, TAG_START_OF_RUN);
+        assert_eq!(tag, FrameTag::StartOfRun);
         assert_eq!(payload, b"run1");
     }
 

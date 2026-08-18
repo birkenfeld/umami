@@ -28,6 +28,7 @@ pub use self::command::{Command, CommandReply, RECV_BUFFER_SIZE};
 pub use self::config::{load_config, HistoConfig};
 pub use self::error::UResult;
 pub use self::event::{Event, EventTime, EventType};
+pub use self::output::ext_process::FrameTag;
 pub use self::params::ParamMap;
 pub use self::pipeline::{start_pipeline, PipelineHandle};
 pub use self::shm::{ShmReader, ShmWriter, RUNNING_BIT, SHM_MAGIC};
