@@ -34,6 +34,7 @@ pub struct Tof {
     time_bins: Vec<EventTime>,
     // Run-time state
     gate_up: bool,
+    // TODO: consider frame overlap
     last_t0: EventTime,
     cur_bin: usize,
     // whether last_t0 reflects a Tzero/AuxSignal seen since `start_of_run`

@@ -88,8 +88,9 @@ pub trait Output: Send + HasParams {
                 }
                 PipeItem::GetParams(full, send) => {
                     match self.get_params(*full) {
-                        Ok(params) => send.send((common.name, params))
-                                          .expect("param reply receiver died"),
+                        Ok(params) => {
+                            let _ = send.send((common.name, params));
+                        }
                         Err(e) => {
                             lprintln!(ERROR, [name] "Error getting params: {e:#}");
                         }
@@ -99,12 +100,12 @@ pub trait Output: Send + HasParams {
                     if let Some(params) = param_map.remove(&common.name) {
                         if let Err(e) = self.update_params(common.name, params) {
                             lprintln!(ERROR, [name] "Error setting parameters: {e:#}");
-                            send.send(CommandReply::new_mod_error(
+                            let _ = send.send(CommandReply::new_mod_error(
                                 common.name,
                                 format!("Failed to set parameters: {e:#}")
-                            )).expect("param reply receiver died");
+                            ));
                         } else {
-                            send.send(CommandReply::Ok).expect("param reply receiver died");
+                            let _ = send.send(CommandReply::Ok);
                         }
                     }
                 }

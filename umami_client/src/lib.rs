@@ -350,13 +350,13 @@ unsafe impl Element for EventRecord {
 #[derive(Clone, Copy)]
 struct EventXY {
     rel_time_ns: i64,
-    x: u16,
-    y: u16,
+    x: i32,
+    y: i32,
 }
 
 impl From<Event> for EventXY {
     fn from(ev: Event) -> Self {
-        Self { rel_time_ns: ev.rel_time.as_nanos(), x: ev.histo.x, y: ev.histo.y }
+        Self { rel_time_ns: ev.rel_time.as_nanos(), x: ev.histo.x as _, y: ev.histo.y as _ }
     }
 }
 
@@ -364,7 +364,7 @@ unsafe impl Element for EventXY {
     const IS_COPY: bool = true;
 
     fn get_dtype(py: Python<'_>) -> Bound<'_, PyArrayDescr> {
-        PyArrayDescr::new(py, [("rel_time_ns", "<i8"), ("x", "<u2"), ("y", "<u2")])
+        PyArrayDescr::new(py, [("tof", "<i8"), ("x", "<i4"), ("y", "<i4")])
             .expect("EventXY's dtype spec is well-formed")
     }
 
@@ -615,9 +615,13 @@ impl EventReceiver {
         self.last_error.lock().unwrap().clone()
     }
 
-    /// Stops the background thread and waits for it to exit.
+    /// Stops the background thread.
     fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+    }
+
+    /// Waits for background thread to exit.
+    fn wait(&mut self) {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
