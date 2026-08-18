@@ -91,7 +91,7 @@ impl PostProcessor {
                         match ev.evtype {
                             EventType::Neutron => self.shm.add_histo(ev.histo),
                             EventType::Tzero => self.shm.add_tzero(),
-                            EventType::Monitor { num } => self.shm.add_monitor(num),
+                            EventType::Monitor => self.shm.add_monitor(ev.index),
                             _ => {}
                         }
                     }

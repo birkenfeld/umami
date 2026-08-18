@@ -2,10 +2,12 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use anyhow::{anyhow, Context};
-use rkyv::{api::high::to_bytes_in, ser::writer::IoWriter};
+use zerocopy::IntoBytes;
+#[cfg(test)]
+use zerocopy::TryFromBytes;
 use crate::error::UResult;
 use crate::event::Event;
 use crate::params::HasParams;
@@ -21,7 +23,7 @@ pub struct FileOutput {
             datatype="null or string")]
     filename: Option<String>,
     // Runtime
-    writer: Option<IoWriter<BufWriter<File>>>,
+    writer: Option<BufWriter<File>>,
 }
 
 impl FileOutput {
@@ -43,7 +45,7 @@ impl Output for FileOutput {
         let file = File::create(&path)
             .with_context(|| format!("Creating output file {}", path.display()))?;
         let buffered = BufWriter::with_capacity(Self::BUFFER_SIZE, file);
-        self.writer = Some(IoWriter::new(buffered));
+        self.writer = Some(buffered);
         Ok(())
     }
 
@@ -53,11 +55,8 @@ impl Output for FileOutput {
     }
 
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
-        if let Some(mut writer) = self.writer.as_mut() {
-            for event in events {
-                to_bytes_in::<_, rkyv::rancor::Failure>(event, &mut writer)
-                    .context("Serializing event for file output")?;
-            }
+        if let Some(writer) = self.writer.as_mut() {
+            writer.write_all(events.as_bytes()).context("Writing binary events")?;
         }
         Ok(())
     }
@@ -108,7 +107,7 @@ mod tests {
         output.handle_end_of_run().unwrap();
 
         let bytes = std::fs::read(dir.join("run1")).unwrap();
-        let restored: Event = rkyv::from_bytes::<Event, rkyv::rancor::Error>(&bytes).unwrap();
+        let restored = Event::try_read_from_bytes(&bytes).unwrap();
         assert_eq!(restored, event);
 
         std::fs::remove_dir_all(&dir).ok();

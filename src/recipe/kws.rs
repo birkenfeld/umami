@@ -81,16 +81,25 @@ impl Recipe for KWSGERecipe {
                     event.histo.x = x as u16;
                     event.histo.y = y as u16;
                 }
-                EventType::Edge { up } => {
+                EventType::Edge => {
+                    let up = event.index != 0;
                     match event.channel.0 {
-                        0 =>
-                            event.evtype = EventType::Gate { up: up ^ self.invert_ts },
-                        1 if up ^ self.invert_ts =>
-                            event.evtype = EventType::Tzero,
-                        3 if up ^ self.invert_ts =>
-                            event.evtype = EventType::Tzero,
-                        2 if up ^ self.invert_ts =>
-                            event.evtype = EventType::AuxSignal { num: EXT_START },
+                        0 => {
+                            event.evtype = EventType::Gate;
+                            event.index = (up ^ self.invert_ts) as u8;
+                        }
+                        1 if up ^ self.invert_ts => {
+                            event.evtype = EventType::Tzero;
+                            event.index = 0;
+                        }
+                        3 if up ^ self.invert_ts => {
+                            event.evtype = EventType::Tzero;
+                            event.index = 0;
+                        }
+                        2 if up ^ self.invert_ts => {
+                            event.evtype = EventType::AuxSignal;
+                            event.index = EXT_START;
+                        }
                         _ => ()
                     }
                 }
@@ -171,20 +180,20 @@ mod tests {
     fn test_kws_edge_mapping() {
         let cases = [
             EdgeCase { invert_ts: false, channel: 0, up: true,
-                       expected: EventType::Gate { up: true }, desc: "ch0 -> gate" },
+                       expected: EventType::Gate, desc: "ch0 -> gate" },
             EdgeCase { invert_ts: false, channel: 1, up: true,
                        expected: EventType::Tzero, desc: "ch1 up -> tzero" },
             EdgeCase { invert_ts: false, channel: 3, up: true,
                        expected: EventType::Tzero, desc: "ch3 up -> tzero" },
             EdgeCase { invert_ts: false, channel: 2, up: true,
-                       expected: EventType::AuxSignal { num: EXT_START }, desc: "ch2 up -> aux" },
+                       expected: EventType::AuxSignal, desc: "ch2 up -> aux" },
             EdgeCase { invert_ts: false, channel: 1, up: false,
-                       expected: EventType::Edge { up: false },
+                       expected: EventType::Edge,
                        desc: "ch1 down, no invert -> unchanged" },
             EdgeCase { invert_ts: true, channel: 1, up: false,
                        expected: EventType::Tzero, desc: "ch1 down with invert_ts -> tzero" },
             EdgeCase { invert_ts: false, channel: 5, up: true,
-                       expected: EventType::Edge { up: true }, desc: "unmatched channel -> unchanged" },
+                       expected: EventType::Edge, desc: "unmatched channel -> unchanged" },
         ];
 
         for case in cases {

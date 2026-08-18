@@ -84,8 +84,8 @@ impl Field {
         match self {
             Field::Time => ev.time.0,
             Field::RelTime => ev.rel_time.0,
-            Field::Raw0 => ev.raw.0 as i64,
-            Field::Raw1 => ev.raw.1 as i64,
+            Field::Raw0 => ev.raw[0] as i64,
+            Field::Raw1 => ev.raw[1] as i64,
             Field::Channel => ev.channel.0 as i64,
             Field::Ampl => ev.ampl.0 as i64,
             Field::HistoX => ev.histo.x as i64,
@@ -98,15 +98,15 @@ impl Field {
             }
             Field::EvType => evtype_discriminant(&ev.evtype),
             Field::AuxNum => match ev.evtype {
-                EventType::AuxSignal { num } => num as i64,
+                EventType::AuxSignal => ev.index as i64,
                 _ => -1,
             },
             Field::MonNum => match ev.evtype {
-                EventType::Monitor { num } => num as i64,
+                EventType::Monitor => ev.index as i64,
                 _ => -1,
             },
             Field::GateUp => match ev.evtype {
-                EventType::Edge { up } | EventType::Gate { up } => up as i64,
+                EventType::Edge | EventType::Gate => ev.index as i64,
                 _ => -1,
             },
         }
@@ -116,11 +116,11 @@ impl Field {
 fn evtype_discriminant(t: &EventType) -> i64 {
     match t {
         EventType::Neutron => 0x01,
-        EventType::Monitor { .. } => 0x02,
-        EventType::Edge { .. } => 0x10,
-        EventType::Gate { .. } => 0x11,
+        EventType::Monitor => 0x02,
+        EventType::Edge => 0x10,
+        EventType::Gate => 0x11,
         EventType::Tzero => 0x12,
-        EventType::AuxSignal { .. } => 0x13,
+        EventType::AuxSignal => 0x13,
         EventType::Heartbeat => 0x80,
         EventType::Void => 0xFF,
     }
@@ -542,7 +542,7 @@ mod tests {
         let ev = ev_with(|e| {
             e.time = crate::event::EventTime(100);
             e.rel_time = crate::event::EventTime(50);
-            e.raw = (0xDEAD_BEEF, 0x1234_5678);
+            e.raw = [0xDEAD_BEEF, 0x1234_5678];
             e.channel = crate::event::ChannelId(42);
             e.ampl = crate::event::Amplitude(7);
             e.histo.x = 1;
@@ -605,7 +605,7 @@ mod tests {
         // Jumiom-style: word2 packs adc0 (bits 0..12) and adc1 (bits 16..28).
         let enc = |v: i32| -> u32 { (v as u32) & 0xFFF };
         let word = (enc(-1) << 16) | enc(100);
-        let ev = ev_with(|e| e.raw = (word, 0));
+        let ev = ev_with(|e| e.raw = [word, 0]);
         assert_eq!(Expr::parse("raw_0[0..12]").unwrap().eval(&ev), 100);
         assert_eq!(Expr::parse("raw_0[0..12:signed]").unwrap().eval(&ev), 100);
         assert_eq!(Expr::parse("raw_0[16..28:signed]").unwrap().eval(&ev), -1);
@@ -660,7 +660,7 @@ mod tests {
     fn test_alias_expansion() {
         let enc = |v: i32| -> u32 { (v as u32) & 0xFFF };
         let word = (enc(-1) << 16) | enc(100);
-        let ev = ev_with(|e| e.raw = (word, 0));
+        let ev = ev_with(|e| e.raw = [word, 0]);
         let mut aliases = AliasTable::new();
         aliases.insert("adc0".into(), alias("adc0", "raw_0[0..12:signed]"));
         aliases.insert("adc1".into(), alias("adc1", "raw_0[16..28:signed]"));

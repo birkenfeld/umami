@@ -28,12 +28,12 @@ impl Recipe for Psd {
                     // 8 tubes per module
                     let x = event.channel.0;
                     // TODO: calibration
-                    let (pl, pr) = event.raw;
+                    let [pl, pr] = event.raw;
                     let y = (f64::from(pr) / f64::from(pr + pl)) * self.reso as f64;
                     event.histo.x = x as u16;
                     event.histo.y = y as u16;
                 }
-                EventType::Edge { up: true } => {
+                EventType::Edge if event.index > 0 => {
                     event.evtype = EventType::Tzero;
                 }
                 _ => ()
@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn test_psd_edge_mapping() {
-        for (up, expected) in [(true, EventType::Tzero), (false, EventType::Edge { up: false })] {
+        for (up, expected) in [(true, EventType::Tzero), (false, EventType::Edge)] {
             let mut recipe = psd(256);
             let ev = test_utils::edge(100, 5, up);
             let out = recipe.process(vec![ev]);

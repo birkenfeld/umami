@@ -407,7 +407,8 @@ impl<S: MesySource, C: cmd::MesyCommandHandler> Input for MesyInput<S, C> {
                 // let trig_id = (data >> 44) as u32 & 0b111;
                 let data_id = (data >> 40) as u32 & 0b1111;
                 let data = (data >> 19) as u32 & 0x1fffff;
-                Event::new(EventType::Edge { up: true })
+                Event::new(EventType::Edge)
+                    .with_index(1)
                     .with_channel(mcpd_id << 7 | data_id)
                     .with_abs_time(EventTime::from_ticks(TIME_BASE, ts as i64))
                     .with_raw(data, 0)

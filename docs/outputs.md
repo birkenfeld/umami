@@ -41,7 +41,7 @@ Writes events to an HDF5 file with NeXus conventions.
 
 ## `type = "file"`
 
-Writes raw events to a plain file in the rkyv binary format.
+Writes raw events to a plain file in the binary format.
 
 * `dir` (required): directory to write files to
 * `filename` (optional, default derived from the run ID): filename within
@@ -108,9 +108,10 @@ postfix := primary ( "[" int ".." int (":signed")? "]" )*
 primary := int | ident | "(" expr ")"
 ```
 
-Fields: `time`, `rel_time` (nanoseconds), `raw_0`, `raw_1` (the event's raw
-data fields), `channel`, `ampl`, `x`, `y`, `t`, `i` (the event's computed
-histogram coordinates), `flags`, `evtype`, `auxnum`, `monnum`, `gateup`.
+Fields: `time`, `rel_time` (nanoseconds), `raw_0`, `raw_1` (the
+event's raw data fields), `channel`, `ampl`, `x`, `y`, `t`, `i` (the event's
+computed histogram coordinates), `flags`, `evtype`, `auxnum`, `monnum`,
+`gateup`.
 
 Named constants (for `evtype` comparisons): `neutron`, `monitor`, `edge`,
 `gate`, `tzero`, `auxsignal`, `heartbeat`, `void`.
@@ -164,8 +165,7 @@ One frame is sent per event batch and per run-boundary event:
 
 Payload by tag:
 
-* Events (`0`): one [`rkyv`](https://github.com/rkyv/rkyv) archive of the
-  batch, serialized as `Vec<Event>`.
+* Events (`0`): an array of binary `Event` structs.
 * Start of run (`1`): UTF-8 run ID bytes.
 * End of run (`2`) / clear (`3`): empty (length `0`).
 

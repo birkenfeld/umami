@@ -97,7 +97,8 @@ mod tests {
         let out = recipe.process(events);
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].evtype, EventType::Neutron);
-        assert_eq!(out[1].evtype, EventType::Edge { up: true });
+        assert_eq!(out[1].evtype, EventType::Edge);
+        assert_eq!(out[1].index, 1);
     }
 
     fn recipe_map(name: &str, r#type: &str) -> BTreeMap<String, RecipeConfig> {

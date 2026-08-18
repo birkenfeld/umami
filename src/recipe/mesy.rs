@@ -23,11 +23,11 @@ pub enum EdgeMapping {
 }
 
 impl EdgeMapping {
-    fn to_evtype(self) -> EventType {
+    fn to_evtype(self) -> (EventType, u8) {
         match self {
-            EdgeMapping::Tzero => EventType::Tzero,
-            EdgeMapping::Monitor(num) => EventType::Monitor { num },
-            EdgeMapping::Aux(num) => EventType::AuxSignal { num },
+            EdgeMapping::Tzero => (EventType::Tzero, 0),
+            EdgeMapping::Monitor(num) => (EventType::Monitor, num),
+            EdgeMapping::Aux(num) => (EventType::AuxSignal, num)
         }
     }
 }
@@ -63,16 +63,18 @@ impl Recipe for Mpsd {
                     let x = (x_orig >> 1) & 0xFFF8 | (x_orig & 0x7);
                     event.histo.x = x as u16;
 
-                    let y = event.raw.0 as u16;
+                    let y = event.raw[0] as u16;
                     if self.y_mask && (y == 0 || y > 960) {
                         event.evtype = EventType::Void;
                     }
 
                     event.histo.y = y; // TODO: calibration
                 }
-                EventType::Edge { up: true } => {
+                EventType::Edge if event.index > 0 => {
                     if let Some(mapped) = self.inputs.get(&event.channel.0) {
-                        event.evtype = mapped.to_evtype();
+                        let (evt, ix) = mapped.to_evtype();
+                        event.evtype = evt;
+                        event.index = ix;
                     }
                 }
                 _ => ()
@@ -106,7 +108,7 @@ impl Recipe for Mdll {
                     event.histo.x = 0; // TODO
                     event.histo.y = 0;
                 }
-                EventType::Edge { up: true } => {
+                EventType::Edge if event.index > 0 => {
                     event.evtype = EventType::Tzero;
                 }
                 _ => ()
@@ -192,7 +194,7 @@ mod tests {
             let mut recipe = Mpsd::from_config(toml::Table::new(), &empty_recipes()).unwrap();
             let ev = test_utils::edge(100, 5, up);
             let out = recipe.process(vec![ev]);
-            assert_eq!(out[0].evtype, EventType::Edge { up }, "up={up}");
+            assert_eq!(out[0].evtype, EventType::Edge, "up={up}");
         }
     }
 
@@ -216,10 +218,10 @@ mod tests {
         ];
         let out = recipe.process(events);
         assert_eq!(out[0].evtype, EventType::Tzero);
-        assert_eq!(out[1].evtype, EventType::Monitor { num: 1 });
-        assert_eq!(out[2].evtype, EventType::AuxSignal { num: 2 });
-        assert_eq!(out[3].evtype, EventType::Edge { up: false });
-        assert_eq!(out[4].evtype, EventType::Edge { up: true });
+        assert_eq!(out[1].evtype, EventType::Monitor);
+        assert_eq!(out[2].evtype, EventType::AuxSignal);
+        assert_eq!(out[3].evtype, EventType::Edge);
+        assert_eq!(out[4].evtype, EventType::Edge);
     }
 
     #[test]
@@ -235,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_mdll_edge_mapping() {
-        for (up, expected) in [(true, EventType::Tzero), (false, EventType::Edge { up: false })] {
+        for (up, expected) in [(true, EventType::Tzero), (false, EventType::Edge)] {
             let mut recipe = Mdll::from_config(toml::Table::new(), &empty_recipes()).unwrap();
             let ev = test_utils::edge(100, 3, up);
             let out = recipe.process(vec![ev]);

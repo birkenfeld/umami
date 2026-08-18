@@ -10,6 +10,7 @@ use anyhow::{anyhow, Context};
 use num_enum::{FromPrimitive, IntoPrimitive};
 use serde::{Deserialize, Serialize};
 use uds::{UnixListenerExt, UnixSocketAddr};
+use zerocopy::IntoBytes;
 use crate::error::UResult;
 use crate::event::Event;
 use crate::params::HasParams;
@@ -102,10 +103,7 @@ impl Output for ExtProcessOutput {
     }
 
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
-        let batch: Vec<Event> = events.to_vec();
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Failure>(&batch)
-            .context("Serializing event batch")?;
-        self.send_frame(FrameTag::Events, &bytes)
+        self.send_frame(FrameTag::Events, events.as_bytes())
     }
 
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
@@ -160,6 +158,7 @@ mod tests {
     use std::io::Read;
     use std::time::Duration;
     use uds::UnixStreamExt;
+    use zerocopy::TryFromBytes;
     use crate::command::ModuleId;
     use crate::event::test_utils;
     use super::*;
@@ -227,8 +226,8 @@ mod tests {
         output.handle_events(&[event]).unwrap();
         let (tag, payload) = recv_frame(&mut stream);
         assert_eq!(tag, FrameTag::Events);
-        let batch: Vec<Event> = rkyv::from_bytes::<Vec<Event>, rkyv::rancor::Error>(&payload).unwrap();
-        assert_eq!(batch, vec![event]);
+        let batch = <[Event]>::try_ref_from_bytes(&payload).unwrap();
+        assert_eq!(batch, [event]);
 
         output.handle_start_of_run("run1").unwrap();
         let (tag, payload) = recv_frame(&mut stream);

@@ -299,7 +299,7 @@ mod tests {
         let _guard = ShmGuard::for_name(format!("{ipc}_aux_adc0hist"));
 
         let mut ev = test_utils::neutron(0, 0);
-        ev.raw = (2, 0); // adc0 = raw_0[0..12:signed] = 2 -> bin (2-(-8))*4/16 = 2
+        ev.raw = [2, 0]; // adc0 = raw_0[0..12:signed] = 2 -> bin (2-(-8))*4/16 = 2
         output.handle_events(&[ev]).unwrap();
 
         let shm = ShmReader::open(&format!("{ipc}_aux_adc0hist")).unwrap();
@@ -377,7 +377,7 @@ mod tests {
         let _guard = ShmGuard::for_name(format!("{ipc}_aux_xy"));
 
         let mut ev = test_utils::neutron(0, 0);
-        ev.raw = (2, 6); // x bin: (2-(-8))*4/16 = 2, y bin: (6-(-8))*4/16 = 3
+        ev.raw = [2, 6]; // x bin: (2-(-8))*4/16 = 2, y bin: (6-(-8))*4/16 = 3
         output.handle_events(&[ev]).unwrap();
 
         let shm = ShmReader::open(&format!("{ipc}_aux_xy")).unwrap();

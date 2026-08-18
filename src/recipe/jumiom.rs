@@ -43,8 +43,8 @@ fn adc12bit(word: u32, shift: u32) -> i32 {
     (((word >> shift) & 0xFFF) as i32) << 20 >> 20
 }
 
-fn unpack_adc(raw: (u32, u32)) -> [i32; 4] {
-    [adc12bit(raw.0, 0), adc12bit(raw.0, 16), adc12bit(raw.1, 0), adc12bit(raw.1, 16)]
+fn unpack_adc(raw: [u32; 2]) -> [i32; 4] {
+    [adc12bit(raw[0], 0), adc12bit(raw[0], 16), adc12bit(raw[1], 0), adc12bit(raw[1], 16)]
 }
 
 /// The "adchelper" value used to index the limit table: each ADC value
@@ -214,7 +214,7 @@ impl Position {
     /// `upper_limit` default to accept-everything, but the `adchelper`/
     /// `ymerk` guards below still apply unconditionally.
     fn passes_limit_table(&self, xfpga: i32, yfpga: i32, xmerk: i32, ymerk: i32,
-                          raw: (u32, u32)) -> bool {
+                          raw: [u32; 2]) -> bool {
         let helper = adchelper(unpack_adc(raw));
         if !(helper > 0 && helper < 256 && ymerk > 0) {
             return false;

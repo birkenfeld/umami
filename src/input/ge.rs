@@ -173,7 +173,8 @@ impl<S: Source> Input for GeInput<S> {
         for _ in 0..nevents {
             let detid = LE::read_u32(&buffer[offset+8..]);
             let event = if self.is_ts {
-                Event::new(EventType::Edge { up: detid & 0x8000_0000 != 0 })
+                Event::new(EventType::Edge)
+                    .with_index((detid >> 31) as u8)
                     .with_abs_time(read_time(&buffer[offset..]))
                     .with_channel(detid & 0xFFFF)
                     .with_flags(flags)

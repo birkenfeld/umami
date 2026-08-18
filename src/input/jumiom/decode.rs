@@ -100,7 +100,7 @@ impl JumiomDecoder {
                 self.ignore_w2w3 = word & 0x1800_0000;
                 if self.gatebit != self.last_gatebit {
                     self.last_gatebit = self.gatebit;
-                    Some(Event::new(EventType::Gate { up: self.gatebit }))
+                    Some(Event::new(EventType::Gate).with_index(self.gatebit as u8))
                 } else {
                     None
                 }
@@ -110,7 +110,7 @@ impl JumiomDecoder {
                 self.tof_counter = counter as i64;
                 let rel_time = EventTime::from_ticks(NS_PER_TICK, self.tof_counter);
                 if self.ignore_w2w3 & 0x1000_0000 != 0 {
-                    Some(Event::new(EventType::Monitor { num: 0 }).with_rel_time(rel_time))
+                    Some(Event::new(EventType::Monitor).with_rel_time(rel_time))
                 } else if self.ignore_w2w3 & 0x0800_0000 != 0 {
                     Some(Event::new(EventType::Tzero).with_rel_time(rel_time))
                 } else {
@@ -154,7 +154,7 @@ impl JumiomDecoder {
                     + ((word0 & 0x0FF0_0000) >> 20)
                     + ((word1 & 0x0000_0FF0) >> 4)
                     + ((word1 & 0x0FF0_0000) >> 20);
-                Some(Event::new(EventType::AuxSignal { num: 0 })
+                Some(Event::new(EventType::AuxSignal)
                     .with_ampl(sum >> 2)
                     .with_raw(word0, word1))
             }
@@ -172,7 +172,7 @@ impl JumiomDecoder {
                     + ((word0 & 0x0000_7FFF) >> 7)
                     + ((word1 & 0x7FFF_0000) >> 23)
                     + ((word1 & 0x0000_7FFF) >> 7);
-                Some(Event::new(EventType::AuxSignal { num: 1 })
+                Some(Event::new(EventType::AuxSignal).with_index(1)
                     .with_ampl(sum >> 2)
                     .with_raw(word0, word1))
             }
@@ -205,14 +205,15 @@ mod tests {
         let words = tof1_words(true, 5, 3, 1234, [100, 50, 25, 10]);
         let events = dec.feed(&words);
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0].evtype, EventType::Gate { up: true });
+        assert_eq!(events[0].evtype, EventType::Gate);
+        assert_eq!(events[0].index, 1);
         let ev = &events[1];
         assert_eq!(ev.evtype, EventType::Neutron);
         assert_eq!(ev.channel.0 & 0xFF, 5); // x
         assert_eq!((ev.channel.0 >> 8) & 0xFF, 3); // y
         // (100>>3=12) + (50>>3=6) + (25>>3=3) + (10>>3=1) = 22, >>2 = 5
         assert_eq!(ev.ampl.0, 5);
-        assert_eq!(ev.raw, (words[2], words[3]));
+        assert_eq!(ev.raw, [words[2], words[3], 0]);
         assert_eq!(ev.rel_time, EventTime::from_ticks(NS_PER_TICK, 1234i64));
     }
 
@@ -235,7 +236,8 @@ mod tests {
 
         let events = dec.feed(&gated);
         assert_eq!(events.len(), 2); // Gate{true} + Neutron
-        assert_eq!(events[0].evtype, EventType::Gate { up: true });
+        assert_eq!(events[0].evtype, EventType::Gate);
+        assert_eq!(events[0].index, 1);
 
         // same gate state again: no repeated Gate event, just the Neutron
         let events = dec.feed(&gated);
@@ -263,7 +265,8 @@ mod tests {
         // word0 alone already yields the gate transition
         let first = dec.feed(&words[..2]);
         assert_eq!(first.len(), 1);
-        assert_eq!(first[0].evtype, EventType::Gate { up: true });
+        assert_eq!(first[0].evtype, EventType::Gate);
+        assert_eq!(first[0].index, 1);
 
         assert!(dec.feed(&words[2..3]).is_empty());
         let events = dec.feed(&words[3..]);
@@ -281,7 +284,7 @@ mod tests {
         let monitor_word0 = 0x8000_0000 | 0x1000_0000;
         let events = dec.feed(&[monitor_word0, 500]);
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].evtype, EventType::Monitor { num: 0 });
+        assert_eq!(events[0].evtype, EventType::Monitor);
         assert_eq!(events[0].rel_time, EventTime::from_ticks(NS_PER_TICK, 500i64));
 
         let mut dec = JumiomDecoder::new(JumiomMode::Tof1);
@@ -304,8 +307,9 @@ mod tests {
         stream.extend_from_slice(&next);
         let events = dec.feed(&stream);
         assert_eq!(events.len(), 3);
-        assert_eq!(events[0].evtype, EventType::Monitor { num: 0 });
-        assert_eq!(events[1].evtype, EventType::Gate { up: true });
+        assert_eq!(events[0].evtype, EventType::Monitor);
+        assert_eq!(events[1].evtype, EventType::Gate);
+        assert_eq!(events[1].index, 1);
         assert_eq!(events[2].evtype, EventType::Neutron);
         assert_eq!(events[2].channel.0 & 0xFF, 2); // x
     }
@@ -318,10 +322,10 @@ mod tests {
         let events = dec.feed(&[word0, word1]);
         assert_eq!(events.len(), 1);
         let ev = &events[0];
-        assert_eq!(ev.evtype, EventType::AuxSignal { num: 0 });
+        assert_eq!(ev.evtype, EventType::AuxSignal);
         // (0xAB=171 + 0xCD=205 + 0x34=52 + 0x12=18) = 446, >>2 = 111
         assert_eq!(ev.ampl.0, 111);
-        assert_eq!(ev.raw, (word0, word1));
+        assert_eq!(ev.raw, [word0, word1, 0]);
     }
 
     #[test]
@@ -332,10 +336,11 @@ mod tests {
         let events = dec.feed(&[word0, word1]);
         assert_eq!(events.len(), 1);
         let ev = &events[0];
-        assert_eq!(ev.evtype, EventType::AuxSignal { num: 1 });
+        assert_eq!(ev.evtype, EventType::AuxSignal);
+        assert_eq!(ev.index, 1);
         // per-channel values (see prior per-channel test derivation): 36, 172, 68, 102
         // sum = 378, >>2 = 94
         assert_eq!(ev.ampl.0, 94);
-        assert_eq!(ev.raw, (word0, word1));
+        assert_eq!(ev.raw, [word0, word1, 0]);
     }
 }

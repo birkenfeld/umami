@@ -21,11 +21,13 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pythonize::{depythonize, pythonize};
 use uds::{UnixSocketAddr, UnixStreamExt};
+#[cfg(test)]
+use zerocopy::IntoBytes;
+use zerocopy::TryFromBytes;
 
-use umami::{
-    ClientError, Command, CommandReply, Event, EventType, FrameTag, HistoConfig, ParamMap,
-    ShmReader,
-};
+#[cfg(test)]
+use umami::EventType;
+use umami::{ClientError, Command, CommandReply, Event, FrameTag, HistoConfig, ParamMap, ShmReader};
 
 create_exception!(umami_client, UmamiClientError, pyo3::exceptions::PyException,
     "Base class for all umami_client errors.");
@@ -281,33 +283,13 @@ impl Shm {
     }
 }
 
-/// `EventType`'s discriminant plus its one possible payload byte
-/// (`Monitor`/`AuxSignal`'s `num`, `Edge`/`Gate`'s `up`).
-fn evtype_tag_arg(evtype: EventType) -> (u8, u8) {
-    match evtype {
-        EventType::Neutron => (0x01, 0),
-        EventType::Monitor { num } => (0x02, num),
-        EventType::Edge { up } => (0x10, up as u8),
-        EventType::Gate { up } => (0x11, up as u8),
-        EventType::Tzero => (0x12, 0),
-        EventType::AuxSignal { num } => (0x13, num),
-        EventType::Heartbeat => (0x80, 0),
-        EventType::Void => (0xff, 0),
-    }
-}
-
-/// Decodes one archived `Vec<Event>` batch (as produced by the `ext_process`
-/// output) into a `Vec` of records, deserializing each `Event`.
-fn decode_batch(buf: &[u8]) -> PyResult<Vec<Event>> {
-    let archived = rkyv::access::<rkyv::Archived<Vec<Event>>, rkyv::rancor::Error>(buf)
-        .map_err(|e| PyValueError::new_err(format!("Corrupt event batch: {e}")))?;
-    archived
-        .iter()
-        .map(|ev| {
-            rkyv::deserialize::<Event, rkyv::rancor::Error>(ev)
-                .map_err(|e| PyValueError::new_err(format!("Corrupt event: {e}")))
-        })
-        .collect()
+/// Decodes one raw event batch (as sent by the `ext_process` output) into a
+/// validated `&[Event]`, without copying -- `Event`'s own layout is the wire
+/// format, so this is a direct, bounds/validity-checked reinterpretation of
+/// `buf` rather than a deserialization step.
+fn decode_batch(buf: &[u8]) -> PyResult<&[Event]> {
+    <[Event]>::try_ref_from_bytes(buf)
+        .map_err(|e| PyValueError::new_err(format!("Corrupt event batch: {e}")))
 }
 
 /// All of an `Event`'s fields, as a Numpy Element ready structure.
@@ -329,7 +311,6 @@ struct EventRecord {
 
 impl From<Event> for EventRecord {
     fn from(ev: Event) -> Self {
-        let (evtype, evtype_arg) = evtype_tag_arg(ev.evtype);
         Self {
             time_ns: ev.time.as_nanos(),
             rel_time_ns: ev.rel_time.as_nanos(),
@@ -340,8 +321,8 @@ impl From<Event> for EventRecord {
             t: ev.histo.t,
             i: ev.histo.i,
             flags: ev.flags.bits(),
-            evtype,
-            evtype_arg,
+            evtype: ev.evtype as u8,
+            evtype_arg: ev.index,
         }
     }
 }
@@ -392,21 +373,21 @@ unsafe impl Element for EventXY {
     }
 }
 
-/// Decodes one archived event batch (as sent by the `ext_process` output)
-/// into a numpy structured array with every field: `time_ns`, `rel_time_ns`,
+/// Decodes one raw event batch (as sent by the `ext_process` output) into a
+/// numpy structured array with every field: `time_ns`, `rel_time_ns`,
 /// `channel`, `ampl`, `x`, `y`, `t`, `i`, `flags`, `evtype`, `evtype_arg`.
 #[pyfunction]
 fn decode_events<'py>(py: Python<'py>, buf: &[u8]) -> PyResult<Bound<'py, PyArray1<EventRecord>>> {
-    let records: Vec<EventRecord> = decode_batch(buf)?.into_iter().map(EventRecord::from).collect();
-    Ok(PyArray1::from_vec(py, records))
+    let events = decode_batch(buf)?;
+    Ok(PyArray1::from_iter(py, events.iter().copied().map(EventRecord::from)))
 }
 
-/// Decodes one archived event batch into a numpy structured array with just
+/// Decodes one raw event batch into a numpy structured array with just
 /// `rel_time_ns`, `x`, `y`.
 #[pyfunction]
 fn decode_events_xy<'py>(py: Python<'py>, buf: &[u8]) -> PyResult<Bound<'py, PyArray1<EventXY>>> {
-    let records: Vec<EventXY> = decode_batch(buf)?.into_iter().map(EventXY::from).collect();
-    Ok(PyArray1::from_vec(py, records))
+    let events = decode_batch(buf)?;
+    Ok(PyArray1::from_iter(py, events.iter().copied().map(EventXY::from)))
 }
 
 /// A writable UMAMI histogram shared-memory segment, for publishing an
@@ -678,8 +659,9 @@ mod tests {
 
     #[allow(clippy::too_many_arguments)]
     fn make_event(sec: u32, nsec: u32, rel_nsec: u32, channel: u32, ampl: u32,
-                  x: u16, y: u16, t: u16, evtype: EventType) -> Event {
+                  x: u16, y: u16, t: u16, evtype: EventType, index: u8) -> Event {
         let mut ev = Event::new(evtype)
+            .with_index(index)
             .with_channel(channel)
             .with_abs_time(EventTime::from_sec_nsec(sec, nsec))
             .with_rel_time(EventTime::from_sec_nsec(0, rel_nsec))
@@ -692,14 +674,14 @@ mod tests {
 
     #[test]
     fn test_decode_events_roundtrips_all_fields() {
-        let events = vec![
-            make_event(1, 500_000_000, 250_000_000, 5, 1234, 10, 20, 3, EventType::Neutron),
-            make_event(2, 0, 0, 7, 0, 0, 0, 0, EventType::Monitor { num: 3 }),
+        let events = [
+            make_event(1, 500_000_000, 250_000_000, 5, 1234, 10, 20, 3, EventType::Neutron, 0),
+            make_event(2, 0, 0, 7, 0, 0, 0, 0, EventType::Monitor, 3),
         ];
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Failure>(&events).unwrap();
+        let bytes = events.as_bytes();
 
         Python::attach(|py| {
-            let array = decode_events(py, &bytes).unwrap();
+            let array = decode_events(py, bytes).unwrap();
             let records = array.to_vec().unwrap();
             assert_eq!(records.len(), 2);
 
@@ -721,13 +703,11 @@ mod tests {
 
     #[test]
     fn test_decode_events_xy_has_only_rel_time_x_y() {
-        let events = vec![
-            make_event(1, 0, 750_000_000, 5, 1234, 42, 99, 3, EventType::Neutron),
-        ];
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Failure>(&events).unwrap();
+        let events = [make_event(1, 0, 750_000_000, 5, 1234, 42, 99, 3, EventType::Neutron, 0)];
+        let bytes = events.as_bytes();
 
         Python::attach(|py| {
-            let array = decode_events_xy(py, &bytes).unwrap();
+            let array = decode_events_xy(py, bytes).unwrap();
             let records = array.to_vec().unwrap();
             assert_eq!(records.len(), 1);
             assert_eq!({ records[0].rel_time_ns }, 750_000_000);

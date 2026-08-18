@@ -62,7 +62,7 @@ Key files:
 
 ## Conventions
 
-- `Event` layout must not change lightly, for `rkyv` zero-copy format.
+- `Event` layout must not change lightly, for `zerocopy` format.
 - Thread names are ≤16 chars: `M: <input>`, `O: <output>`, `Sorter`,
   `Postprocessor`, `Command handler`.
 - All module names (inputs, outputs, recipes, modes) are interned via

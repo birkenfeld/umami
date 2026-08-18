@@ -101,14 +101,14 @@ impl Recipe for Tof {
                         self.t0_known = true;
                     }
                 }
-                EventType::AuxSignal { num } => {
-                    if self.aux_mode == Some(num as _) {
+                EventType::AuxSignal => {
+                    if self.aux_mode == Some(event.index as _) {
                         self.last_t0 = event.time;
                         self.cur_bin = 0;
                         self.t0_known = true;
                     }
                 }
-                EventType::Gate { up } => self.gate_up = up,
+                EventType::Gate => self.gate_up = event.index != 0,
                 _ => {
                     if self.use_gate && !self.gate_up {
                         event.evtype = EventType::Void;
@@ -190,7 +190,7 @@ impl Recipe for Std {
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
         for event in &mut events {
             match event.evtype {
-                EventType::Gate { up } => self.gate_up = up,
+                EventType::Gate => self.gate_up = event.index != 0,
                 _ => {
                     if self.use_gate && !self.gate_up {
                         event.evtype = EventType::Void;
@@ -261,7 +261,7 @@ mod tests {
         let out = recipe.process(events);
         // gate signal consumed, neutron passes through unchanged
         assert_eq!(out.len(), 2);
-        assert_eq!(out[0].evtype, EventType::Gate { up: true });
+        assert_eq!(out[0].evtype, EventType::Gate);
         assert_eq!(out[1].evtype, EventType::Neutron);
     }
 
@@ -290,9 +290,9 @@ mod tests {
             test_utils::neutron(200, 2),
         ];
         let out = recipe.process(events);
-        assert_eq!(out[0].evtype, EventType::Gate { up: true });
+        assert_eq!(out[0].evtype, EventType::Gate);
         assert_eq!(out[1].evtype, EventType::Neutron);  // passes
-        assert_eq!(out[2].evtype, EventType::Gate { up: false });
+        assert_eq!(out[2].evtype, EventType::Gate);
         assert_eq!(out[3].evtype, EventType::Void);  // voided
     }
 
@@ -325,9 +325,9 @@ mod tests {
             test_utils::neutron(400, 2),
         ];
         let out = recipe.process(events);
-        assert_eq!(out[1].evtype, EventType::Gate { up: true });
+        assert_eq!(out[1].evtype, EventType::Gate);
         assert_eq!(out[2].evtype, EventType::Neutron);  // passes
-        assert_eq!(out[3].evtype, EventType::Gate { up: false });
+        assert_eq!(out[3].evtype, EventType::Gate);
         assert_eq!(out[4].evtype, EventType::Void);  // voided
     }
 
