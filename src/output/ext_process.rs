@@ -4,13 +4,15 @@
 use std::collections::HashSet;
 use std::io::Write;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use anyhow::{anyhow, Context};
 use num_enum::{FromPrimitive, IntoPrimitive};
 use serde::{Deserialize, Serialize};
 use uds::{UnixListenerExt, UnixSocketAddr};
 use zerocopy::IntoBytes;
+use crate::channel::{self, RecvTimeoutError, Sender};
 use crate::lprintln;
 use crate::command::ModuleId;
 use crate::error::UResult;
@@ -29,6 +31,17 @@ pub enum FrameTag {
     #[num_enum(default)]
     Unknown = 0xff,
 }
+
+/// A frame handed from the pipeline thread to the write thread. Events are
+/// droppable under backpressure; control frames carry state, so they get
+/// preferential treatment.
+enum Frame {
+    Events(Vec<u8>),
+    Control(FrameTag, Vec<u8>),
+}
+
+/// Bounds how many frames may be queued for the write thread.
+const FRAME_QUEUE_SIZE: usize = 16;
 
 /// One axis of a declared histogram. `min`/`max` are the values represented
 /// by the first and last bin.
@@ -75,7 +88,9 @@ pub struct ExtProcessOutput {
             readonly = true, datatype = "array of histogram specs")]
     histos: Vec<ExtHistoSpec>,
     buffer: Vec<Event>,
-    conn: Arc<Mutex<Option<UnixStream>>>,
+    #[allow(dead_code, reason = "only read by tests, to observe the io thread's connection state")]
+    connected: Arc<AtomicBool>,
+    frame_send: Sender<Frame>,
 }
 
 impl Output for ExtProcessOutput {
@@ -88,24 +103,46 @@ impl Output for ExtProcessOutput {
             .context("Creating abstract socket address")?;
         let listener = UnixListener::bind_unix_addr(&addr)
             .context("Binding ext_process event socket")?;
+        listener.set_nonblocking(true).context("Setting ext_process listener nonblocking")?;
 
-        let conn = Arc::new(Mutex::new(None));
-        let conn2 = Arc::clone(&conn);
+        let (frame_send, frame_recv) = channel::bounded(FRAME_QUEUE_SIZE);
+        let connected = Arc::new(AtomicBool::new(false));
+        let io_connected = Arc::clone(&connected);
         let name = common.name;
         std::thread::Builder::new()
-            .name(format!("O: {name} accept"))
+            .name(format!("O: {name} io"))
             .spawn(move || {
-                for stream in listener.incoming().flatten() {
-                    stream.set_write_timeout(Some(Duration::from_millis(100)))
-                          .expect("set_write_timeout on unix stream failed");
-                    *conn2.lock().expect("conn mutex poisoned") = Some(stream);
-                    lprintln!(INFO, [name] "ext_process output accepted connection from consumer");
+                // Only one connection is ever kept, so accepting and writing
+                // can share a thread: poll for a new connection (replacing
+                // any current one, same as before), then wait briefly for
+                // the next frame to write, repeat.
+                let mut conn: Option<UnixStream> = None;
+                loop {
+                    if let Ok((stream, _)) = listener.accept() {
+                        stream.set_write_timeout(Some(Duration::from_millis(100)))
+                              .expect("set_write_timeout on unix stream failed");
+                        conn = Some(stream);
+                        io_connected.store(true, Ordering::Relaxed);
+                        lprintln!(INFO, [name] "ext_process output accepted connection from consumer");
+                    }
+                    match frame_recv.recv_timeout(Duration::from_millis(20)) {
+                        Ok(frame) => {
+                            let (tag, payload) = match frame {
+                                Frame::Events(p) => (FrameTag::Events, p),
+                                Frame::Control(tag, p) => (tag, p),
+                            };
+                            write_frame(&mut conn, name, tag, &payload);
+                            io_connected.store(conn.is_some(), Ordering::Relaxed);
+                        }
+                        Err(RecvTimeoutError::Timeout) => (),
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
                 }
             })
-            .context("Spawning ext_process accept thread")?;
+            .context("Spawning ext_process io thread")?;
 
         let histos = validate_histos(config.histos)?;
-        Ok(Self { name, histos, conn, buffer: Vec::with_capacity(16384) })
+        Ok(Self { name, histos, connected, buffer: Vec::with_capacity(16384), frame_send })
     }
 
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
@@ -154,21 +191,43 @@ fn validate_histos(value: Vec<ExtHistoSpec>) -> UResult<Vec<ExtHistoSpec>> {
 }
 
 impl ExtProcessOutput {
-    /// Never fails the pipeline: a missing or dead consumer just means
-    /// frames are silently dropped until the next (re)connection.
+    /// Hands the frame to the write thread; never blocks the pipeline on a
+    /// slow consumer. Event batches are dropped once the queue is full --
+    /// this is a live view, not archival, so losing a batch to keep the
+    /// pipeline at full speed is the right trade. Control frames (a run
+    /// boundary, a clear) carry state the consumer can't rediscover on its
+    /// own, so they're never dropped; `send` can block briefly here, but
+    /// only until the write thread frees a queue slot, which is bounded by
+    /// the socket's own write timeout below.
     fn send_frame(&self, tag: FrameTag, payload: &[u8]) -> UResult<()> {
-        let mut guard = self.conn.lock().expect("conn mutex poisoned");
-        if let Some(stream) = guard.as_mut() {
-            let len = (payload.len() as u32).to_le_bytes();
-            let ok = stream.write_all(&[tag.into()])
-                .and_then(|()| stream.write_all(&len))
-                .and_then(|()| stream.write_all(payload));
-            if ok.is_err() {
-                lprintln!(WARN, [self.name] "ext_process output lost connection to consumer");
-                *guard = None; // dead connection; next accept() replaces it
+        match tag {
+            FrameTag::Events => {
+                if self.frame_send.try_send(Frame::Events(payload.to_vec())).is_err() {
+                    lprintln!(WARN, [self.name]
+                        "ext_process output dropped an event batch, consumer too slow");
+                }
+            }
+            _ => {
+                let _ = self.frame_send.send(Frame::Control(tag, payload.to_vec()));
             }
         }
         Ok(())
+    }
+}
+
+/// Writes one frame to the consumer, if connected. Never fails the
+/// pipeline: a missing or dead consumer just means the frame is dropped and
+/// the connection cleared for the next accept() to replace it.
+fn write_frame(conn: &mut Option<UnixStream>, name: ModuleId, tag: FrameTag, payload: &[u8]) {
+    if let Some(stream) = conn {
+        let len = (payload.len() as u32).to_le_bytes();
+        let ok = stream.write_all(&[tag.into()])
+            .and_then(|()| stream.write_all(&len))
+            .and_then(|()| stream.write_all(payload));
+        if ok.is_err() {
+            lprintln!(WARN, [name] "ext_process output lost connection to consumer");
+            *conn = None; // dead connection; next accept() replaces it
+        }
     }
 }
 
@@ -201,16 +260,26 @@ mod tests {
     }
 
     /// `connect()` returning only means the kernel accepted the connection
-    /// into its backlog -- the output's own accept thread still needs to
-    /// call `accept()` and store the stream before `send_frame` will see it.
+    /// into its backlog -- the output's own io thread still needs to poll
+    /// `accept()` and store the stream before `send_frame` will see it.
     fn wait_until_connected(output: &ExtProcessOutput) {
         for _ in 0..100 {
-            if output.conn.lock().unwrap().is_some() {
+            if output.connected.load(Ordering::Relaxed) {
                 return;
             }
             std::thread::sleep(Duration::from_millis(10));
         }
         panic!("output never registered the connection");
+    }
+
+    fn wait_until_disconnected(output: &ExtProcessOutput) {
+        for _ in 0..100 {
+            if !output.connected.load(Ordering::Relaxed) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("output never noticed the disconnection");
     }
 
     fn recv_frame(stream: &mut UnixStream) -> (FrameTag, Vec<u8>) {
@@ -241,19 +310,20 @@ mod tests {
         let mut stream = connect("umami_test_ext_process_forward");
         wait_until_connected(&output);
 
-        let event = test_utils::neutron(100, 5);
-        output.handle_events(&[event]).unwrap();
-        let (tag, payload) = recv_frame(&mut stream);
-        assert_eq!(tag, FrameTag::Events);
-        let batch = <[Event]>::try_ref_from_bytes(&payload).unwrap();
-        assert_eq!(batch, [event]);
-
         output.handle_start_of_run("run1").unwrap();
         let (tag, payload) = recv_frame(&mut stream);
         assert_eq!(tag, FrameTag::StartOfRun);
         assert_eq!(payload, b"run1");
 
+        // a single event stays buffered until enough accumulate for a
+        // batch or the run ends; end_of_run flushes whatever is pending
+        let event = test_utils::neutron(100, 5);
+        output.handle_events(&[event]).unwrap();
         output.handle_end_of_run().unwrap();
+        let (tag, payload) = recv_frame(&mut stream);
+        assert_eq!(tag, FrameTag::Events);
+        let batch = <[Event]>::try_ref_from_bytes(&payload).unwrap();
+        assert_eq!(batch, [event]);
         let (tag, payload) = recv_frame(&mut stream);
         assert_eq!(tag, FrameTag::EndOfRun);
         assert!(payload.is_empty());
@@ -272,8 +342,8 @@ mod tests {
         wait_until_connected(&output);
         let mut second = connect("umami_test_ext_process_replace");
         // wait_until_connected() can't distinguish "first" from "second" via
-        // is_some() alone; give the accept loop one more cycle to pick up
-        // the second connection and replace the first.
+        // the connected flag alone; give the io thread's poll loop one more
+        // cycle to pick up the second connection and replace the first.
         std::thread::sleep(Duration::from_millis(100));
 
         output.handle_start_of_run("run1").unwrap();
@@ -387,12 +457,13 @@ mod tests {
         let common = make_common("umami_test_ext_process", "dead");
         let mut output = ExtProcessOutput::from_config(&common, toml::Table::new()).unwrap();
         let stream = connect("umami_test_ext_process_dead");
+        wait_until_connected(&output);
         drop(stream);
-        // give the accept thread's write a moment to observe the close
+        // give the io thread a moment to observe the close
         std::thread::sleep(Duration::from_millis(50));
         // a write to a closed peer may need one attempt to be observed
         output.handle_start_of_run("run1").unwrap();
         output.handle_start_of_run("run2").unwrap();
-        assert!(output.conn.lock().unwrap().is_none());
+        wait_until_disconnected(&output);
     }
 }

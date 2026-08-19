@@ -155,6 +155,10 @@ y = { name = "qy", bins = 100, min = -1.0, max = 1.0 }
 Only one connection is accepted at a time; a second connection replaces the
 first.
 
+Sending never blocks the pipeline. If the consumer can't keep up, queued
+event batches are dropped; start/end-of-run and clear frames are always
+delivered.
+
 One frame is sent per event batch and per run-boundary event:
 
 | Bytes | Meaning |
