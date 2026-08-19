@@ -12,7 +12,7 @@ use num_enum::{FromPrimitive, IntoPrimitive};
 use serde::{Deserialize, Serialize};
 use uds::{UnixListenerExt, UnixSocketAddr};
 use zerocopy::IntoBytes;
-use crate::channel::{self, RecvTimeoutError, Sender};
+use crate::channel::{self, Receiver, RecvTimeoutError, Sender};
 use crate::lprintln;
 use crate::command::ModuleId;
 use crate::error::UResult;
@@ -111,34 +111,7 @@ impl Output for ExtProcessOutput {
         let name = common.name;
         std::thread::Builder::new()
             .name(format!("O: {name} io"))
-            .spawn(move || {
-                // Only one connection is ever kept, so accepting and writing
-                // can share a thread: poll for a new connection (replacing
-                // any current one, same as before), then wait briefly for
-                // the next frame to write, repeat.
-                let mut conn: Option<UnixStream> = None;
-                loop {
-                    if let Ok((stream, _)) = listener.accept() {
-                        stream.set_write_timeout(Some(Duration::from_millis(100)))
-                              .expect("set_write_timeout on unix stream failed");
-                        conn = Some(stream);
-                        io_connected.store(true, Ordering::Relaxed);
-                        lprintln!(INFO, [name] "ext_process output accepted connection from consumer");
-                    }
-                    match frame_recv.recv_timeout(Duration::from_millis(20)) {
-                        Ok(frame) => {
-                            let (tag, payload) = match frame {
-                                Frame::Events(p) => (FrameTag::Events, p),
-                                Frame::Control(tag, p) => (tag, p),
-                            };
-                            write_frame(&mut conn, name, tag, &payload);
-                            io_connected.store(conn.is_some(), Ordering::Relaxed);
-                        }
-                        Err(RecvTimeoutError::Timeout) => (),
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    }
-                }
-            })
+            .spawn(move || Self::run_io(listener, frame_recv, io_connected, name))
             .context("Spawning ext_process io thread")?;
 
         let histos = validate_histos(config.histos)?;
@@ -213,20 +186,45 @@ impl ExtProcessOutput {
         }
         Ok(())
     }
-}
 
-/// Writes one frame to the consumer, if connected. Never fails the
-/// pipeline: a missing or dead consumer just means the frame is dropped and
-/// the connection cleared for the next accept() to replace it.
-fn write_frame(conn: &mut Option<UnixStream>, name: ModuleId, tag: FrameTag, payload: &[u8]) {
-    if let Some(stream) = conn {
-        let len = (payload.len() as u32).to_le_bytes();
-        let ok = stream.write_all(&[tag.into()])
-            .and_then(|()| stream.write_all(&len))
-            .and_then(|()| stream.write_all(payload));
-        if ok.is_err() {
-            lprintln!(WARN, [name] "ext_process output lost connection to consumer");
-            *conn = None; // dead connection; next accept() replaces it
+    /// Accepts connections and writes queued frames to whichever one is
+    /// current -- never fails the pipeline: a missing or dead consumer just
+    /// means frames are dropped until the next (re)connection. Only one
+    /// connection is ever kept, so accepting and writing share this single
+    /// thread: poll for a new connection (replacing any current one), then
+    /// wait briefly for the next frame to write, repeat.
+    fn run_io(listener: UnixListener, frame_recv: Receiver<Frame>, connected: Arc<AtomicBool>,
+              name: ModuleId) {
+        let mut conn: Option<UnixStream> = None;
+        loop {
+            if let Ok((stream, _)) = listener.accept() {
+                stream.set_write_timeout(Some(Duration::from_millis(100)))
+                      .expect("set_write_timeout on unix stream failed");
+                conn = Some(stream);
+                connected.store(true, Ordering::Relaxed);
+                lprintln!(INFO, [name] "ext_process output accepted connection from consumer");
+            }
+            match frame_recv.recv_timeout(Duration::from_millis(20)) {
+                Ok(frame) => {
+                    let (tag, payload) = match frame {
+                        Frame::Events(p) => (FrameTag::Events, p),
+                        Frame::Control(tag, p) => (tag, p),
+                    };
+                    if let Some(stream) = &mut conn {
+                        let len = (payload.len() as u32).to_le_bytes();
+                        let ok = stream.write_all(&[tag.into()])
+                            .and_then(|()| stream.write_all(&len))
+                            .and_then(|()| stream.write_all(&payload));
+                        if ok.is_err() {
+                            lprintln!(WARN, [name] "ext_process output lost connection to consumer");
+                            conn = None; // dead connection; next accept() replaces it
+                        }
+                    }
+                    connected.store(conn.is_some(), Ordering::Relaxed);
+                }
+                Err(RecvTimeoutError::Timeout) => (),
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
         }
     }
 }
