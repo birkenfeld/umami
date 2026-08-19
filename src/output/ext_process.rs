@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 use std::io::Write;
+use std::mem::take;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,6 +21,14 @@ use crate::event::{Event, EventType};
 use crate::params::HasParams;
 use super::{Output, OutputCommon};
 
+/// Represents a frame of data to be sent to the external consumer.
+pub enum Frame {
+    Events(Vec<Event>),
+    StartOfRun(String),
+    EndOfRun,
+    Clear,
+}
+
 /// Wire-format frame tag, see `docs/outputs.md`'s `ext_process` section.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive, IntoPrimitive)]
@@ -30,14 +39,6 @@ pub enum FrameTag {
     Clear = 3,
     #[num_enum(default)]
     Unknown = 0xff,
-}
-
-/// A frame handed from the pipeline thread to the write thread. Events are
-/// droppable under backpressure; control frames carry state, so they get
-/// preferential treatment.
-enum Frame {
-    Events(Vec<u8>),
-    Control(FrameTag, Vec<u8>),
 }
 
 /// Bounds how many frames may be queued for the write thread.
@@ -103,7 +104,8 @@ impl Output for ExtProcessOutput {
             .context("Creating abstract socket address")?;
         let listener = UnixListener::bind_unix_addr(&addr)
             .context("Binding ext_process event socket")?;
-        listener.set_nonblocking(true).context("Setting ext_process listener nonblocking")?;
+        listener.set_nonblocking(true)
+                .context("Setting ext_process listener nonblocking")?;
 
         let (frame_send, frame_recv) = channel::bounded(FRAME_QUEUE_SIZE);
         let connected = Arc::new(AtomicBool::new(false));
@@ -122,7 +124,11 @@ impl Output for ExtProcessOutput {
         self.buffer.extend(
             events.iter().filter(|e| e.evtype == EventType::Neutron).cloned());
         if self.buffer.len() > 8192 {
-            self.send_frame(FrameTag::Events, self.buffer.as_bytes())?;
+            if self.frame_send.try_send(
+                Frame::Events(take(&mut self.buffer))
+            ).is_err() {
+                lprintln!(DEBUG, [self.name] "dropped an event batch");
+            }
             self.buffer.clear();
         }
         Ok(())
@@ -130,20 +136,23 @@ impl Output for ExtProcessOutput {
 
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
         self.buffer.clear();
-        self.send_frame(FrameTag::StartOfRun, run.as_bytes())
+        let _ = self.frame_send.send(Frame::StartOfRun(run.into()));
+        Ok(())
     }
 
     fn handle_end_of_run(&mut self) -> UResult<()> {
         if !self.buffer.is_empty() {
-            self.send_frame(FrameTag::Events, self.buffer.as_bytes())?;
+            let _ = self.frame_send.send(Frame::Events(take(&mut self.buffer)));
             self.buffer.clear();
         }
-        self.send_frame(FrameTag::EndOfRun, &[])
+        let _ = self.frame_send.send(Frame::EndOfRun);
+        Ok(())
     }
 
     fn handle_clear(&mut self) -> UResult<()> {
         self.buffer.clear();
-        self.send_frame(FrameTag::Clear, &[])
+        let _ = self.frame_send.send(Frame::Clear);
+        Ok(())
     }
 }
 
@@ -164,59 +173,36 @@ fn validate_histos(value: Vec<ExtHistoSpec>) -> UResult<Vec<ExtHistoSpec>> {
 }
 
 impl ExtProcessOutput {
-    /// Hands the frame to the write thread; never blocks the pipeline on a
-    /// slow consumer. Event batches are dropped once the queue is full --
-    /// this is a live view, not archival, so losing a batch to keep the
-    /// pipeline at full speed is the right trade. Control frames (a run
-    /// boundary, a clear) carry state the consumer can't rediscover on its
-    /// own, so they're never dropped; `send` can block briefly here, but
-    /// only until the write thread frees a queue slot, which is bounded by
-    /// the socket's own write timeout below.
-    fn send_frame(&self, tag: FrameTag, payload: &[u8]) -> UResult<()> {
-        match tag {
-            FrameTag::Events => {
-                if self.frame_send.try_send(Frame::Events(payload.to_vec())).is_err() {
-                    lprintln!(WARN, [self.name]
-                        "ext_process output dropped an event batch, consumer too slow");
-                }
-            }
-            _ => {
-                let _ = self.frame_send.send(Frame::Control(tag, payload.to_vec()));
-            }
-        }
-        Ok(())
-    }
-
     /// Accepts connections and writes queued frames to whichever one is
-    /// current -- never fails the pipeline: a missing or dead consumer just
-    /// means frames are dropped until the next (re)connection. Only one
-    /// connection is ever kept, so accepting and writing share this single
-    /// thread: poll for a new connection (replacing any current one), then
-    /// wait briefly for the next frame to write, repeat.
-    fn run_io(listener: UnixListener, frame_recv: Receiver<Frame>, connected: Arc<AtomicBool>,
-              name: ModuleId) {
+    /// current.
+    fn run_io(listener: UnixListener, frame_recv: Receiver<Frame>,
+              connected: Arc<AtomicBool>, name: ModuleId) {
         let mut conn: Option<UnixStream> = None;
         loop {
+            // TODO: really accept every round?
             if let Ok((stream, _)) = listener.accept() {
                 stream.set_write_timeout(Some(Duration::from_millis(100)))
                       .expect("set_write_timeout on unix stream failed");
+                lprintln!(INFO, [name] "accepted connection from {:?}",
+                          stream.peer_addr().expect("peer addr"));
                 conn = Some(stream);
                 connected.store(true, Ordering::Relaxed);
-                lprintln!(INFO, [name] "ext_process output accepted connection from consumer");
             }
             match frame_recv.recv_timeout(Duration::from_millis(20)) {
                 Ok(frame) => {
-                    let (tag, payload) = match frame {
-                        Frame::Events(p) => (FrameTag::Events, p),
-                        Frame::Control(tag, p) => (tag, p),
+                    let (tag, payload) = match &frame {
+                        Frame::Events(p) => (FrameTag::Events, p.as_bytes()),
+                        Frame::StartOfRun(p) => (FrameTag::StartOfRun, p.as_bytes()),
+                        Frame::EndOfRun => (FrameTag::EndOfRun, &[][..]),
+                        Frame::Clear => (FrameTag::Clear, &[][..]),
                     };
                     if let Some(stream) = &mut conn {
                         let len = (payload.len() as u32).to_le_bytes();
-                        let ok = stream.write_all(&[tag.into()])
-                            .and_then(|()| stream.write_all(&len))
+                        let ok = stream.write_all(&[tag.into(),
+                                                    len[0], len[1], len[2], len[3]])
                             .and_then(|()| stream.write_all(&payload));
                         if ok.is_err() {
-                            lprintln!(WARN, [name] "ext_process output lost connection to consumer");
+                            lprintln!(WARN, [name] "lost connection");
                             conn = None; // dead connection; next accept() replaces it
                         }
                     }
