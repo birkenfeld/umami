@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 use std::io::Write;
-use std::mem::take;
+use std::mem::replace;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,7 +22,7 @@ use crate::params::HasParams;
 use super::{Output, OutputCommon};
 
 /// Represents a frame of data to be sent to the external consumer.
-pub enum Frame {
+enum Frame {
     Events(Vec<Event>),
     StartOfRun(String),
     EndOfRun,
@@ -43,6 +43,10 @@ pub enum FrameTag {
 
 /// Bounds how many frames may be queued for the write thread.
 const FRAME_QUEUE_SIZE: usize = 16;
+
+/// `handle_events` flushes the buffered batch to the write thread once it
+/// grows past this size.
+const EVENT_BATCH_SIZE: usize = 8192;
 
 /// One axis of a declared histogram. `min`/`max` are the values represented
 /// by the first and last bin.
@@ -117,19 +121,20 @@ impl Output for ExtProcessOutput {
             .context("Spawning ext_process io thread")?;
 
         let histos = validate_histos(config.histos)?;
-        Ok(Self { name, histos, connected, buffer: Vec::with_capacity(16384), frame_send })
+        Ok(Self { name, histos, connected, buffer: Vec::with_capacity(2 * EVENT_BATCH_SIZE), frame_send })
     }
 
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
         self.buffer.extend(
             events.iter().filter(|e| e.evtype == EventType::Neutron).cloned());
-        if self.buffer.len() > 8192 {
-            if self.frame_send.try_send(
-                Frame::Events(take(&mut self.buffer))
-            ).is_err() {
+        if self.buffer.len() > EVENT_BATCH_SIZE {
+            let batch = replace(&mut self.buffer, Vec::with_capacity(2 * EVENT_BATCH_SIZE));
+            // droppable: this is a live view, not archival, so losing a
+            // batch to keep the pipeline at full speed is the right trade
+            // when the consumer can't keep up
+            if self.frame_send.try_send(Frame::Events(batch)).is_err() {
                 lprintln!(DEBUG, [self.name] "dropped an event batch");
             }
-            self.buffer.clear();
         }
         Ok(())
     }
@@ -142,8 +147,8 @@ impl Output for ExtProcessOutput {
 
     fn handle_end_of_run(&mut self) -> UResult<()> {
         if !self.buffer.is_empty() {
-            let _ = self.frame_send.send(Frame::Events(take(&mut self.buffer)));
-            self.buffer.clear();
+            let batch = replace(&mut self.buffer, Vec::with_capacity(2 * EVENT_BATCH_SIZE));
+            let _ = self.frame_send.send(Frame::Events(batch));
         }
         let _ = self.frame_send.send(Frame::EndOfRun);
         Ok(())
@@ -179,12 +184,10 @@ impl ExtProcessOutput {
               connected: Arc<AtomicBool>, name: ModuleId) {
         let mut conn: Option<UnixStream> = None;
         loop {
-            // TODO: really accept every round?
             if let Ok((stream, _)) = listener.accept() {
                 stream.set_write_timeout(Some(Duration::from_millis(100)))
                       .expect("set_write_timeout on unix stream failed");
-                lprintln!(INFO, [name] "accepted connection from {:?}",
-                          stream.peer_addr().expect("peer addr"));
+                lprintln!(INFO, [name] "accepted connection from {:?}", stream.peer_addr().ok());
                 conn = Some(stream);
                 connected.store(true, Ordering::Relaxed);
             }
@@ -200,7 +203,7 @@ impl ExtProcessOutput {
                         let len = (payload.len() as u32).to_le_bytes();
                         let ok = stream.write_all(&[tag.into(),
                                                     len[0], len[1], len[2], len[3]])
-                            .and_then(|()| stream.write_all(&payload));
+                            .and_then(|()| stream.write_all(payload));
                         if ok.is_err() {
                             lprintln!(WARN, [name] "lost connection");
                             conn = None; // dead connection; next accept() replaces it

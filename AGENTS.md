@@ -94,7 +94,7 @@ fully known, deterministic event stream for testing pipeline mechanics (wiring,
 sorting, histogramming) without real detector data — see `test/synthetic.conf`.
 
 Coverage: `cargo llvm-cov` (requires `cargo install cargo-llvm-cov` + `rustup
-component add llvm-tools-preview`); currently ~81% line coverage.  The input
+component add llvm-tools-preview`); currently ~87% line coverage.  The input
 backends (`input.rs`, `input/canon.rs`, `input/mesy.rs`, `input/mesy/cmd.rs`)
 are the weakest spots, since covering them properly would need mocking their
 TCP/UDP interfaces — not planned for now.
