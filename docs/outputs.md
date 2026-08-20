@@ -164,8 +164,13 @@ One frame is sent per event batch and per run-boundary event:
 | Bytes | Meaning |
 |---|---|
 | 1 | tag: `0` = events, `1` = start of run, `2` = end of run, `3` = clear |
+| 2 | sequence number, u16 little-endian, wraps at 65536 |
 | 4 | payload length, u32 little-endian |
 | N | payload |
+
+The sequence number is assigned when a frame is queued for sending, even if
+it later gets dropped, so a gap between two consecutive numbers a consumer
+receives means it missed something.
 
 Payload by tag:
 

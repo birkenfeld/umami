@@ -529,13 +529,13 @@ fn dispatch_frame(callback: &Py<PyAny>, tag: FrameTag, payload: &[u8]) {
 /// error occurs, or `stop` is set.
 fn read_frames(stream: &mut UnixStream, callback: &Py<PyAny>, stop: &AtomicBool)
               -> io::Result<()> {
-    let mut header = [0u8; 5];
+    let mut header = [0u8; 7];
     loop {
         if !recv_exact_or_stop(stream, &mut header, stop)? {
             return Ok(());
         }
         let tag = FrameTag::from(header[0]);
-        let len = u32::from_le_bytes(header[1..5].try_into().unwrap()) as usize;
+        let len = u32::from_le_bytes(header[3..7].try_into().unwrap()) as usize;
         let mut payload = vec![0u8; len];
         if len > 0 && !recv_exact_or_stop(stream, &mut payload, stop)? {
             return Ok(());
@@ -684,7 +684,7 @@ mod tests {
         let bytes = events.as_bytes();
 
         Python::attach(|py| {
-            let array = decode_events(py, bytes).unwrap();
+            let array = decode_events(py, Cow::Borrowed(bytes)).unwrap();
             let records = array.to_vec().unwrap();
             assert_eq!(records.len(), 2);
 
@@ -710,7 +710,7 @@ mod tests {
         let bytes = events.as_bytes();
 
         Python::attach(|py| {
-            let array = decode_events_xy(py, bytes).unwrap();
+            let array = decode_events_xy(py, Cow::Borrowed(bytes)).unwrap();
             let records = array.to_vec().unwrap();
             assert_eq!(records.len(), 1);
             assert_eq!({ records[0].rel_time_ns }, 750_000_000);
@@ -722,7 +722,7 @@ mod tests {
     #[test]
     fn test_decode_events_rejects_corrupt_bytes() {
         Python::attach(|py| {
-            assert!(decode_events(py, b"not a valid archive").is_err());
+            assert!(decode_events(py, Cow::Borrowed(b"not a valid archive".as_slice())).is_err());
         });
     }
 
@@ -783,6 +783,7 @@ mod tests {
 
     fn send_test_frame(stream: &mut UnixStream, tag: FrameTag, payload: &[u8]) {
         stream.write_all(&[tag.into()]).unwrap();
+        stream.write_all(&0u16.to_le_bytes()).unwrap();
         stream.write_all(&(payload.len() as u32).to_le_bytes()).unwrap();
         stream.write_all(payload).unwrap();
     }

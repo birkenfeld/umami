@@ -95,7 +95,8 @@ pub struct ExtProcessOutput {
     buffer: Vec<Event>,
     #[allow(dead_code, reason = "only read by tests, to observe the io thread's connection state")]
     connected: Arc<AtomicBool>,
-    frame_send: Sender<Frame>,
+    seq: u16,
+    frame_send: Sender<(u16, Frame)>,
 }
 
 impl Output for ExtProcessOutput {
@@ -121,7 +122,8 @@ impl Output for ExtProcessOutput {
             .context("Spawning ext_process io thread")?;
 
         let histos = validate_histos(config.histos)?;
-        Ok(Self { name, histos, connected, buffer: Vec::with_capacity(2 * EVENT_BATCH_SIZE), frame_send })
+        Ok(Self { name, histos, connected, seq: 0,
+                  buffer: Vec::with_capacity(2 * EVENT_BATCH_SIZE), frame_send })
     }
 
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
@@ -129,10 +131,11 @@ impl Output for ExtProcessOutput {
             events.iter().filter(|e| e.evtype == EventType::Neutron).cloned());
         if self.buffer.len() > EVENT_BATCH_SIZE {
             let batch = replace(&mut self.buffer, Vec::with_capacity(2 * EVENT_BATCH_SIZE));
+            let seq = self.next_seq();
             // droppable: this is a live view, not archival, so losing a
             // batch to keep the pipeline at full speed is the right trade
             // when the consumer can't keep up
-            if self.frame_send.try_send(Frame::Events(batch)).is_err() {
+            if self.frame_send.try_send((seq, Frame::Events(batch))).is_err() {
                 lprintln!(DEBUG, [self.name] "dropped an event batch");
             }
         }
@@ -141,22 +144,26 @@ impl Output for ExtProcessOutput {
 
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
         self.buffer.clear();
-        let _ = self.frame_send.send(Frame::StartOfRun(run.into()));
+        let seq = self.next_seq();
+        let _ = self.frame_send.send((seq, Frame::StartOfRun(run.into())));
         Ok(())
     }
 
     fn handle_end_of_run(&mut self) -> UResult<()> {
         if !self.buffer.is_empty() {
             let batch = replace(&mut self.buffer, Vec::with_capacity(2 * EVENT_BATCH_SIZE));
-            let _ = self.frame_send.send(Frame::Events(batch));
+            let seq = self.next_seq();
+            let _ = self.frame_send.send((seq, Frame::Events(batch)));
         }
-        let _ = self.frame_send.send(Frame::EndOfRun);
+        let seq = self.next_seq();
+        let _ = self.frame_send.send((seq, Frame::EndOfRun));
         Ok(())
     }
 
     fn handle_clear(&mut self) -> UResult<()> {
         self.buffer.clear();
-        let _ = self.frame_send.send(Frame::Clear);
+        let seq = self.next_seq();
+        let _ = self.frame_send.send((seq, Frame::Clear));
         Ok(())
     }
 }
@@ -178,21 +185,27 @@ fn validate_histos(value: Vec<ExtHistoSpec>) -> UResult<Vec<ExtHistoSpec>> {
 }
 
 impl ExtProcessOutput {
+    fn next_seq(&mut self) -> u16 {
+        let seq = self.seq;
+        self.seq = self.seq.wrapping_add(1);
+        seq
+    }
+
     /// Accepts connections and writes queued frames to whichever one is
     /// current.
-    fn run_io(listener: UnixListener, frame_recv: Receiver<Frame>,
+    fn run_io(listener: UnixListener, frame_recv: Receiver<(u16, Frame)>,
               connected: Arc<AtomicBool>, name: ModuleId) {
         let mut conn: Option<UnixStream> = None;
         loop {
             if let Ok((stream, _)) = listener.accept() {
-                stream.set_write_timeout(Some(Duration::from_millis(100)))
+                stream.set_write_timeout(Some(Duration::from_millis(500)))
                       .expect("set_write_timeout on unix stream failed");
                 lprintln!(INFO, [name] "accepted connection from {:?}", stream.peer_addr().ok());
                 conn = Some(stream);
                 connected.store(true, Ordering::Relaxed);
             }
             match frame_recv.recv_timeout(Duration::from_millis(20)) {
-                Ok(frame) => {
+                Ok((seq, frame)) => {
                     let (tag, payload) = match &frame {
                         Frame::Events(p) => (FrameTag::Events, p.as_bytes()),
                         Frame::StartOfRun(p) => (FrameTag::StartOfRun, p.as_bytes()),
@@ -200,8 +213,9 @@ impl ExtProcessOutput {
                         Frame::Clear => (FrameTag::Clear, &[][..]),
                     };
                     if let Some(stream) = &mut conn {
+                        let seq = seq.to_le_bytes();
                         let len = (payload.len() as u32).to_le_bytes();
-                        let ok = stream.write_all(&[tag.into(),
+                        let ok = stream.write_all(&[tag.into(), seq[0], seq[1],
                                                     len[0], len[1], len[2], len[3]])
                             .and_then(|()| stream.write_all(payload));
                         if ok.is_err() {
@@ -269,15 +283,16 @@ mod tests {
         panic!("output never noticed the disconnection");
     }
 
-    fn recv_frame(stream: &mut UnixStream) -> (FrameTag, Vec<u8>) {
+    fn recv_frame(stream: &mut UnixStream) -> (u16, FrameTag, Vec<u8>) {
         stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        let mut header = [0u8; 5];
+        let mut header = [0u8; 7];
         stream.read_exact(&mut header).unwrap();
         let tag = FrameTag::from(header[0]);
-        let len = u32::from_le_bytes(header[1..5].try_into().unwrap()) as usize;
+        let seq = u16::from_le_bytes(header[1..3].try_into().unwrap());
+        let len = u32::from_le_bytes(header[3..7].try_into().unwrap()) as usize;
         let mut payload = vec![0u8; len];
         stream.read_exact(&mut payload).unwrap();
-        (tag, payload)
+        (seq, tag, payload)
     }
 
     #[test]
@@ -298,7 +313,7 @@ mod tests {
         wait_until_connected(&output);
 
         output.handle_start_of_run("run1").unwrap();
-        let (tag, payload) = recv_frame(&mut stream);
+        let (seq0, tag, payload) = recv_frame(&mut stream);
         assert_eq!(tag, FrameTag::StartOfRun);
         assert_eq!(payload, b"run1");
 
@@ -307,18 +322,20 @@ mod tests {
         let event = test_utils::neutron(100, 5);
         output.handle_events(&[event]).unwrap();
         output.handle_end_of_run().unwrap();
-        let (tag, payload) = recv_frame(&mut stream);
+        let (seq1, tag, payload) = recv_frame(&mut stream);
         assert_eq!(tag, FrameTag::Events);
         let batch = <[Event]>::try_ref_from_bytes(&payload).unwrap();
         assert_eq!(batch, [event]);
-        let (tag, payload) = recv_frame(&mut stream);
+        let (seq2, tag, payload) = recv_frame(&mut stream);
         assert_eq!(tag, FrameTag::EndOfRun);
         assert!(payload.is_empty());
+        assert_eq!([seq1, seq2], [seq0.wrapping_add(1), seq0.wrapping_add(2)]);
 
         output.handle_clear().unwrap();
-        let (tag, payload) = recv_frame(&mut stream);
+        let (seq3, tag, payload) = recv_frame(&mut stream);
         assert_eq!(tag, FrameTag::Clear);
         assert!(payload.is_empty());
+        assert_eq!(seq3, seq0.wrapping_add(3));
     }
 
     #[test]
@@ -334,7 +351,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(100));
 
         output.handle_start_of_run("run1").unwrap();
-        let (tag, payload) = recv_frame(&mut second);
+        let (_, tag, payload) = recv_frame(&mut second);
         assert_eq!(tag, FrameTag::StartOfRun);
         assert_eq!(payload, b"run1");
     }
