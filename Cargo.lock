@@ -1218,7 +1218,7 @@ dependencies = [
 
 [[package]]
 name = "umami"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "bitflag-attr",
@@ -1247,7 +1247,7 @@ dependencies = [
 
 [[package]]
 name = "umami-client"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "nix",
  "numpy",
