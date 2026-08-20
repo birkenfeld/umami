@@ -95,7 +95,8 @@ pub struct ExtProcessOutput {
     buffer: Vec<Event>,
     #[allow(dead_code, reason = "only read by tests, to observe the io thread's connection state")]
     connected: Arc<AtomicBool>,
-    seq: u16,
+    seq_number: u16,
+    dropped_this_run: bool,
     frame_send: Sender<(u16, Frame)>,
 }
 
@@ -122,7 +123,7 @@ impl Output for ExtProcessOutput {
             .context("Spawning ext_process io thread")?;
 
         let histos = validate_histos(config.histos)?;
-        Ok(Self { name, histos, connected, seq: 0,
+        Ok(Self { name, histos, connected, seq_number: 0, dropped_this_run: false,
                   buffer: Vec::with_capacity(2 * EVENT_BATCH_SIZE), frame_send })
     }
 
@@ -135,8 +136,10 @@ impl Output for ExtProcessOutput {
             // droppable: this is a live view, not archival, so losing a
             // batch to keep the pipeline at full speed is the right trade
             // when the consumer can't keep up
-            if self.frame_send.try_send((seq, Frame::Events(batch))).is_err() {
-                lprintln!(DEBUG, [self.name] "dropped an event batch");
+            if self.frame_send.try_send((seq, Frame::Events(batch))).is_err()
+                && !self.dropped_this_run {
+                lprintln!(WARN, [self.name] "dropped an event batch, consumer too slow");
+                self.dropped_this_run = true;
             }
         }
         Ok(())
@@ -144,6 +147,7 @@ impl Output for ExtProcessOutput {
 
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
         self.buffer.clear();
+        self.dropped_this_run = false;
         let seq = self.next_seq();
         let _ = self.frame_send.send((seq, Frame::StartOfRun(run.into())));
         Ok(())
@@ -186,8 +190,8 @@ fn validate_histos(value: Vec<ExtHistoSpec>) -> UResult<Vec<ExtHistoSpec>> {
 
 impl ExtProcessOutput {
     fn next_seq(&mut self) -> u16 {
-        let seq = self.seq;
-        self.seq = self.seq.wrapping_add(1);
+        let seq = self.seq_number;
+        self.seq_number = self.seq_number.wrapping_add(1);
         seq
     }
 
