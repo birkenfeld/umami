@@ -10,12 +10,17 @@ use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
 use crate::error::UResult;
 use crate::event::Event;
+use crate::format::Format;
 use crate::params::HasParams;
-use super::{Output, OutputCommon};
+use super::{EventBatch, Output, OutputCommon};
+
+/// `handle_events` flushes the buffered batch to the writer once it grows
+/// past this size.
+const EVENT_BATCH_SIZE: usize = 8192;
 
 #[derive(HasParams)]
 #[params(kind = "output", type = "file")]
-pub struct FileOutput {
+pub struct FileOutput<F: Format> {
     // Configuration
     #[param(help="Directory to write raw event files to")]
     dir: PathBuf,
@@ -24,19 +29,28 @@ pub struct FileOutput {
     filename: Option<String>,
     // Runtime
     writer: Option<BufWriter<File>>,
+    buffer: EventBatch<F>,
 }
 
-impl FileOutput {
+impl<F: Format> FileOutput<F> {
     const BUFFER_SIZE: usize = 1 << 15;
+
+    fn flush(&mut self, batch: Vec<F>) -> UResult<()> {
+        if let Some(writer) = self.writer.as_mut() {
+            writer.write_all(batch.as_bytes()).context("Writing binary events")?;
+        }
+        Ok(())
+    }
 }
 
-impl Output for FileOutput {
+impl<F: Format> Output for FileOutput<F> {
     fn from_config(_: &OutputCommon, config: toml::Table) -> UResult<Self> where Self: Sized {
         let dir = config.get("dir")
             .ok_or_else(|| anyhow!("Missing 'dir' in file output config"))?
             .as_str()
             .ok_or_else(|| anyhow!("'dir' in file output config must be a string"))?;
-        Ok(FileOutput { writer: None, filename: None, dir: PathBuf::from(dir) })
+        Ok(FileOutput { writer: None, filename: None, dir: PathBuf::from(dir),
+                        buffer: EventBatch::new(EVENT_BATCH_SIZE) })
     }
 
     fn handle_start_of_run(&mut self, run: &str) -> UResult<()> {
@@ -46,17 +60,22 @@ impl Output for FileOutput {
             .with_context(|| format!("Creating output file {}", path.display()))?;
         let buffered = BufWriter::with_capacity(Self::BUFFER_SIZE, file);
         self.writer = Some(buffered);
+        self.buffer.clear();
         Ok(())
     }
 
     fn handle_end_of_run(&mut self) -> UResult<()> {
+        if let Some(batch) = self.buffer.take_remainder() {
+            self.flush(batch)?;
+        }
         self.writer = None;
         Ok(())
     }
 
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
-        if let Some(writer) = self.writer.as_mut() {
-            writer.write_all(events.as_bytes()).context("Writing binary events")?;
+        self.buffer.push(events.iter().copied());
+        if let Some(batch) = self.buffer.take_if_full() {
+            self.flush(batch)?;
         }
         Ok(())
     }
@@ -67,6 +86,7 @@ mod tests {
     use super::*;
     use crate::command::ModuleId;
     use crate::event::test_utils;
+    use crate::format::Full;
     use crate::params::{HasParams, ParamMap};
 
     fn make_common() -> OutputCommon {
@@ -89,13 +109,13 @@ mod tests {
 
     #[test]
     fn test_file_output_requires_dir_config() {
-        assert!(FileOutput::from_config(&make_common(), toml::Table::new()).is_err());
+        assert!(FileOutput::<Full>::from_config(&make_common(), toml::Table::new()).is_err());
     }
 
     #[test]
     fn test_file_output_writes_and_roundtrips_event() {
         let dir = temp_dir("file_output");
-        let mut output = FileOutput::from_config(&make_common(), dir_config(&dir)).unwrap();
+        let mut output = FileOutput::<Full>::from_config(&make_common(), dir_config(&dir)).unwrap();
 
         // events before a run has started are silently dropped, not an error
         output.handle_events(&[test_utils::neutron(100, 5)]).unwrap();
@@ -107,8 +127,8 @@ mod tests {
         output.handle_end_of_run().unwrap();
 
         let bytes = std::fs::read(dir.join("run1")).unwrap();
-        let restored = Event::try_read_from_bytes(&bytes).unwrap();
-        assert_eq!(restored, event);
+        let restored = Full::try_read_from_bytes(&bytes).unwrap();
+        assert_eq!(restored, Full::from_event(event));
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -116,7 +136,7 @@ mod tests {
     #[test]
     fn test_file_output_filename_param_overrides_run_id() {
         let dir = temp_dir("file_output_name");
-        let mut output = FileOutput::from_config(&make_common(), dir_config(&dir)).unwrap();
+        let mut output = FileOutput::<Full>::from_config(&make_common(), dir_config(&dir)).unwrap();
 
         let mut params = ParamMap::new();
         params.insert("filename".into(), serde_json::json!("custom.dat"));

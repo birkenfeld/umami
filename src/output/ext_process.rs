@@ -3,7 +3,6 @@
 
 use std::collections::HashSet;
 use std::io::Write;
-use std::mem::replace;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,15 +17,16 @@ use crate::lprintln;
 use crate::command::ModuleId;
 use crate::error::UResult;
 use crate::event::{Event, EventType};
+use crate::format::Format;
 use crate::params::HasParams;
-use super::{Output, OutputCommon};
+use super::{EventBatch, Output, OutputCommon};
 
 /// Represents a frame of data to be sent to the external consumer.
-enum Frame {
-    Events(Vec<Event>),
-    StartOfRun(String),
-    EndOfRun,
-    Clear,
+enum Frame<F: Format> {
+    Events(u16, Vec<F>),
+    StartOfRun(u16, String),
+    EndOfRun(u16),
+    Clear(u16),
 }
 
 /// Wire-format frame tag, see `docs/outputs.md`'s `ext_process` section.
@@ -87,20 +87,20 @@ struct ExtProcessConfig {
 /// Only one connection is allowed, a second connection replaces the first.
 #[derive(HasParams)]
 #[params(kind = "output", type = "ext_process")]
-pub struct ExtProcessOutput {
+pub struct ExtProcessOutput<F: Format> {
     name: ModuleId,
     #[param(help = "Histogram(s) the external consumer publishes, for client discovery",
             readonly = true, datatype = "array of histogram specs")]
     histos: Vec<ExtHistoSpec>,
-    buffer: Vec<Event>,
+    buffer: EventBatch<F>,
     #[allow(dead_code, reason = "only read by tests, to observe the io thread's connection state")]
     connected: Arc<AtomicBool>,
     seq_number: u16,
     dropped_this_run: bool,
-    frame_send: Sender<(u16, Frame)>,
+    frame_send: Sender<Frame<F>>,
 }
 
-impl Output for ExtProcessOutput {
+impl<F: Format> Output for ExtProcessOutput<F> {
     fn from_config(common: &OutputCommon, config: toml::Table) -> UResult<Self> {
         let config: ExtProcessConfig = config.try_into()
             .context("Parsing ext_process output config")?;
@@ -124,19 +124,16 @@ impl Output for ExtProcessOutput {
 
         let histos = validate_histos(config.histos)?;
         Ok(Self { name, histos, connected, seq_number: 0, dropped_this_run: false,
-                  buffer: Vec::with_capacity(2 * EVENT_BATCH_SIZE), frame_send })
+                  buffer: EventBatch::new(EVENT_BATCH_SIZE), frame_send })
     }
 
     fn handle_events(&mut self, events: &[Event]) -> UResult<()> {
-        self.buffer.extend(
-            events.iter().filter(|e| e.evtype == EventType::Neutron).cloned());
-        if self.buffer.len() > EVENT_BATCH_SIZE {
-            let batch = replace(&mut self.buffer, Vec::with_capacity(2 * EVENT_BATCH_SIZE));
+        self.buffer.push(events.iter().filter(|e| e.evtype == EventType::Neutron).copied());
+        if let Some(batch) = self.buffer.take_if_full() {
             let seq = self.next_seq();
-            // droppable: this is a live view, not archival, so losing a
-            // batch to keep the pipeline at full speed is the right trade
-            // when the consumer can't keep up
-            if self.frame_send.try_send((seq, Frame::Events(batch))).is_err()
+            // using `try_send`, avoids blocking the main thread if the consumer is too slow
+            // and just dropping the batch is okay for real-time processing visualization
+            if self.frame_send.try_send(Frame::Events(seq, batch)).is_err()
                 && !self.dropped_this_run {
                 lprintln!(WARN, [self.name] "dropped an event batch, consumer too slow");
                 self.dropped_this_run = true;
@@ -149,25 +146,24 @@ impl Output for ExtProcessOutput {
         self.buffer.clear();
         self.dropped_this_run = false;
         let seq = self.next_seq();
-        let _ = self.frame_send.send((seq, Frame::StartOfRun(run.into())));
+        let _ = self.frame_send.send(Frame::StartOfRun(seq, run.into()));
         Ok(())
     }
 
     fn handle_end_of_run(&mut self) -> UResult<()> {
-        if !self.buffer.is_empty() {
-            let batch = replace(&mut self.buffer, Vec::with_capacity(2 * EVENT_BATCH_SIZE));
+        if let Some(batch) = self.buffer.take_remainder() {
             let seq = self.next_seq();
-            let _ = self.frame_send.send((seq, Frame::Events(batch)));
+            let _ = self.frame_send.send(Frame::Events(seq, batch));
         }
         let seq = self.next_seq();
-        let _ = self.frame_send.send((seq, Frame::EndOfRun));
+        let _ = self.frame_send.send(Frame::EndOfRun(seq));
         Ok(())
     }
 
     fn handle_clear(&mut self) -> UResult<()> {
         self.buffer.clear();
         let seq = self.next_seq();
-        let _ = self.frame_send.send((seq, Frame::Clear));
+        let _ = self.frame_send.send(Frame::Clear(seq));
         Ok(())
     }
 }
@@ -188,7 +184,7 @@ fn validate_histos(value: Vec<ExtHistoSpec>) -> UResult<Vec<ExtHistoSpec>> {
     Ok(value)
 }
 
-impl ExtProcessOutput {
+impl<F: Format> ExtProcessOutput<F> {
     fn next_seq(&mut self) -> u16 {
         let seq = self.seq_number;
         self.seq_number = self.seq_number.wrapping_add(1);
@@ -197,7 +193,7 @@ impl ExtProcessOutput {
 
     /// Accepts connections and writes queued frames to whichever one is
     /// current.
-    fn run_io(listener: UnixListener, frame_recv: Receiver<(u16, Frame)>,
+    fn run_io(listener: UnixListener, frame_recv: Receiver<Frame<F>>,
               connected: Arc<AtomicBool>, name: ModuleId) {
         let mut conn: Option<UnixStream> = None;
         loop {
@@ -209,12 +205,12 @@ impl ExtProcessOutput {
                 connected.store(true, Ordering::Relaxed);
             }
             match frame_recv.recv_timeout(Duration::from_millis(20)) {
-                Ok((seq, frame)) => {
-                    let (tag, payload) = match &frame {
-                        Frame::Events(p) => (FrameTag::Events, p.as_bytes()),
-                        Frame::StartOfRun(p) => (FrameTag::StartOfRun, p.as_bytes()),
-                        Frame::EndOfRun => (FrameTag::EndOfRun, &[][..]),
-                        Frame::Clear => (FrameTag::Clear, &[][..]),
+                Ok(frame) => {
+                    let (tag, seq, payload) = match &frame {
+                        Frame::Events(seq, p) => (FrameTag::Events, seq, p.as_bytes()),
+                        Frame::StartOfRun(seq, p) => (FrameTag::StartOfRun, seq, p.as_bytes()),
+                        Frame::EndOfRun(seq) => (FrameTag::EndOfRun, seq, &[][..]),
+                        Frame::Clear(seq) => (FrameTag::Clear, seq, &[][..]),
                     };
                     if let Some(stream) = &mut conn {
                         let seq = seq.to_le_bytes();
@@ -244,6 +240,7 @@ mod tests {
     use zerocopy::TryFromBytes;
     use crate::command::ModuleId;
     use crate::event::test_utils;
+    use crate::format::Full;
     use super::*;
 
     fn make_common(ipc_name: &str, out_name: &str) -> OutputCommon {
@@ -267,7 +264,7 @@ mod tests {
     /// `connect()` returning only means the kernel accepted the connection
     /// into its backlog -- the output's own io thread still needs to poll
     /// `accept()` and store the stream before `send_frame` will see it.
-    fn wait_until_connected(output: &ExtProcessOutput) {
+    fn wait_until_connected<F: Format>(output: &ExtProcessOutput<F>) {
         for _ in 0..100 {
             if output.connected.load(Ordering::Relaxed) {
                 return;
@@ -277,7 +274,7 @@ mod tests {
         panic!("output never registered the connection");
     }
 
-    fn wait_until_disconnected(output: &ExtProcessOutput) {
+    fn wait_until_disconnected<F: Format>(output: &ExtProcessOutput<F>) {
         for _ in 0..100 {
             if !output.connected.load(Ordering::Relaxed) {
                 return;
@@ -302,7 +299,7 @@ mod tests {
     #[test]
     fn test_no_consumer_does_not_block_or_error() {
         let common = make_common("umami_test_ext_process", "no_consumer");
-        let mut output = ExtProcessOutput::from_config(&common, toml::Table::new()).unwrap();
+        let mut output = ExtProcessOutput::<Full>::from_config(&common, toml::Table::new()).unwrap();
         assert!(output.handle_events(&[test_utils::neutron(100, 5)]).is_ok());
         assert!(output.handle_start_of_run("run1").is_ok());
         assert!(output.handle_end_of_run().is_ok());
@@ -312,7 +309,7 @@ mod tests {
     #[test]
     fn test_forwards_events_start_end_clear() {
         let common = make_common("umami_test_ext_process", "forward");
-        let mut output = ExtProcessOutput::from_config(&common, toml::Table::new()).unwrap();
+        let mut output = ExtProcessOutput::<Full>::from_config(&common, toml::Table::new()).unwrap();
         let mut stream = connect("umami_test_ext_process_forward");
         wait_until_connected(&output);
 
@@ -328,8 +325,8 @@ mod tests {
         output.handle_end_of_run().unwrap();
         let (seq1, tag, payload) = recv_frame(&mut stream);
         assert_eq!(tag, FrameTag::Events);
-        let batch = <[Event]>::try_ref_from_bytes(&payload).unwrap();
-        assert_eq!(batch, [event]);
+        let batch = <[Full]>::try_ref_from_bytes(&payload).unwrap();
+        assert_eq!(batch, [Full::from_event(event)]);
         let (seq2, tag, payload) = recv_frame(&mut stream);
         assert_eq!(tag, FrameTag::EndOfRun);
         assert!(payload.is_empty());
@@ -345,7 +342,7 @@ mod tests {
     #[test]
     fn test_second_connection_replaces_first() {
         let common = make_common("umami_test_ext_process", "replace");
-        let mut output = ExtProcessOutput::from_config(&common, toml::Table::new()).unwrap();
+        let mut output = ExtProcessOutput::<Full>::from_config(&common, toml::Table::new()).unwrap();
         let _first = connect("umami_test_ext_process_replace");
         wait_until_connected(&output);
         let mut second = connect("umami_test_ext_process_replace");
@@ -369,7 +366,7 @@ mod tests {
             x = { name = "qx", bins = 200, min = -2.0, max = 2.0 }
             y = { name = "qy", bins = 100, min = -1.0, max = 1.0 }
         "#).unwrap();
-        let output = ExtProcessOutput::from_config(&common, cfg).unwrap();
+        let output = ExtProcessOutput::<Full>::from_config(&common, cfg).unwrap();
 
         let params = output.get_params(false).unwrap();
         assert_eq!(params["histos"]["value"][0]["name"], "physical_view");
@@ -395,7 +392,7 @@ mod tests {
             y = { name = "qy", bins = 5, min = 0.0, max = 4.0 }
             t = { name = "time", bins = 3, min = 0.0, max = 2.0 }
         "#).unwrap();
-        let output = ExtProcessOutput::from_config(&common, cfg).unwrap();
+        let output = ExtProcessOutput::<Full>::from_config(&common, cfg).unwrap();
         assert!(output.histos[0].y.is_none() && output.histos[0].t.is_none());
         assert!(output.histos[1].y.is_some() && output.histos[1].t.is_some());
     }
@@ -408,7 +405,7 @@ mod tests {
             name = "bad"
             x = { name = "qx", bins = 0, min = 0.0, max = 9.0 }
         "#).unwrap();
-        assert!(ExtProcessOutput::from_config(&common, cfg).is_err());
+        assert!(ExtProcessOutput::<Full>::from_config(&common, cfg).is_err());
     }
 
     /// Simulates what an external `ext_process` consumer does: create its
@@ -426,7 +423,7 @@ mod tests {
             x = { name = "qx", bins = 4, min = 0.0, max = 3.0 }
             y = { name = "qy", bins = 3, min = 0.0, max = 2.0 }
         "#).unwrap();
-        let output = ExtProcessOutput::from_config(&common, cfg).unwrap();
+        let output = ExtProcessOutput::<Full>::from_config(&common, cfg).unwrap();
         let spec = &output.histos[0];
         let (nx, ny) = (spec.x.bins, spec.y.as_ref().unwrap().bins);
 
@@ -457,13 +454,13 @@ mod tests {
             name = "dup"
             x = { name = "qx", bins = 20, min = 0.0, max = 19.0 }
         "#).unwrap();
-        assert!(ExtProcessOutput::from_config(&common, cfg).is_err());
+        assert!(ExtProcessOutput::<Full>::from_config(&common, cfg).is_err());
     }
 
     #[test]
     fn test_dead_connection_is_dropped_not_fatal() {
         let common = make_common("umami_test_ext_process", "dead");
-        let mut output = ExtProcessOutput::from_config(&common, toml::Table::new()).unwrap();
+        let mut output = ExtProcessOutput::<Full>::from_config(&common, toml::Table::new()).unwrap();
         let stream = connect("umami_test_ext_process_dead");
         wait_until_connected(&output);
         drop(stream);

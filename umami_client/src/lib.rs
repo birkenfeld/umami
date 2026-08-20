@@ -24,11 +24,14 @@ use pythonize::{depythonize, pythonize};
 use uds::{UnixSocketAddr, UnixStreamExt};
 #[cfg(test)]
 use zerocopy::IntoBytes;
-use zerocopy::TryFromBytes;
+use zerocopy::{Immutable, TryFromBytes};
 
 #[cfg(test)]
-use umami::EventType;
-use umami::{ClientError, Command, CommandReply, Event, FrameTag, HistoConfig, ParamMap, ShmReader};
+use umami::{Event, EventType};
+#[cfg(test)]
+use umami::format::Format;
+use umami::format::{Full, XYTof};
+use umami::{ClientError, Command, CommandReply, FrameTag, HistoConfig, ParamMap, ShmReader};
 
 create_exception!(umami_client, UmamiClientError, pyo3::exceptions::PyException,
     "Base class for all umami_client errors.");
@@ -284,60 +287,29 @@ impl Shm {
     }
 }
 
-/// Decodes one raw event batch (as sent by the `ext_process` output) into a
-/// validated `&[Event]`, without copying -- `Event`'s own layout is the wire
-/// format, so this is a direct, bounds/validity-checked reinterpretation of
-/// `buf` rather than a deserialization step.
-fn decode_batch(buf: &[u8]) -> PyResult<&[Event]> {
-    <[Event]>::try_ref_from_bytes(buf)
-        .map_err(|e| PyValueError::new_err(format!("Corrupt event batch: {e}")))
-}
-
-/// All of an `Event`'s fields, as a Numpy Element ready structure.
-#[repr(C, packed)]
+/// All of a `"full"`-format event's fields, as a Numpy Element ready structure.
+#[repr(transparent)]
 #[derive(Clone, Copy)]
-struct EventRecord {
-    time_ns: i64,
-    rel_time_ns: i64,
-    channel: u32,
-    ampl: u32,
-    x: u16,
-    y: u16,
-    t: u16,
-    i: u16,
-    flags: u16,
-    evtype: u8,
-    evtype_arg: u8,
-}
+#[derive(Immutable, TryFromBytes)]
+struct EventFull(Full);
 
-impl From<Event> for EventRecord {
-    fn from(ev: Event) -> Self {
-        Self {
-            time_ns: ev.time.as_nanos(),
-            rel_time_ns: ev.rel_time.as_nanos(),
-            channel: ev.channel.0,
-            ampl: ev.ampl.0,
-            x: ev.histo.x,
-            y: ev.histo.y,
-            t: ev.histo.t,
-            i: ev.histo.i,
-            flags: ev.flags.bits(),
-            evtype: ev.evtype as u8,
-            evtype_arg: ev.index,
-        }
-    }
-}
-
-unsafe impl Element for EventRecord {
+unsafe impl Element for EventFull {
     const IS_COPY: bool = true;
 
     fn get_dtype(py: Python<'_>) -> Bound<'_, PyArrayDescr> {
         PyArrayDescr::new(py, [
-            ("time_ns", "<i8"), ("rel_time_ns", "<i8"),
-            ("channel", "<u4"), ("ampl", "<u4"),
+            ("evtype", "u1"),
+            ("index", "u1"),
+            ("flags", "<u2"),
+            ("channel", "<u4"),
+            ("raw0", "<u4"),
+            ("raw1", "<u4"),
+            ("ampl", "<u4"),
+            ("reserve", "<u4"),
             ("x", "<u2"), ("y", "<u2"), ("t", "<u2"), ("i", "<u2"),
-            ("flags", "<u2"), ("evtype", "u1"), ("evtype_arg", "u1"),
-        ]).expect("EventRecord's dtype spec is well-formed")
+            ("time", "<i8"),
+            ("rel_time", "<i8"),
+        ]).expect("EventFull's dtype spec is well-formed")
     }
 
     fn clone_ref(&self, _py: Python<'_>) -> Self {
@@ -345,28 +317,19 @@ unsafe impl Element for EventRecord {
     }
 }
 
-/// The subset of `EventRecord` a live view most commonly needs -- see
-/// `decode_events_xy`.
-#[repr(C, packed)]
+/// A `"xy_tof"`-format event's fields, as a Numpy Element ready structure --
+/// see `decode_events_xytof`.
+#[repr(transparent)]
 #[derive(Clone, Copy)]
-struct EventXY {
-    rel_time_ns: i64,
-    x: i32,
-    y: i32,
-}
+#[derive(Immutable, TryFromBytes)]
+struct EventXYTof(XYTof);
 
-impl From<Event> for EventXY {
-    fn from(ev: Event) -> Self {
-        Self { rel_time_ns: ev.rel_time.as_nanos(), x: ev.histo.x as _, y: ev.histo.y as _ }
-    }
-}
-
-unsafe impl Element for EventXY {
+unsafe impl Element for EventXYTof {
     const IS_COPY: bool = true;
 
     fn get_dtype(py: Python<'_>) -> Bound<'_, PyArrayDescr> {
-        PyArrayDescr::new(py, [("tof", "<i8"), ("x", "<i4"), ("y", "<i4")])
-            .expect("EventXY's dtype spec is well-formed")
+        PyArrayDescr::new(py, [("x", "<u2"), ("y", "<u2"), ("tof", "<u4")])
+            .expect("EventXYTof's dtype spec is well-formed")
     }
 
     fn clone_ref(&self, _py: Python<'_>) -> Self {
@@ -374,21 +337,26 @@ unsafe impl Element for EventXY {
     }
 }
 
-/// Decodes one raw event batch (as sent by the `ext_process` output) into a
-/// numpy structured array with every field: `time_ns`, `rel_time_ns`,
-/// `channel`, `ampl`, `x`, `y`, `t`, `i`, `flags`, `evtype`, `evtype_arg`.
+/// Decodes one raw `"full"`-format event batch (as sent by the `ext_process`
+/// output) into a numpy structured array with every field: `time`,
+/// `rel_time`, `channel`, `ampl`, `x`, `y`, `t`, `i`, `flags`, `evtype`,
+/// `index`.
 #[pyfunction]
-fn decode_events<'py>(py: Python<'py>, buf: Cow<[u8]>) -> PyResult<Bound<'py, PyArray1<EventRecord>>> {
-    let events = decode_batch(&buf)?;
-    Ok(PyArray1::from_iter(py, events.iter().copied().map(EventRecord::from)))
+fn decode_events_full<'py>(py: Python<'py>, buf: Cow<[u8]>) -> PyResult<Bound<'py, PyArray1<EventFull>>> {
+    let events = <[EventFull]>::try_ref_from_bytes(&buf)
+        .map_err(|e| PyValueError::new_err(format!("Corrupt event batch: {e}")))?
+        .to_vec();
+    Ok(PyArray1::from_vec(py, events))
 }
 
-/// Decodes one raw event batch into a numpy structured array with just
-/// `rel_time_ns`, `x`, `y`.
+/// Decodes one raw `"xy_tof"`-format event batch into a numpy structured
+/// array with `x`, `y`, `tof` (time-of-flight in 100ns units).
 #[pyfunction]
-fn decode_events_xy<'py>(py: Python<'py>, buf: Cow<[u8]>) -> PyResult<Bound<'py, PyArray1<EventXY>>> {
-    let events = decode_batch(&buf)?;
-    Ok(PyArray1::from_iter(py, events.iter().copied().map(EventXY::from)))
+fn decode_events_xytof<'py>(py: Python<'py>, buf: Cow<[u8]>) -> PyResult<Bound<'py, PyArray1<EventXYTof>>> {
+    let events = <[EventXYTof]>::try_ref_from_bytes(&buf)
+        .map_err(|e| PyValueError::new_err(format!("Corrupt event batch: {e}")))?
+        .to_vec();
+    Ok(PyArray1::from_vec(py, events))
 }
 
 /// A writable UMAMI histogram shared-memory segment, for publishing an
@@ -642,8 +610,8 @@ fn umami_client(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Shm>()?;
     m.add_class::<ShmWriter>()?;
     m.add_class::<EventReceiver>()?;
-    m.add_function(wrap_pyfunction!(decode_events, m)?)?;
-    m.add_function(wrap_pyfunction!(decode_events_xy, m)?)?;
+    m.add_function(wrap_pyfunction!(decode_events_full, m)?)?;
+    m.add_function(wrap_pyfunction!(decode_events_xytof, m)?)?;
     m.add("UmamiClientError", m.py().get_type::<UmamiClientError>())?;
     m.add("UmamiError", m.py().get_type::<UmamiError>())?;
     m.add("UmamiTimeout", m.py().get_type::<UmamiTimeout>())?;
@@ -681,48 +649,49 @@ mod tests {
             make_event(1, 500_000_000, 250_000_000, 5, 1234, 10, 20, 3, EventType::Neutron, 0),
             make_event(2, 0, 0, 7, 0, 0, 0, 0, EventType::Monitor, 3),
         ];
-        let bytes = events.as_bytes();
+        let full: Vec<Full> = events.iter().copied().map(Full::from_event).collect();
+        let bytes = full.as_bytes();
 
         Python::attach(|py| {
-            let array = decode_events(py, Cow::Borrowed(bytes)).unwrap();
+            let array = decode_events_full(py, Cow::Borrowed(bytes)).unwrap();
             let records = array.to_vec().unwrap();
             assert_eq!(records.len(), 2);
 
-            assert_eq!({ records[0].time_ns }, 1_500_000_000);
-            assert_eq!({ records[0].rel_time_ns }, 250_000_000);
-            assert_eq!({ records[0].channel }, 5);
-            assert_eq!({ records[0].ampl }, 1234);
-            assert_eq!({ records[0].x }, 10);
-            assert_eq!({ records[0].y }, 20);
-            assert_eq!({ records[0].t }, 3);
-            assert_eq!({ records[0].evtype }, 0x01);
-            assert_eq!({ records[0].evtype_arg }, 0);
+            assert_eq!({ records[0].0.time }, 1_500_000_000);
+            assert_eq!({ records[0].0.rel_time }, 250_000_000);
+            assert_eq!({ records[0].0.channel }, 5);
+            assert_eq!({ records[0].0.ampl }, 1234);
+            assert_eq!({ records[0].0.histo[0] }, 10);
+            assert_eq!({ records[0].0.histo[1] }, 20);
+            assert_eq!({ records[0].0.histo[2] }, 3);
+            assert_eq!({ records[0].0.evtype }, 0x01);
+            assert_eq!({ records[0].0.index }, 0);
 
-            assert_eq!({ records[1].channel }, 7);
-            assert_eq!({ records[1].evtype }, 0x02);
-            assert_eq!({ records[1].evtype_arg }, 3);
+            assert_eq!({ records[1].0.channel }, 7);
+            assert_eq!({ records[1].0.evtype }, 0x02);
+            assert_eq!({ records[1].0.index }, 3);
         });
     }
 
     #[test]
-    fn test_decode_events_xy_has_only_rel_time_x_y() {
-        let events = [make_event(1, 0, 750_000_000, 5, 1234, 42, 99, 3, EventType::Neutron, 0)];
+    fn test_decode_events_xy_has_x_y_tof() {
+        let events = [XYTof { x: 42, y: 99, tof: 7_500 }];
         let bytes = events.as_bytes();
 
         Python::attach(|py| {
-            let array = decode_events_xy(py, Cow::Borrowed(bytes)).unwrap();
+            let array = decode_events_xytof(py, Cow::Borrowed(bytes)).unwrap();
             let records = array.to_vec().unwrap();
             assert_eq!(records.len(), 1);
-            assert_eq!({ records[0].rel_time_ns }, 750_000_000);
-            assert_eq!({ records[0].x }, 42);
-            assert_eq!({ records[0].y }, 99);
+            assert_eq!({ records[0].0.x }, 42);
+            assert_eq!({ records[0].0.y }, 99);
+            assert_eq!({ records[0].0.tof }, 7_500);
         });
     }
 
     #[test]
     fn test_decode_events_rejects_corrupt_bytes() {
         Python::attach(|py| {
-            assert!(decode_events(py, Cow::Borrowed(b"not a valid archive".as_slice())).is_err());
+            assert!(decode_events_full(py, Cow::Borrowed(b"not a valid archive".as_slice())).is_err());
         });
     }
 

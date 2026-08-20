@@ -1,6 +1,7 @@
 // Part of the Unified Mechanism for Acquisition of Measured Intensity
 // (UMAMI), see README and LICENSE files for more info.
 
+use std::mem::replace;
 use std::sync::Arc;
 use anyhow::{anyhow, Context};
 use crate::lprintln;
@@ -10,8 +11,42 @@ use crate::config::OutputConfig;
 use crate::error::UResult;
 use crate::event::Event;
 use crate::expr::AliasTable;
+use crate::format::Format;
 use crate::params::HasParams;
 use crate::pipeline::PipeItem;
+
+/// Accumulates events converted to `F`, for outputs that want to batch many
+/// events into one write/frame instead of one per `handle_events` call.
+pub(crate) struct EventBatch<F: Format> {
+    buffer: Vec<F>,
+    threshold: usize,
+}
+
+impl<F: Format> EventBatch<F> {
+    pub(crate) fn new(threshold: usize) -> Self {
+        Self { buffer: Vec::with_capacity(2 * threshold), threshold }
+    }
+
+    pub(crate) fn push(&mut self, events: impl Iterator<Item = Event>) {
+        self.buffer.extend(events.map(F::from_event));
+    }
+
+    /// Flushes and returns the buffer once it grows past the threshold.
+    pub(crate) fn take_if_full(&mut self) -> Option<Vec<F>> {
+        (self.buffer.len() > self.threshold)
+            .then(|| replace(&mut self.buffer, Vec::with_capacity(2 * self.threshold)))
+    }
+
+    /// Flushes and returns whatever is buffered, regardless of threshold.
+    pub(crate) fn take_remainder(&mut self) -> Option<Vec<F>> {
+        (!self.buffer.is_empty())
+            .then(|| replace(&mut self.buffer, Vec::with_capacity(2 * self.threshold)))
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.buffer.clear();
+    }
+}
 
 mod aux_histo;
 mod diag;
@@ -151,10 +186,6 @@ impl Output for NullOutput {
     }
 }
 
-// Broadcast over udp/uds
-// pub struct UDPOutput;
-// pub struct UDSOutput;
-
 pub fn start(config: OutputConfig, common: OutputCommon) -> UResult<()> {
     match config.r#type.as_str() {
         NullOutput::TYPE_NAME => Ok(NullOutput::from_config(&common, config.config)?.start(common)?),
@@ -166,12 +197,18 @@ pub fn start(config: OutputConfig, common: OutputCommon) -> UResult<()> {
         #[cfg(not(feature = "hdf5"))]
         "hdf5" => Err(anyhow!(
             "HDF5 output support was not compiled in (rebuild with --features hdf5)").into()),
-        file::FileOutput::TYPE_NAME =>
-            Ok(file::FileOutput::from_config(&common, config.config)?.start(common)?),
+        file::FileOutput::<crate::format::Full>::TYPE_NAME => {
+            let fmt = crate::format::format_name(&config.config)?;
+            crate::with_format!(fmt, |F|
+                Ok(file::FileOutput::<F>::from_config(&common, config.config)?.start(common)?))
+        }
         aux_histo::AuxHistoOutput::TYPE_NAME =>
             Ok(aux_histo::AuxHistoOutput::from_config(&common, config.config)?.start(common)?),
-        ext_process::ExtProcessOutput::TYPE_NAME =>
-            Ok(ext_process::ExtProcessOutput::from_config(&common, config.config)?.start(common)?),
+        ext_process::ExtProcessOutput::<crate::format::Full>::TYPE_NAME => {
+            let fmt = crate::format::format_name(&config.config)?;
+            crate::with_format!(fmt, |F|
+                Ok(ext_process::ExtProcessOutput::<F>::from_config(&common, config.config)?.start(common)?))
+        }
         #[cfg(test)]
         test::TestOutput::TYPE_NAME => Ok(test::TestOutput::new().start(common)?),
         _ => Err(anyhow!("Unknown output type: {}", config.r#type).into()),

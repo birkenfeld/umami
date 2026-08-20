@@ -39,8 +39,8 @@ class LiveViewChannel(FdLogMixin, base.ImageChannel):
     `umami_client.EventReceiver` owns the connect-with-retry and frame-parsing
     loop (on its own background thread) and calls back into this class's
     `on_events`/`on_start_of_run`/`on_end_of_run`/`on_clear` methods as frames
-    arrive -- undecoded, so this class decides `decode_events` vs
-    `decode_events_xy`.
+    arrive -- undecoded, so this class decides `decode_events_full` vs
+    `decode_events_xytof`, matching the target output's configured `format`.
     """
 
     attributes = {
@@ -87,12 +87,14 @@ class LiveViewChannel(FdLogMixin, base.ImageChannel):
     def on_events(self, payload):
         """`payload` is the raw, undecoded frame bytes.
 
-        `decode_events_xy` gives a numpy structured array with just
-        `rel_time_ns`/`x`/`y` -- the common case for a live view. Switch to
-        `umami.decode_events` instead if you need to filter by event type
-        (e.g. neutrons only) or need other fields (channel, ampl, flags, ...).
+        `decode_events_xytof` gives a numpy structured array with just
+        `x`/`y`/`tof` (time-of-flight in 100ns units) -- the common case for a
+        live view, and requires the output to be configured with
+        `format = "xy_tof"`. Switch to `umami.decode_events_full` (and
+        `format = "full"`) instead if you need to filter by event type (e.g.
+        neutrons only) or need other fields (channel, ampl, flags, ...).
         """
-        events = umami.decode_events_xy(payload)
+        events = umami.decode_events_xytof(payload)
         # TODO: real physics-informed conversion goes here. Sketch:
         #
         #   phys_x, phys_y = your_conversion_library.convert(

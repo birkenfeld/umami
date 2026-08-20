@@ -7,6 +7,7 @@ each consuming the full sorted event stream. Each entry needs a `type`:
 [outputs.raw]
 type = "file"
 dir = "/data/umami-events"
+format = "full"
 ```
 
 Available types:
@@ -41,11 +42,13 @@ Writes events to an HDF5 file with NeXus conventions.
 
 ## `type = "file"`
 
-Writes raw events to a plain file in the binary format.
+Writes raw events to a plain file, in the binary format selected by `format`.
 
 * `dir` (required): directory to write files to
 * `filename` (optional, default derived from the run ID): filename within
   `dir`
+* `format` (required): binary event format to write, see "Event formats"
+  below
 
 ## `type = "aux_histo"`
 
@@ -139,6 +142,8 @@ Forwards the full sorted event stream to a single external consumer, over an
 abstract-namespace Unix stream socket named `<ipc_name>_<output_name>`, for
 processing outside UMAMI.
 
+* `format` (required): binary event format sent in `Events` frames, see
+  "Event formats" below
 * The `histos` parameter declares the external consumer's shm histogram(s)
   for GUI discovery -- `name`, `x` (required), `y`/`t` (optional, so a
   histogram can be 1-D/2-D/3-D). Each axis has `name`, `bins`, and `min`/`max`
@@ -174,13 +179,22 @@ receives means it missed something.
 
 Payload by tag:
 
-* Events (`0`): an array of binary `Event` structs.
+* Events (`0`): an array of binary structs in the configured `format`.
 * Start of run (`1`): UTF-8 run ID bytes.
 * End of run (`2`) / clear (`3`): empty (length `0`).
 
 A Python consumer doesn't need to implement this framing itself:
 `umami_client.EventReceiver(ipc_name, output_name, callback)` runs the
 connect-with-retry and frame-parsing loop on a background thread, calling
-`callback.on_events(bytes)` (undecoded -- pick `decode_events` or
-`decode_events_xy` yourself), `on_start_of_run(run_id)`, `on_end_of_run()`,
-and `on_clear()`.
+`callback.on_events(bytes)` (undecoded -- pick `decode_events_full` or
+`decode_events_xytof` yourself, matching the output's configured `format`),
+`on_start_of_run(run_id)`, `on_end_of_run()`, and `on_clear()`.
+
+## Event formats
+
+Both `type = "file"` and `type = "ext_process"` require a `format`, selecting
+the binary layout written per event:
+
+* `"full"`: the full event, including all fields.
+* `"xy_tof"`: only the `x`/`y` histogram coordinates and time-of-flight (in
+  100ns units).

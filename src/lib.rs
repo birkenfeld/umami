@@ -7,6 +7,7 @@ mod config;
 mod error;
 mod event;
 mod expr;
+pub mod format;
 mod input;
 mod output;
 mod params;

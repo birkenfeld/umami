@@ -2,14 +2,14 @@
 // (UMAMI), see README and LICENSE files for more info.
 
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
-use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, TryFromBytes};
+use zerocopy::{Immutable, IntoBytes};
 
 /// Timestamp of the event in nanoseconds.
 ///
 /// Should be absolute (relative to UNIX epoch) if possible.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
-#[derive(Immutable, IntoBytes, FromBytes, KnownLayout)]
+#[derive(Immutable, IntoBytes)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct EventTime(pub(crate) i64);
 
@@ -74,18 +74,18 @@ impl std::ops::Sub for EventTime {
 /// for edges or other kinds of events.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Immutable, IntoBytes, FromBytes, KnownLayout)]
+#[derive(Immutable, IntoBytes)]
 pub struct ChannelId(pub u32);
 
 /// Amplitude of the event, e.g. pulse height or time-over-threshold.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Immutable, IntoBytes, FromBytes, KnownLayout)]
+#[derive(Immutable, IntoBytes)]
 pub struct Amplitude(pub u32);
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[derive(Immutable, IntoBytes, TryFromBytes, KnownLayout)]
+#[derive(Immutable, IntoBytes)]
 // Note: if you change this, update the src/expr.rs language accordingly.
 pub enum EventType {
     /// Neutron event.
@@ -111,7 +111,7 @@ impl Eq for EventType {}
 #[bitflag_attr::bitflag(u16)]
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Immutable, IntoBytes, FromBytes, KnownLayout)]
+#[derive(Immutable, IntoBytes)]
 pub enum EventFlags {
     None = 0,
     HasRelTime = 1,
@@ -141,7 +141,7 @@ impl Display for EventFlags {
 
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[derive(Immutable, IntoBytes, FromBytes, KnownLayout)]
+#[derive(Immutable, IntoBytes)]
 pub struct EventHisto {
     pub x: u16,
     pub y: u16,
@@ -157,10 +157,9 @@ impl EventHisto {
 
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[derive(Immutable, IntoBytes, TryFromBytes, KnownLayout)]
+#[derive(Immutable, IntoBytes)]
 // Note: if you change this, update the src/expr.rs language accordingly.
 pub struct Event {
-    // Do not change the structure, the serialization format depends on it.
     pub evtype: EventType,
     pub index: u8,            // signal index for event types that can have one
     pub flags: EventFlags,    // boolean properties of the event
