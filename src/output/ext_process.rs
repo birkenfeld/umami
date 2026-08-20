@@ -200,7 +200,7 @@ impl<F: Format> ExtProcessOutput<F> {
             if let Ok((stream, _)) = listener.accept() {
                 stream.set_write_timeout(Some(Duration::from_millis(500)))
                       .expect("set_write_timeout on unix stream failed");
-                lprintln!(INFO, [name] "accepted connection from {:?}", stream.peer_addr().ok());
+                lprintln!(INFO, [name] "accepted consumer connection");
                 conn = Some(stream);
                 connected.store(true, Ordering::Relaxed);
             }
@@ -219,7 +219,7 @@ impl<F: Format> ExtProcessOutput<F> {
                                                     len[0], len[1], len[2], len[3]])
                             .and_then(|()| stream.write_all(payload));
                         if ok.is_err() {
-                            lprintln!(WARN, [name] "lost connection");
+                            lprintln!(WARN, [name] "lost consumer connection");
                             conn = None; // dead connection; next accept() replaces it
                         }
                     }
