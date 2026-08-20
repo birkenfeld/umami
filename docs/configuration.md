@@ -133,7 +133,7 @@ Available recipe types:
 |---|---|---|
 | `none` | input or process mode | (none) |
 | `histo_std` | process mode | `bin_x`, `bin_y` (default 1), `use_gate` (default false) |
-| `histo_tof` | process mode | as `histo_std`, plus `aux_mode` (aux-signal number to use as T0, or omit to use explicit T0 events), `time_bins` (array of nanosecond bin-end times, runtime-settable) |
+| `histo_tof` | process mode | as `histo_std`, plus `aux_mode` (aux-signal number to use as T0, or omit to use explicit T0 events), `time_bins` (array of nanosecond bin-end times, runtime-settable), `t0_delay` (default 0; nanosecond delay between the T0 event and the relative-time zero) |
 | `mesy_mdll` | input | (none) |
 | `mesy_mpsd` | input | `inputs` (map of digital-input channel number -> `"tzero"` \| `{ monitor = num }` \| `{ aux = num }`, runtime-settable), `y_mask` (bool, default false; voids events with `y == 0` or `y > 960`, runtime-settable) |
 | `canon` | input | (none) |

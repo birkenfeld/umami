@@ -32,6 +32,12 @@ pub struct Tof {
     #[param(help="Time binning end times (first bin always starts at offset 0)",
             datatype="array of integers (nanoseconds)", has_setter=true)]
     time_bins: Vec<EventTime>,
+    /// Delay between the Tzero/AuxSignal event and the actual zero of
+    /// rel_time. Events arriving before the delay has elapsed still get a
+    /// rel_time relative to the previous T0.
+    #[param(help="Delay between the T0 event and the actual relative-time zero",
+            datatype="integer (nanoseconds)")]
+    t0_delay: EventTime,
     // Run-time state
     gate_up: bool,
     // TODO: consider frame overlap
@@ -39,6 +45,8 @@ pub struct Tof {
     cur_bin: usize,
     // whether last_t0 reflects a Tzero/AuxSignal seen since `start_of_run`
     t0_known: bool,
+    // T0 to switch over to once an event's time reaches it (see `t0_delay`)
+    pending_t0: Option<EventTime>,
 }
 
 impl Tof {
@@ -66,6 +74,7 @@ pub struct TofConfig {
     pub use_gate: Option<bool>,
     pub aux_mode: Option<u8>,
     pub time_bins: Option<Vec<EventTime>>,
+    pub t0_delay: Option<EventTime>,
 }
 
 impl Recipe for Tof {
@@ -78,10 +87,12 @@ impl Recipe for Tof {
             use_gate: config.use_gate.unwrap_or(false),
             aux_mode: config.aux_mode,
             time_bins: Self::normalize_time_bins(config.time_bins.unwrap_or_default()),
+            t0_delay: config.t0_delay.unwrap_or(EventTime::zero()),
             gate_up: false,
             last_t0: EventTime::zero(),
             cur_bin: 0,
             t0_known: false,
+            pending_t0: None,
         })
     }
 
@@ -90,23 +101,28 @@ impl Recipe for Tof {
         self.cur_bin = 0;
         self.t0_known = false;
         self.gate_up = false;
+        self.pending_t0 = None;
     }
 
     fn process(&mut self, mut events: Vec<Event>) -> Vec<Event> {
         for event in &mut events {
+            // switch over to a previously scheduled T0 once its time has come
+            if let Some(pending) = self.pending_t0 && event.time >= pending {
+                self.last_t0 = pending;
+                self.cur_bin = 0;
+                self.t0_known = true;
+                self.pending_t0 = None;
+            }
+
             match event.evtype {
                 EventType::Tzero => {
                     if self.aux_mode.is_none() {
-                        self.last_t0 = event.time;
-                        self.cur_bin = 0;
-                        self.t0_known = true;
+                        self.pending_t0 = Some(event.time + self.t0_delay);
                     }
                 }
                 EventType::AuxSignal => {
                     if self.aux_mode == Some(event.index as _) {
-                        self.last_t0 = event.time;
-                        self.cur_bin = 0;
-                        self.t0_known = true;
+                        self.pending_t0 = Some(event.time + self.t0_delay);
                     }
                 }
                 EventType::Gate => self.gate_up = event.index != 0,
@@ -429,6 +445,43 @@ mod tests {
         assert_eq!(out[1].histo.t, 0); // 0 to 1000 bin
         assert_eq!(out[2].histo.t, 1); // 1000 to 2000 bin
         assert_eq!(out[3].histo.t, 2); // last (implicit) 2000 to MAX bin
+    }
+
+    #[test]
+    fn test_tof_delay_keeps_previous_t0_until_elapsed() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("t0_delay".into(), toml::Value::Integer(100));
+        let mut recipe = Tof::from_config(cfg, &empty_recipes()).unwrap();
+
+        let events = vec![
+            test_utils::tzero(0),
+            test_utils::neutron(1000, 1),   // first T0 (0 + 100 = 100) already elapsed
+            test_utils::tzero(2000),
+            // still before 2000 + 100: keeps the previous T0 (100)
+            test_utils::neutron(2050, 2),
+            // past the new T0 (2100): switches over
+            test_utils::neutron(2200, 3),
+        ];
+        let out = recipe.process(events);
+        assert_eq!(out[1].rel_time, EventTime(1000 - 100));
+        assert_eq!(out[3].rel_time, EventTime(2050 - 100));
+        assert_eq!(out[4].rel_time, EventTime(2200 - 2100));
+    }
+
+    #[test]
+    fn test_tof_delay_voids_events_before_first_t0_elapses() {
+        let mut cfg = toml::Table::new();
+        cfg.insert("t0_delay".into(), toml::Value::Integer(100));
+        let mut recipe = Tof::from_config(cfg, &empty_recipes()).unwrap();
+
+        let events = vec![
+            test_utils::tzero(0),
+            test_utils::neutron(50, 1),   // before the delay has elapsed, no T0 yet
+            test_utils::neutron(150, 2),  // T0 = 100 now active
+        ];
+        let out = recipe.process(events);
+        assert_eq!(out[1].evtype, EventType::Void);
+        assert_eq!(out[2].rel_time, EventTime(50));
     }
 
     #[test]
